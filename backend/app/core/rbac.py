@@ -8,43 +8,6 @@ from app.core.database import get_db
 from app.core.security import verify_token
 from app.schemas.auth import TokenUser
 
-# Hardcoded privilege map — no role_privilege_assignments table in schema
-ROLE_PRIVILEGES: dict[str, list[str]] = {
-    "company_admin": [
-        "users.manage",
-        "audit.view",
-        "deliveries.create",
-        "deliveries.view",
-        "inventory.view",
-        "inventory.adjust",
-        "inventory.alerts.manage",
-        "work_orders.create",
-        "work_orders.view",
-        "work_orders.assign",
-        "work_orders.status_update",
-        "work_orders.sequence",
-        "work_orders.allocate",
-    ],
-    "receiving_clerk": [
-        "deliveries.create",
-        "deliveries.view",
-        "inventory.view",
-    ],
-    "production_supervisor": [
-        "deliveries.view",
-        "inventory.view",
-        "work_orders.create",
-        "work_orders.view",
-        "work_orders.assign",
-        "work_orders.status_update",
-        "work_orders.sequence",
-        "work_orders.allocate",
-    ],
-    "machine_operator": [
-        "work_orders.view",
-    ],
-}
-
 _bearer = HTTPBearer()
 
 
@@ -56,6 +19,7 @@ def require_privilege(privilege: str):
         current_user: TokenUser = Depends(require_privilege("inventory.view"))
 
     Special value "authenticated" skips privilege check — just validates the JWT.
+    Privileges are resolved at request time from the role_privilege_assignments table.
     """
 
     async def _dependency(
@@ -72,7 +36,8 @@ def require_privilege(privilege: str):
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        from app.models.user import Role, User, UserRoleAssignment  # avoid circular
+        # Deferred import to avoid circular dependency at module load time
+        from app.models.user import Role, RolePrivilegeAssignment, User, UserRoleAssignment
 
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
@@ -91,9 +56,13 @@ def require_privilege(privilege: str):
         )
         role_names: list[str] = [r[0] for r in roles_result.fetchall()]
 
-        effective_privileges: list[str] = list(
-            {p for role in role_names for p in ROLE_PRIVILEGES.get(role, [])}
+        privs_result = await db.execute(
+            select(RolePrivilegeAssignment.privilege_name)
+            .join(UserRoleAssignment, RolePrivilegeAssignment.role_id == UserRoleAssignment.role_id)
+            .where(UserRoleAssignment.user_id == user_id)
+            .distinct()
         )
+        effective_privileges: list[str] = [r[0] for r in privs_result.fetchall()]
 
         token_user = TokenUser(
             user_id=user.id,
