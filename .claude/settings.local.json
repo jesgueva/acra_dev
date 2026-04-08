@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(npm --version)",
+      "Bash(npm show:*)",
+      "Bash(curl -s https://registry.npmjs.org/next/latest)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('version','unknown'\\)\\)\")",
+      "Bash(pytest tests/test_health.py -v)",
+      "Bash(uvicorn app.main:app --port 8000)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(kill %1)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(git reset:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create --title 'feat\\(ACR-1\\): T01 — Project Scaffolding' --body ':*)",
+      "mcp__76ed6e57-2f9e-47d1-b45d-34d38018055d__save_comment"
+    ]
+  }
+}

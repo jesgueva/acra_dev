@@ -86,5 +86,5 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 ## Tech Stack
 
 - **Backend:** FastAPI, SQLAlchemy (async), Alembic, PostgreSQL, bcrypt, python-jose
-- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, shadcn/ui, next-intl, Recharts
+- **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS, shadcn/ui, next-intl, Recharts
 - **Testing:** pytest (backend), Playwright (E2E)
