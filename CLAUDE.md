@@ -1,0 +1,90 @@
+# ACRA MES — Project Memory
+
+## Project Overview
+
+ACRA Integrated Manufacturing Execution System (MES) — a monorepo with a FastAPI backend and Next.js 14 frontend.
+
+## Repository Structure
+
+```
+acra_dev/
+├── backend/          # FastAPI + SQLAlchemy + PostgreSQL
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── core/
+│   │   ├── models/
+│   │   ├── routers/
+│   │   ├── schemas/
+│   │   └── services/
+│   ├── alembic/
+│   ├── tests/
+│   └── requirements.txt
+├── frontend/         # Next.js 14 App Router + shadcn/ui
+│   ├── app/
+│   ├── components/
+│   ├── lib/
+│   └── package.json
+└── CLAUDE.md
+```
+
+## Run Commands
+
+### Backend
+
+```bash
+# Install dependencies
+cd backend && pip install -r requirements.txt
+
+# Start dev server
+cd backend && uvicorn app.main:app --reload --port 8000
+
+# Run tests
+cd backend && pytest tests/ -v
+
+# Apply migrations
+cd backend && alembic upgrade head
+```
+
+### Frontend
+
+```bash
+# Install dependencies
+cd frontend && npm install
+
+# Start dev server
+cd frontend && npm run dev
+
+# Build for production
+cd frontend && npm run build
+```
+
+### Database
+
+```bash
+# Requires PostgreSQL running locally
+# Create database: createdb acra_db
+# Connection: postgresql://postgres:postgres@localhost:5432/acra_db
+```
+
+## Environment Variables
+
+### Backend (`backend/.env`)
+
+```
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/acra_db
+SECRET_KEY=your-secret-key-here
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=480
+```
+
+### Frontend (`frontend/.env.local`)
+
+```
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+## Tech Stack
+
+- **Backend:** FastAPI, SQLAlchemy (async), Alembic, PostgreSQL, bcrypt, python-jose
+- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, shadcn/ui, next-intl, Recharts
+- **Testing:** pytest (backend), Playwright (E2E)
