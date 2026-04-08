@@ -1,44 +1,35 @@
-from app.schemas.schemas import (
-    # Auth
-    LoginRequest,
-    LoginResponse,
-    TokenUser,
-    # User
-    UserCreate,
-    UserUpdate,
-    UserResponse,
-    # Delivery
+from app.schemas.audit import AuditLogResponse, PaginatedAuditLogs
+from app.schemas.auth import LoginRequest, LoginResponse, TokenUser
+from app.schemas.delivery import (
+    DeliveryCreate,
     DeliveryItemCreate,
     DeliveryItemResponse,
-    DeliveryCreate,
-    DeliveryResponse,
     DeliveryListResponse,
-    # OCR
+    DeliveryResponse,
     OCRItemResult,
     OCRResponse,
-    # Inventory
-    InventoryResponse,
-    InventoryListResponse,
+)
+from app.schemas.inventory import (
     InventoryAdjust,
     InventoryAdjustResponse,
+    InventoryListResponse,
+    InventoryResponse,
     LowStockAlertCreate,
-    LowStockAlertResponse,
     LowStockAlertListResponse,
+    LowStockAlertResponse,
     TraceabilityResponse,
-    # Work Order
-    WorkOrderMaterialCreate,
-    WorkOrderCreate,
+)
+from app.schemas.user import PaginatedUsers, UserCreate, UserResponse, UserUpdate
+from app.schemas.work_order import (
+    MaterialAvailability,
     WorkOrderAssign,
-    WorkOrderStatusUpdate,
+    WorkOrderCreate,
+    WorkOrderCreateResponse,
+    WorkOrderListResponse,
+    WorkOrderMaterialCreate,
     WorkOrderMaterialResponse,
     WorkOrderResponse,
-    WorkOrderListResponse,
-    WorkOrderCreateResponse,
-    # Audit
-    AuditLogResponse,
-    PaginatedAuditLogs,
-    # Pagination
-    PaginatedUsers,
+    WorkOrderStatusUpdate,
 )
 
 __all__ = [
@@ -72,6 +63,7 @@ __all__ = [
     "WorkOrderResponse",
     "WorkOrderListResponse",
     "WorkOrderCreateResponse",
+    "MaterialAvailability",
     "AuditLogResponse",
     "PaginatedAuditLogs",
 ]
