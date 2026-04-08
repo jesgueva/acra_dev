@@ -34,3 +34,10 @@ class UserRoleAssignment(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, primary_key=True)
     role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, primary_key=True)
     assigned_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+
+class RolePrivilegeAssignment(Base):
+    __tablename__ = "role_privilege_assignments"
+
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, primary_key=True)
+    privilege_name = Column(String(100), nullable=False, primary_key=True)
