@@ -20,7 +20,7 @@ def upgrade() -> None:
     # 1. users
     op.create_table(
         "users",
-        sa.Column("user_id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("username", sa.String(50), nullable=False, unique=True),
         sa.Column("password_hash", sa.String(255), nullable=False),
         sa.Column("full_name", sa.String(150), nullable=False),
@@ -48,7 +48,7 @@ def upgrade() -> None:
     # 2. roles
     op.create_table(
         "roles",
-        sa.Column("role_id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("role_name", sa.String(100), nullable=False, unique=True),
         sa.Column("description", sa.Text(), nullable=True),
     )
@@ -68,13 +68,13 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             sa.Integer(),
-            sa.ForeignKey("users.user_id", ondelete="CASCADE"),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
             "role_id",
             sa.Integer(),
-            sa.ForeignKey("roles.role_id", ondelete="CASCADE"),
+            sa.ForeignKey("roles.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
@@ -89,7 +89,7 @@ def upgrade() -> None:
     # 4. deliveries
     op.create_table(
         "deliveries",
-        sa.Column("delivery_id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("supplier", sa.String(200), nullable=False),
         sa.Column("carrier", sa.String(200), nullable=False),
         sa.Column("delivery_date", sa.Date(), nullable=False),
@@ -97,7 +97,7 @@ def upgrade() -> None:
         sa.Column(
             "created_by",
             sa.Integer(),
-            sa.ForeignKey("users.user_id"),
+            sa.ForeignKey("users.id"),
             nullable=False,
         ),
         sa.Column(
@@ -111,7 +111,7 @@ def upgrade() -> None:
     # 5. inventory_items (source_delivery_item_id FK added after delivery_items is created)
     op.create_table(
         "inventory_items",
-        sa.Column("inventory_id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("material_type", sa.String(200), nullable=False),
         sa.Column("category", sa.String(20), nullable=False),
         sa.Column(
@@ -140,11 +140,11 @@ def upgrade() -> None:
     # 6. delivery_items (references deliveries and inventory_items)
     op.create_table(
         "delivery_items",
-        sa.Column("item_id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column(
             "delivery_id",
             sa.Integer(),
-            sa.ForeignKey("deliveries.delivery_id", ondelete="CASCADE"),
+            sa.ForeignKey("deliveries.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("material_type", sa.String(200), nullable=False),
@@ -154,25 +154,25 @@ def upgrade() -> None:
         sa.Column(
             "inventory_item_id",
             sa.Integer(),
-            sa.ForeignKey("inventory_items.inventory_id"),
+            sa.ForeignKey("inventory_items.id"),
             nullable=True,
         ),
         sa.CheckConstraint("quantity > 0", name="ck_delivery_items_quantity"),
     )
 
-    # Add the circular FK: inventory_items.source_delivery_item_id → delivery_items.item_id
+    # Add the circular FK: inventory_items.source_delivery_item_id → delivery_items.id
     op.create_foreign_key(
         "fk_inventory_items_source_delivery",
         "inventory_items",
         "delivery_items",
         ["source_delivery_item_id"],
-        ["item_id"],
+        ["id"],
     )
 
     # 7. work_orders
     op.create_table(
         "work_orders",
-        sa.Column("work_order_id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("product", sa.String(200), nullable=False),
         sa.Column("quantity_required", sa.Numeric(12, 3), nullable=False),
         sa.Column(
@@ -204,7 +204,7 @@ def upgrade() -> None:
         sa.Column(
             "created_by",
             sa.Integer(),
-            sa.ForeignKey("users.user_id"),
+            sa.ForeignKey("users.id"),
             nullable=False,
         ),
         sa.Column(
@@ -242,7 +242,7 @@ def upgrade() -> None:
         sa.Column(
             "work_order_id",
             sa.Integer(),
-            sa.ForeignKey("work_orders.work_order_id", ondelete="CASCADE"),
+            sa.ForeignKey("work_orders.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("material_type", sa.String(200), nullable=False),
@@ -264,9 +264,7 @@ def upgrade() -> None:
     # 9. material_allocations
     op.create_table(
         "material_allocations",
-        sa.Column(
-            "allocation_id", sa.Integer(), primary_key=True, autoincrement=True
-        ),
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column(
             "work_order_material_id",
             sa.Integer(),
@@ -276,7 +274,7 @@ def upgrade() -> None:
         sa.Column(
             "inventory_id",
             sa.Integer(),
-            sa.ForeignKey("inventory_items.inventory_id"),
+            sa.ForeignKey("inventory_items.id"),
             nullable=False,
         ),
         sa.Column("lot_batch_number", sa.String(100), nullable=False),
@@ -295,11 +293,11 @@ def upgrade() -> None:
     # 10. audit_logs
     op.create_table(
         "audit_logs",
-        sa.Column("log_id", sa.BigInteger(), primary_key=True, autoincrement=True),
+        sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
         sa.Column(
             "user_id",
             sa.Integer(),
-            sa.ForeignKey("users.user_id"),
+            sa.ForeignKey("users.id"),
             nullable=True,
         ),
         sa.Column("action", sa.String(100), nullable=False),
@@ -324,13 +322,13 @@ def upgrade() -> None:
     # 11. low_stock_alerts
     op.create_table(
         "low_stock_alerts",
-        sa.Column("alert_id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("material_type", sa.String(200), nullable=False, unique=True),
         sa.Column("threshold", sa.Numeric(12, 3), nullable=False),
         sa.Column(
             "created_by",
             sa.Integer(),
-            sa.ForeignKey("users.user_id"),
+            sa.ForeignKey("users.id"),
             nullable=False,
         ),
         sa.CheckConstraint("threshold >= 0", name="ck_low_stock_alerts_threshold"),
