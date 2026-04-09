@@ -8,7 +8,6 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.database import get_db
@@ -17,7 +16,7 @@ from app.main import app
 from app.models.delivery import Delivery, DeliveryItem
 from app.models.inventory import InventoryItem
 from app.models.user import User
-from app.schemas.auth import TokenUser
+from tests.conftest import _make_session, _override
 
 BASE_URL = "http://test"
 
@@ -63,40 +62,6 @@ def _make_login_session(user: User):
     return session
 
 
-def _make_rbac_session(user: User, roles: list[str], privileges: list[str], service_handlers=None):
-    """RBAC mock session: 3 RBAC queries then service_handlers for subsequent queries."""
-    service_handlers = service_handlers or []
-    session = AsyncMock()
-    call_no = {"n": 0}
-
-    async def _execute(query, *args, **kwargs):
-        result = MagicMock()
-        n = call_no["n"]
-        call_no["n"] += 1
-        if n == 0:
-            result.scalar_one_or_none.return_value = user
-        elif n == 1:
-            result.fetchall.return_value = [(r,) for r in roles]
-        elif n == 2:
-            result.fetchall.return_value = [(p,) for p in privileges]
-        else:
-            svc_idx = n - 3
-            if svc_idx < len(service_handlers):
-                service_handlers[svc_idx](result)
-        return result
-
-    session.execute = _execute
-    session.add = MagicMock()
-    session.flush = AsyncMock()
-    session.commit = AsyncMock()
-    session.delete = AsyncMock()
-    return session
-
-
-def _override(session):
-    async def _dep():
-        yield session
-    return _dep
 
 
 def _make_mock_delivery(delivery_id: int = 1) -> Delivery:
@@ -192,7 +157,7 @@ async def test_create_delivery_creates_inventory_items():
     def h_bol_check(r):
         r.scalar_one_or_none.return_value = None  # no duplicate
 
-    session = _make_rbac_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_bol_check])
+    session = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_bol_check])
 
     # Wire flush to assign IDs
     async def _flush():
@@ -244,7 +209,7 @@ async def test_inventory_shows_received_items():
     def h_items(r): r.scalars.return_value.all.return_value = [inv]
     def h_alerts(r): r.scalars.return_value.all.return_value = []
 
-    session = _make_rbac_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_count, h_items, h_alerts])
+    session = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_count, h_items, h_alerts])
     app.dependency_overrides[get_db] = _override(session)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
@@ -281,7 +246,7 @@ async def test_list_deliveries_with_supplier_filter():
     def h_deliveries(r): r.scalars.return_value.all.return_value = [delivery]
     def h_items(r): r.scalars.return_value.all.return_value = [item]
 
-    session = _make_rbac_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_count, h_deliveries, h_items])
+    session = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_count, h_deliveries, h_items])
     app.dependency_overrides[get_db] = _override(session)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
@@ -317,7 +282,7 @@ async def test_duplicate_bol_rejected_then_forced():
     def h_bol_exists(r):
         r.scalar_one_or_none.return_value = existing_delivery
 
-    session1 = _make_rbac_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_bol_exists])
+    session1 = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_bol_exists])
     app.dependency_overrides[get_db] = _override(session1)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
@@ -337,7 +302,7 @@ async def test_duplicate_bol_rejected_then_forced():
     def h_bol_exists_again(r):
         r.scalar_one_or_none.return_value = existing_delivery
 
-    session2 = _make_rbac_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_bol_exists_again])
+    session2 = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_bol_exists_again])
 
     async def _flush():
         for d in added.get("deliveries", []):

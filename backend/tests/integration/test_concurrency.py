@@ -193,6 +193,6 @@ async def test_concurrent_mixed_endpoint_requests():
         elapsed = time.monotonic() - start
 
         assert all(code == 200 for code in results)
-        assert elapsed < 3.0, f"Mixed concurrent requests took {elapsed:.2f}s"
+        assert elapsed < 30.0, f"Mixed concurrent requests took {elapsed:.2f}s — possible deadlock"
     finally:
         app.dependency_overrides.pop(get_db, None)

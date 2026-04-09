@@ -52,7 +52,7 @@ jobs:
 
       - name: Run tests
         working-directory: backend
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short --cov=app --cov-report=term-missing --cov-fail-under=85
 
   frontend:
     name: Frontend Tests, Lint & Build

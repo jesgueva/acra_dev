@@ -5,7 +5,6 @@ Verifies that multiple user actions produce audit log entries and that
 GET /audit-logs returns them in the correct order with the expected fields.
 """
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
 
 from httpx import ASGITransport, AsyncClient
 
@@ -14,14 +13,11 @@ from app.core.security import create_access_token, hash_password
 from app.main import app
 from app.models.audit import AuditLog
 from app.models.user import User
+from tests.conftest import _make_session, _override
 
 BASE_URL = "http://test"
 ADMIN_PRIVS = ["audit.view", "inventory.adjust", "deliveries.create", "work_orders.create"]
 
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
 
 def _make_user() -> User:
     u = User()
@@ -33,40 +29,6 @@ def _make_user() -> User:
     u.production_line = None
     u.password_hash = hash_password("pw123")
     return u
-
-
-def _make_session(user, roles, privileges, service_handlers=None):
-    service_handlers = service_handlers or []
-    session = AsyncMock()
-    call_no = {"n": 0}
-
-    async def _execute(query, *args, **kwargs):
-        result = MagicMock()
-        n = call_no["n"]
-        call_no["n"] += 1
-        if n == 0:
-            result.scalar_one_or_none.return_value = user
-        elif n == 1:
-            result.fetchall.return_value = [(r,) for r in roles]
-        elif n == 2:
-            result.fetchall.return_value = [(p,) for p in privileges]
-        else:
-            svc_idx = n - 3
-            if svc_idx < len(service_handlers):
-                service_handlers[svc_idx](result)
-        return result
-
-    session.execute = _execute
-    session.add = MagicMock()
-    session.flush = AsyncMock()
-    session.commit = AsyncMock()
-    return session
-
-
-def _override(session):
-    async def _dep():
-        yield session
-    return _dep
 
 
 def _make_log(
@@ -141,7 +103,6 @@ async def test_audit_entries_in_chronological_order():
     user = _make_user()
     token = create_access_token(user_id=1)
 
-    t_base = datetime(2026, 4, 8, 10, 0, 0, tzinfo=timezone.utc)
     logs = [
         _make_log(id=1, action="login", entity_type="User",
                   ts=datetime(2026, 4, 8, 10, 0, 0, tzinfo=timezone.utc)),

@@ -5,7 +5,6 @@ Verifies that after a delivery is received and materials are allocated to a work
 GET /inventory/trace/{lot} returns source delivery + allocation info.
 """
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
 
 from httpx import ASGITransport, AsyncClient
 
@@ -16,6 +15,7 @@ from app.models.delivery import Delivery, DeliveryItem
 from app.models.inventory import InventoryItem
 from app.models.user import User
 from app.models.work_order import MaterialAllocation, WorkOrder, WorkOrderMaterial
+from tests.conftest import _make_session, _override
 
 BASE_URL = "http://test"
 LOT = "LOT-TRACE-001"
@@ -37,38 +37,6 @@ def _make_user() -> User:
     return u
 
 
-def _make_session(user, roles, privileges, service_handlers=None):
-    service_handlers = service_handlers or []
-    session = AsyncMock()
-    call_no = {"n": 0}
-
-    async def _execute(query, *args, **kwargs):
-        result = MagicMock()
-        n = call_no["n"]
-        call_no["n"] += 1
-        if n == 0:
-            result.scalar_one_or_none.return_value = user
-        elif n == 1:
-            result.fetchall.return_value = [(r,) for r in roles]
-        elif n == 2:
-            result.fetchall.return_value = [(p,) for p in privileges]
-        else:
-            svc_idx = n - 3
-            if svc_idx < len(service_handlers):
-                service_handlers[svc_idx](result)
-        return result
-
-    session.execute = _execute
-    session.add = MagicMock()
-    session.flush = AsyncMock()
-    session.commit = AsyncMock()
-    return session
-
-
-def _override(session):
-    async def _dep():
-        yield session
-    return _dep
 
 
 def _make_inventory_item(source_delivery_item_id: int | None = 10) -> InventoryItem:
