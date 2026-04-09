@@ -1,6 +1,10 @@
 import axios from "axios";
 import { SESSION_EXPIRED_REASON } from "@/src/lib/auth-constants";
 
+export function getResponseStatus(err: unknown): number | undefined {
+  return axios.isAxiosError(err) ? err.response?.status : undefined;
+}
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 

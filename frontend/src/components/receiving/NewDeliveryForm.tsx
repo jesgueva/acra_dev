@@ -6,7 +6,7 @@ import { Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { apiClient } from "@/src/lib/api-client";
+import { apiClient, getResponseStatus } from "@/src/lib/api-client";
 import type { OCRResult } from "./OCRUploader";
 
 interface ItemRow {
@@ -22,6 +22,15 @@ const emptyRow = (): ItemRow => ({
   quantity: "",
   unit: "",
 });
+
+function ocrItemsToRows(items: NonNullable<OCRResult["items"]>): ItemRow[] {
+  return items.map((it) => ({
+    item_name: it.item_name,
+    lot_batch_number: it.lot_batch_number,
+    quantity: String(it.quantity),
+    unit: it.unit,
+  }));
+}
 
 interface NewDeliveryFormProps {
   onSuccess: () => void;
@@ -39,34 +48,16 @@ export default function NewDeliveryForm({
   const [supplier, setSupplier] = useState(initialValues?.supplier ?? "");
   const [bolNumber, setBolNumber] = useState(initialValues?.bol_number ?? "");
   const [items, setItems] = useState<ItemRow[]>(
-    initialValues?.items?.length
-      ? initialValues.items.map((it) => ({
-          item_name: it.item_name,
-          lot_batch_number: it.lot_batch_number,
-          quantity: String(it.quantity),
-          unit: it.unit,
-        }))
-      : [emptyRow()]
+    initialValues?.items?.length ? ocrItemsToRows(initialValues.items) : [emptyRow()]
   );
-  const [bolError, setBolError] = useState<string | null>(null);
   const [showProceedAnyway, setShowProceedAnyway] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Sync initialValues when OCR pre-populates
   useEffect(() => {
     if (!initialValues) return;
     if (initialValues.supplier) setSupplier(initialValues.supplier);
     if (initialValues.bol_number) setBolNumber(initialValues.bol_number);
-    if (initialValues.items?.length) {
-      setItems(
-        initialValues.items.map((it) => ({
-          item_name: it.item_name,
-          lot_batch_number: it.lot_batch_number,
-          quantity: String(it.quantity),
-          unit: it.unit,
-        }))
-      );
-    }
+    if (initialValues.items?.length) setItems(ocrItemsToRows(initialValues.items));
   }, [initialValues]);
 
   function isHighlighted(field: string) {
@@ -89,7 +80,7 @@ export default function NewDeliveryForm({
 
   async function submitDelivery(force = false) {
     setLoading(true);
-    setBolError(null);
+    setShowProceedAnyway(false);
     try {
       await apiClient.post("/deliveries", {
         supplier,
@@ -102,12 +93,9 @@ export default function NewDeliveryForm({
           unit: row.unit,
         })),
       });
-      setShowProceedAnyway(false);
       onSuccess();
     } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      if (status === 409) {
-        setBolError(t("bolDuplicate"));
+      if (getResponseStatus(err) === 409) {
         setShowProceedAnyway(true);
       }
     } finally {
@@ -122,7 +110,6 @@ export default function NewDeliveryForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Supplier */}
       <div className="space-y-1.5">
         <Label htmlFor="supplier">{t("supplier")}</Label>
         <Input
@@ -134,7 +121,6 @@ export default function NewDeliveryForm({
         />
       </div>
 
-      {/* BOL Number */}
       <div className="space-y-1.5">
         <Label htmlFor="bol_number">{t("bolNumber")}</Label>
         <Input
@@ -142,20 +128,18 @@ export default function NewDeliveryForm({
           value={bolNumber}
           onChange={(e) => {
             setBolNumber(e.target.value);
-            setBolError(null);
             setShowProceedAnyway(false);
           }}
           className={isHighlighted("bol_number") ? "border-yellow-400 bg-yellow-50" : ""}
           required
         />
-        {bolError && (
+        {showProceedAnyway && (
           <p className="text-sm text-destructive" role="alert">
-            {bolError}
+            {t("bolDuplicate")}
           </p>
         )}
       </div>
 
-      {/* 409 Proceed Anyway banner */}
       {showProceedAnyway && (
         <div className="rounded-md bg-yellow-50 border border-yellow-300 px-4 py-3 flex items-center justify-between gap-4">
           <p className="text-sm text-yellow-800">{t("bolDuplicate")}</p>
@@ -171,7 +155,6 @@ export default function NewDeliveryForm({
         </div>
       )}
 
-      {/* Line items */}
       <div className="space-y-3">
         {items.map((row, index) => (
           <div key={index} className="grid grid-cols-[1fr_1fr_80px_80px_auto] gap-2 items-end">
@@ -182,9 +165,7 @@ export default function NewDeliveryForm({
                 value={row.item_name}
                 onChange={(e) => updateItem(index, "item_name", e.target.value)}
                 className={
-                  isHighlighted(`items.${index}.item_name`)
-                    ? "border-yellow-400 bg-yellow-50"
-                    : ""
+                  isHighlighted(`items.${index}.item_name`) ? "border-yellow-400 bg-yellow-50" : ""
                 }
                 required
               />

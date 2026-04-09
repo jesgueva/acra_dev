@@ -17,7 +17,6 @@ export default function ReceivingPage() {
 
   function handleOCRResult(result: OCRResult) {
     setOcrValues(result);
-    // Mark all top-level non-empty fields plus item fields as highlighted
     const highlighted: string[] = [];
     if (result.supplier) highlighted.push("supplier");
     if (result.bol_number) highlighted.push("bol_number");
@@ -41,14 +40,12 @@ export default function ReceivingPage() {
     <div className="space-y-6 p-6">
       <h1 className="text-2xl font-semibold">{t("title")}</h1>
 
-      {/* OCR Upload */}
       <Card>
         <CardContent className="pt-6">
           <OCRUploader onOCRResult={handleOCRResult} />
         </CardContent>
       </Card>
 
-      {/* New Delivery Form */}
       <Card>
         <CardHeader>
           <CardTitle>{t("submit")}</CardTitle>
@@ -62,7 +59,6 @@ export default function ReceivingPage() {
         </CardContent>
       </Card>
 
-      {/* Delivery List */}
       <Card>
         <CardHeader>
           <CardTitle>{t("title")}</CardTitle>

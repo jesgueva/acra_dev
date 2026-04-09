@@ -39,13 +39,8 @@ export default function OCRUploader({ onOCRResult }: OCRUploaderProps) {
       });
       onOCRResult(data);
       toast.success(t("ocrSuccess"));
-    } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      if (status === 422) {
-        toast.error(t("ocrError"));
-      } else {
-        toast.error(t("ocrError"));
-      }
+    } catch {
+      toast.error(t("ocrError"));
     } finally {
       setUploading(false);
     }

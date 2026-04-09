@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { apiClient } from "@/src/lib/api-client";
+
+const PAGE_SIZE = 20;
 
 interface Delivery {
   delivery_id: number;
@@ -42,30 +44,32 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
   const [supplierFilter, setSupplierFilter] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const fetchDeliveries = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string | number> = { page, page_size: pageSize };
-      if (supplierFilter) params.supplier = supplierFilter;
-      const { data } = await apiClient.get<PaginatedDeliveries>("/deliveries", { params });
-      setDeliveries(data.items);
-      setTotal(data.total);
-    } catch {
-      // silently ignore — upstream interceptor handles auth errors
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, supplierFilter]);
-
   useEffect(() => {
-    fetchDeliveries();
-  }, [fetchDeliveries, refetch]);
+    let cancelled = false;
+    setLoading(true);
+    const params: Record<string, string | number> = { page, page_size: PAGE_SIZE };
+    if (supplierFilter) params.supplier = supplierFilter;
+    apiClient
+      .get<PaginatedDeliveries>("/deliveries", { params })
+      .then(({ data }) => {
+        if (!cancelled) {
+          setDeliveries(data.items);
+          setTotal(data.total);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [page, supplierFilter, refetch]);
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
     if (status === "confirmed") return "default";
@@ -75,7 +79,6 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
 
   return (
     <div className="space-y-4">
-      {/* Filter */}
       <div className="flex items-center gap-2">
         <Input
           placeholder={t("filterBySupplier")}
@@ -88,7 +91,6 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
         />
       </div>
 
-      {/* Table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -128,7 +130,6 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
         </Table>
       </div>
 
-      {/* Pagination */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
           {total} {total === 1 ? "result" : "results"}

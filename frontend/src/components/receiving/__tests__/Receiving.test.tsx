@@ -9,6 +9,8 @@ jest.mock("@/src/lib/api-client", () => ({
     get: jest.fn(),
     post: jest.fn(),
   },
+  getResponseStatus: (err: unknown) =>
+    (err as { response?: { status?: number } })?.response?.status,
 }));
 
 jest.mock("sonner", () => ({
