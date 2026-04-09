@@ -12,6 +12,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(150), nullable=False)
     preferred_language = Column(String(10), nullable=False, server_default="en")
+    production_line = Column(String(50), nullable=True)
     status = Column(String(20), nullable=False, server_default="active")
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 

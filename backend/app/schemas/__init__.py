@@ -23,12 +23,14 @@ from app.schemas.user import PaginatedUsers, UserCreate, UserResponse, UserUpdat
 from app.schemas.work_order import (
     MaterialAvailability,
     WorkOrderAssign,
+    WorkOrderAssignResponse,
     WorkOrderCreate,
     WorkOrderCreateResponse,
     WorkOrderListResponse,
     WorkOrderMaterialCreate,
     WorkOrderMaterialResponse,
     WorkOrderResponse,
+    WorkOrderSequenceUpdate,
     WorkOrderStatusUpdate,
 )
 
@@ -58,7 +60,9 @@ __all__ = [
     "WorkOrderMaterialCreate",
     "WorkOrderCreate",
     "WorkOrderAssign",
+    "WorkOrderAssignResponse",
     "WorkOrderStatusUpdate",
+    "WorkOrderSequenceUpdate",
     "WorkOrderMaterialResponse",
     "WorkOrderResponse",
     "WorkOrderListResponse",

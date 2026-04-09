@@ -70,6 +70,7 @@ def require_privilege(privilege: str):
             roles=role_names,
             preferred_language=user.preferred_language,
             effective_privileges=effective_privileges,
+            production_line=user.production_line,
         )
 
         if privilege == "authenticated":
