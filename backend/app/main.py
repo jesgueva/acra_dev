@@ -62,8 +62,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # ---------------------------------------------------------------------------
 
 from app.routers.auth import router as auth_router  # noqa: E402
+from app.routers.deliveries import router as deliveries_router  # noqa: E402
 
 app.include_router(auth_router)
+app.include_router(deliveries_router)
 
 
 @app.get("/health")

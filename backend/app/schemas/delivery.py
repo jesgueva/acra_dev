@@ -17,6 +17,7 @@ class DeliveryCreate(BaseModel):
     delivery_date: date
     bol_reference: str = Field(..., max_length=100)
     items: List[DeliveryItemCreate] = Field(..., min_length=1)
+    force: bool = False
 
 
 class DeliveryItemResponse(BaseModel):
