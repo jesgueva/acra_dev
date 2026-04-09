@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { ROLES } from "@/src/lib/privileges";
 
 interface QuickAction {
   href: string;
@@ -7,23 +8,23 @@ interface QuickAction {
 }
 
 const ROLE_ACTIONS: Record<string, QuickAction[]> = {
-  Admin: [
+  [ROLES.ADMIN]: [
     { href: "/receiving", label: "Receiving" },
     { href: "/inventory", label: "Inventory" },
     { href: "/work-orders", label: "Work Orders" },
     { href: "/users", label: "Users" },
     { href: "/audit", label: "Audit Log" },
   ],
-  Supervisor: [
+  [ROLES.SUPERVISOR]: [
     { href: "/inventory", label: "Inventory" },
     { href: "/work-orders", label: "Work Orders" },
   ],
-  Clerk: [{ href: "/receiving", label: "Receiving" }],
-  "Machine Operator": [{ href: "/work-orders", label: "Work Orders" }],
+  [ROLES.CLERK]: [{ href: "/receiving", label: "Receiving" }],
+  [ROLES.OPERATOR]: [{ href: "/work-orders", label: "Work Orders" }],
 };
 
 function getActionsForRoles(roles: string[]): QuickAction[] {
-  for (const role of ["Admin", "Supervisor", "Clerk", "Machine Operator"]) {
+  for (const role of [ROLES.ADMIN, ROLES.SUPERVISOR, ROLES.CLERK, ROLES.OPERATOR]) {
     if (roles.includes(role)) return ROLE_ACTIONS[role] ?? [];
   }
   return [];

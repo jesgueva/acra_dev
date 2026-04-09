@@ -13,6 +13,7 @@ import { type LucideIcon } from "lucide-react";
 
 import { useAuth } from "@/src/contexts/AuthContext";
 import { apiClient } from "@/src/lib/api-client";
+import { ROLES } from "@/src/lib/privileges";
 import { SummaryCard } from "./SummaryCard";
 import { AlertBanner, type AlertItem } from "./AlertBanner";
 import { QuickActionBar } from "./QuickActionBar";
@@ -24,12 +25,19 @@ interface SummaryCardDef {
   value: string | number;
 }
 
-function buildAdminCards(
-  alertCount: number,
-  deliveryCount: number,
-  workOrderCount: number,
-  userCount: number
-): SummaryCardDef[] {
+interface AdminCardCounts {
+  alertCount: number;
+  deliveryCount: number;
+  workOrderCount: number;
+  userCount: number;
+}
+
+function buildAdminCards({
+  alertCount,
+  deliveryCount,
+  workOrderCount,
+  userCount,
+}: AdminCardCounts): SummaryCardDef[] {
   return [
     { icon: Truck, label: "Total Deliveries", value: deliveryCount },
     { icon: AlertTriangle, label: "Low Stock Items", value: alertCount },
@@ -62,12 +70,11 @@ export function Dashboard() {
   const { user } = useAuth();
   const roles = user?.roles ?? [];
 
-  const isAdmin = roles.includes("Admin");
-  const isSupervisor = roles.includes("Supervisor");
-  const isClerk = roles.includes("Clerk");
-  const isOperator = roles.includes("Machine Operator");
+  const isAdmin = roles.includes(ROLES.ADMIN);
+  const isSupervisor = roles.includes(ROLES.SUPERVISOR);
+  const isClerk = roles.includes(ROLES.CLERK);
+  const isOperator = roles.includes(ROLES.OPERATOR);
 
-  // Alerts — Admin only
   const { data: alerts = [] } = useQuery<AlertItem[]>({
     queryKey: ["inventory-alerts"],
     queryFn: async () => {
@@ -77,7 +84,6 @@ export function Dashboard() {
     enabled: isAdmin,
   });
 
-  // Inventory items for chart — Admin + Supervisor
   const { data: inventoryItems = [] } = useQuery<InventoryChartItem[]>({
     queryKey: ["inventory-top5"],
     queryFn: async () => {
@@ -89,7 +95,6 @@ export function Dashboard() {
     enabled: isAdmin || isSupervisor,
   });
 
-  // Summary counts
   const { data: deliveryCount = 0 } = useQuery<number>({
     queryKey: ["deliveries-count"],
     queryFn: async () => {
@@ -117,15 +122,14 @@ export function Dashboard() {
     enabled: isAdmin,
   });
 
-  // Build role-specific summary cards
   let cards: SummaryCardDef[] = [];
   if (isAdmin) {
-    cards = buildAdminCards(
-      alerts.filter((a) => a.is_triggered).length,
+    cards = buildAdminCards({
+      alertCount: alerts.filter((a) => a.is_triggered).length,
       deliveryCount,
       workOrderCount,
-      userCount
-    );
+      userCount,
+    });
   } else if (isSupervisor) {
     cards = buildSupervisorCards(workOrderCount);
   } else if (isClerk) {

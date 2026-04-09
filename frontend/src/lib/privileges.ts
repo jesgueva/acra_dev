@@ -7,3 +7,10 @@ export const PRIVILEGES = {
 } as const;
 
 export type Privilege = (typeof PRIVILEGES)[keyof typeof PRIVILEGES];
+
+export const ROLES = {
+  ADMIN: "Admin",
+  SUPERVISOR: "Supervisor",
+  CLERK: "Clerk",
+  OPERATOR: "Machine Operator",
+} as const;
