@@ -75,6 +75,8 @@ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/acra_db
 SECRET_KEY=your-secret-key-here
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=480
+GEMINI_API_KEY=your-gemini-api-key-here
+ANTHROPIC_API_KEY=your-anthropic-api-key-here
 ```
 
 ### Frontend (`frontend/.env.local`)
