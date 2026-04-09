@@ -99,7 +99,15 @@ Every `require_privilege` dependency fires **exactly 3 DB queries** before any s
 - `n=1` — `fetchall()` → roles
 - `n=2` — `fetchall()` → privileges
 
-Build mocks against this sequence. The canonical helper is `_make_session` in `tests/test_inventory.py`.
+Build mocks against this sequence. The canonical helpers live in `tests/conftest.py` — import them rather than redefining:
+
+```python
+from tests.conftest import _make_session, _make_user, _override
+```
+
+- `_make_session(user, roles, privileges, service_handlers=[])` — wires the 3-query RBAC sequence; service queries start at index 3.
+- `_make_user(password, status, production_line)` — returns an active `User` ORM stub.
+- `_override(session)` — async generator for `app.dependency_overrides[get_db]`.
 
 ### Coverage
 Use **dot notation** for `--cov` paths:
