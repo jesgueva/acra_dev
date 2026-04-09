@@ -3,6 +3,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { getMessages, getLocale } from "next-intl/server";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import { AuthProvider } from "@/src/contexts/AuthContext";
+import { QueryProvider } from "@/src/components/providers/QueryProvider";
 import "../globals.css";
 
 const plusJakartaSans = Plus_Jakarta_Sans({
@@ -22,7 +23,9 @@ export default async function LocaleLayout({
     <html lang={locale} className={plusJakartaSans.variable}>
       <body>
         <NextIntlClientProvider locale={locale} messages={messages}>
-          <AuthProvider>{children}</AuthProvider>
+          <QueryProvider>
+            <AuthProvider>{children}</AuthProvider>
+          </QueryProvider>
         </NextIntlClientProvider>
       </body>
     </html>
