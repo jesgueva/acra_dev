@@ -88,3 +88,28 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 - **Backend:** FastAPI, SQLAlchemy (async), Alembic, PostgreSQL, bcrypt, python-jose
 - **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS, shadcn/ui, next-intl, Recharts
 - **Testing:** pytest (backend), Playwright (E2E)
+
+## Backend Testing Patterns
+
+### Authenticated endpoint mocks
+Every `require_privilege` dependency fires **exactly 3 DB queries** before any service logic runs:
+- `n=0` — `scalar_one_or_none()` → User lookup
+- `n=1` — `fetchall()` → roles
+- `n=2` — `fetchall()` → privileges
+
+Build mocks against this sequence. The canonical helper is `_make_session` in `tests/test_inventory.py`.
+
+### Coverage
+Use **dot notation** for `--cov` paths:
+```bash
+pytest tests/test_foo.py --cov=app.routers.foo --cov=app.services.foo_service --cov-report=term-missing
+```
+
+### SQLAlchemy AsyncSession
+- `db.add(obj)` — sync, no `await`
+- `db.delete(obj)` — async, needs `await`
+- `db.commit()` / `db.execute()` — async, needs `await`
+
+## Merge Notes
+
+Each ticket adds its own router import + `app.include_router(...)` to `main.py`. Concurrent branches will conflict here — resolve manually at merge time by keeping all router registrations.
