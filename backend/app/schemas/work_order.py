@@ -29,6 +29,10 @@ class WorkOrderStatusUpdate(BaseModel):
     quantity_produced: Optional[float] = Field(None, ge=0)
 
 
+class WorkOrderSequenceUpdate(BaseModel):
+    display_sequence: int = Field(..., ge=0)
+
+
 class WorkOrderMaterialResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -42,6 +46,7 @@ class WorkOrderResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    wo_number: str
     product: str
     status: str
     priority: str
@@ -54,6 +59,10 @@ class WorkOrderResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     materials: List[WorkOrderMaterialResponse] = []
+
+
+class WorkOrderAssignResponse(WorkOrderResponse):
+    capacity_warning: Optional[str] = None
 
 
 class WorkOrderListResponse(BaseModel):
@@ -72,5 +81,6 @@ class MaterialAvailability(BaseModel):
 
 class WorkOrderCreateResponse(BaseModel):
     id: int
+    wo_number: str
     status: str
     material_availability: List[MaterialAvailability] = []

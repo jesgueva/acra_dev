@@ -14,6 +14,7 @@ class TokenUser(BaseModel):
     roles: List[str]
     preferred_language: str
     effective_privileges: List[str] = []
+    production_line: str | None = None
 
 
 class LoginResponse(BaseModel):
