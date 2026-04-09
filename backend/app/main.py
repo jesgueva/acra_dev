@@ -61,11 +61,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # Routes
 # ---------------------------------------------------------------------------
 
+from app.routers.audit import router as audit_router  # noqa: E402
 from app.routers.auth import router as auth_router  # noqa: E402
 from app.routers.deliveries import router as deliveries_router  # noqa: E402
 from app.routers.inventory import router as inventory_router  # noqa: E402
 from app.routers.work_orders import router as work_orders_router  # noqa: E402
 
+app.include_router(audit_router)
 app.include_router(auth_router)
 app.include_router(deliveries_router)
 app.include_router(inventory_router)
