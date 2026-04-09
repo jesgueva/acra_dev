@@ -1,6 +1,7 @@
 import React from "react";
 import { render, screen, act, waitFor } from "@testing-library/react";
 import { AuthProvider, useAuth } from "../AuthContext";
+import { PRIVILEGES } from "@/src/lib/privileges";
 
 // Silence fetch-related noise in tests
 beforeEach(() => {
@@ -20,7 +21,7 @@ function TestConsumer() {
     <div>
       <span data-testid="is-auth">{String(isAuthenticated)}</span>
       <span data-testid="user">{user?.full_name ?? "none"}</span>
-      <span data-testid="priv-receiving">{String(hasPrivilege("receiving.view"))}</span>
+      <span data-testid="priv-receiving">{String(hasPrivilege(PRIVILEGES.RECEIVING_VIEW))}</span>
     </div>
   );
 }
@@ -44,7 +45,7 @@ test("login sets user and token; logout clears them", async () => {
     full_name: "Admin User",
     roles: ["admin"],
     preferred_language: "en",
-    effective_privileges: ["receiving.view", "inventory.view"],
+    effective_privileges: [PRIVILEGES.RECEIVING_VIEW, PRIVILEGES.INVENTORY_VIEW],
   };
 
   // First call is /api/auth/me (returns no session), second is /api/auth/login
@@ -62,11 +63,11 @@ test("login sets user and token; logout clears them", async () => {
       <div>
         <span data-testid="is-auth">{String(isAuthenticated)}</span>
         <span data-testid="user">{user?.full_name ?? "none"}</span>
-        <span data-testid="priv">{String(hasPrivilege("receiving.view"))}</span>
+        <span data-testid="priv">{String(hasPrivilege(PRIVILEGES.RECEIVING_VIEW))}</span>
         <button onClick={() => login({ username: "admin", password: "admin123" })}>
           login
         </button>
-        <button onClick={() => logout()}>logout</button>
+        <button onClick={logout}>logout</button>
       </div>
     );
   }
