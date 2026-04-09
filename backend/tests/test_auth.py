@@ -9,10 +9,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.database import get_db
-from app.core.security import create_access_token, hash_password
+from app.core.security import create_access_token
 from app.main import app
-from app.models.user import User
 from app.schemas.auth import TokenUser
+from tests.conftest import _make_user, _override
 
 BASE_URL = "http://test"
 
@@ -20,16 +20,6 @@ BASE_URL = "http://test"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _make_user(status: str = "active") -> User:
-    u = User()
-    u.id = 1
-    u.username = "testuser"
-    u.full_name = "Test User"
-    u.preferred_language = "en"
-    u.status = status
-    u.password_hash = hash_password("password123")
-    return u
 
 
 def _make_session(user=None, roles=None, privileges=None):
@@ -62,13 +52,6 @@ def _make_session(user=None, roles=None, privileges=None):
     session.add = MagicMock()
     session.commit = AsyncMock()
     return session
-
-
-def _override(session):
-    """Return a FastAPI dependency override (async generator) for get_db."""
-    async def _dep():
-        yield session
-    return _dep
 
 
 # ---------------------------------------------------------------------------
