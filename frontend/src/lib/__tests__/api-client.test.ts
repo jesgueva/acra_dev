@@ -26,8 +26,7 @@ test("401 response triggers logout handler and navigates to /login", async () =>
   // Create an adapter that returns a 401
   const adapter401 = async () => {
     const err = new axios.AxiosError("Request failed with status code 401");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (err as any).response = { status: 401, data: {}, headers: {}, config: {} };
+    (err as Record<string, unknown>).response = { status: 401, data: {}, headers: {}, config: {} };
     throw err;
   };
 

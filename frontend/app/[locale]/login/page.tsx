@@ -4,6 +4,9 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { useAuth } from "@/src/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export default function LoginPage() {
   const t = useTranslations("auth");
@@ -30,54 +33,46 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gray-50">
+    <main className="min-h-screen flex items-center justify-center bg-muted">
       <form
         onSubmit={handleSubmit}
-        className="bg-white shadow rounded-lg p-8 w-full max-w-sm space-y-4"
+        className="bg-card text-card-foreground shadow-sm rounded-xl border p-8 w-full max-w-sm space-y-5"
       >
-        <h1 className="text-2xl font-bold text-gray-900">{t("login")}</h1>
+        <h1 className="text-2xl font-bold">{t("login")}</h1>
 
         {error && (
-          <p className="text-sm text-red-600 bg-red-50 rounded p-2">{error}</p>
+          <p className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2">
+            {error}
+          </p>
         )}
 
-        <div className="space-y-1">
-          <label className="text-sm font-medium text-gray-700" htmlFor="username">
-            {t("username")}
-          </label>
-          <input
+        <div className="space-y-1.5">
+          <Label htmlFor="username">{t("username")}</Label>
+          <Input
             id="username"
             type="text"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             autoComplete="username"
             required
           />
         </div>
 
-        <div className="space-y-1">
-          <label className="text-sm font-medium text-gray-700" htmlFor="password">
-            {t("password")}
-          </label>
-          <input
+        <div className="space-y-1.5">
+          <Label htmlFor="password">{t("password")}</Label>
+          <Input
             id="password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             autoComplete="current-password"
             required
           />
         </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-blue-600 text-white rounded-md py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
+        <Button type="submit" disabled={loading} className="w-full">
           {loading ? "..." : t("loginButton")}
-        </button>
+        </Button>
       </form>
     </main>
   );
