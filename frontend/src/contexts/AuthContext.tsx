@@ -75,8 +75,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify(credentials),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail ?? "Login failed");
+        const body = await res.json().catch(() => ({}));
+        const error = Object.assign(new Error(body.detail ?? "Login failed"), {
+          status: res.status,
+        });
+        throw error;
       }
       const data = await res.json();
       setUser(data.user);

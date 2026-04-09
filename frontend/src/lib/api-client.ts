@@ -43,7 +43,7 @@ apiClient.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       if (_logoutFn) _logoutFn();
-      _navigateFn("/login");
+      _navigateFn("/login?reason=session_expired");
     }
     return Promise.reject(error);
   }
