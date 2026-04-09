@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/src/contexts/AuthContext";
+import { SESSION_EXPIRED_REASON } from "@/src/lib/auth-constants";
 import {
   Card,
   CardContent,
@@ -26,7 +27,7 @@ export default function AuthForm() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const sessionExpired = searchParams.get("reason") === "session_expired";
+  const sessionExpired = searchParams.get("reason") === SESSION_EXPIRED_REASON;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

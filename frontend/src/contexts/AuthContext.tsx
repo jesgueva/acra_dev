@@ -88,9 +88,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const hasPrivilege = useCallback(
-    (privilege: string) => user?.effective_privileges.includes(privilege) ?? false,
+  const privilegeSet = useMemo(
+    () => new Set(user?.effective_privileges ?? []),
     [user]
+  );
+
+  const hasPrivilege = useCallback(
+    (privilege: string) => privilegeSet.has(privilege),
+    [privilegeSet]
   );
 
   const value = useMemo<AuthContextValue>(

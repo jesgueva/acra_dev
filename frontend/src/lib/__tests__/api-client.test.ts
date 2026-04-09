@@ -17,7 +17,7 @@ test("setAuthToken adds Bearer Authorization header to apiClient", () => {
   expect(apiClient.defaults.headers.common["Authorization"]).toBeUndefined();
 });
 
-test("401 response triggers logout handler and navigates to /login", async () => {
+test("401 response triggers logout handler and navigates to /login?reason=session_expired", async () => {
   const logoutFn = jest.fn();
   const navigateFn = jest.fn();
   registerLogoutHandler(logoutFn);
@@ -41,7 +41,7 @@ test("401 response triggers logout handler and navigates to /login", async () =>
   }
 
   expect(logoutFn).toHaveBeenCalledTimes(1);
-  expect(navigateFn).toHaveBeenCalledWith("/login");
+  expect(navigateFn).toHaveBeenCalledWith("/login?reason=session_expired");
 
   // Restore adapter
   apiClient.defaults.adapter = originalAdapter;
