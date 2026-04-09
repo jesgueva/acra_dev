@@ -27,6 +27,7 @@ function makeAuth(privileges: string[]): AuthContextValue {
     },
     token: "tok",
     isAuthenticated: true,
+    authResolved: true,
     login: jest.fn(),
     logout: jest.fn(),
     hasPrivilege: (p: string) => privileges.includes(p),

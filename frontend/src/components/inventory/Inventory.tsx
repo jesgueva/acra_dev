@@ -13,10 +13,11 @@ import { ExportButton } from "./ExportButton";
 import { InventoryTrendLine } from "./InventoryTrendLine";
 import {
   DEFAULT_FILTERS,
+  filterItemsByDateRange,
   filtersToParams,
   FilterState,
   InventoryItem,
-  InventoryResponse,
+  InventoryListResponse,
 } from "./types";
 
 export function Inventory() {
@@ -30,18 +31,21 @@ export function Inventory() {
   const [selectedLot, setSelectedLot] = useState<string | null>(null);
   const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null);
 
-  const { data, isLoading } = useQuery<InventoryResponse>({
+  const { data, isLoading } = useQuery<InventoryListResponse>({
     queryKey: ["inventory", filters],
     queryFn: async () => {
       const params = filtersToParams(filters);
-      const res = await apiClient.get<InventoryResponse>(
+      const res = await apiClient.get<InventoryListResponse>(
         `/inventory${params.toString() ? `?${params}` : ""}`
       );
       return res.data;
     },
   });
 
-  const items = useMemo(() => data?.items ?? [], [data]);
+  const items = useMemo(
+    () => filterItemsByDateRange(data?.results ?? [], filters.dateFrom, filters.dateTo),
+    [data, filters.dateFrom, filters.dateTo]
+  );
 
   const handleRowClick = useCallback(
     (item: InventoryItem) => setSelectedLot(item.lot_batch_number),
@@ -62,7 +66,7 @@ export function Inventory() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Inventory</h1>
-        <ExportButton filters={filters} />
+        <ExportButton items={items} />
       </div>
 
       <FilterPanel filters={filters} onChange={setFilters} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DEFAULT_FILTERS, FilterState } from "./types";
@@ -10,10 +10,12 @@ interface FilterPanelProps {
   onChange: (filters: FilterState) => void;
 }
 
-const CATEGORIES = ["", "raw", "component", "finished"];
+const CATEGORIES = ["", "raw", "finished"];
 
 export function FilterPanel({ filters, onChange }: FilterPanelProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [materialType, setMaterialType] = useState(filters.materialType);
+  const [storageLocation, setStorageLocation] = useState(filters.storageLocation);
 
   useEffect(() => {
     return () => {
@@ -21,11 +23,16 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
     };
   }, []);
 
+  useEffect(() => {
+    setMaterialType(filters.materialType);
+    setStorageLocation(filters.storageLocation);
+  }, [filters.materialType, filters.storageLocation]);
+
   const handleSearchChange = useCallback(
-    (value: string) => {
+    (field: "materialType" | "storageLocation", value: string) => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
-        onChange({ ...filters, search: value });
+        onChange({ ...filters, [field]: value });
       }, 300);
     },
     [filters, onChange]
@@ -53,11 +60,25 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
       </div>
 
       <Input
-        placeholder="Search material or lot…"
-        defaultValue={filters.search}
-        onChange={(e) => handleSearchChange(e.target.value)}
+        placeholder="Search material..."
+        value={materialType}
+        onChange={(e) => {
+          setMaterialType(e.target.value);
+          handleSearchChange("materialType", e.target.value);
+        }}
         className="w-56"
-        data-testid="search-input"
+        data-testid="material-search-input"
+      />
+
+      <Input
+        placeholder="Search location..."
+        value={storageLocation}
+        onChange={(e) => {
+          setStorageLocation(e.target.value);
+          handleSearchChange("storageLocation", e.target.value);
+        }}
+        className="w-48"
+        data-testid="location-search-input"
       />
 
       <Input

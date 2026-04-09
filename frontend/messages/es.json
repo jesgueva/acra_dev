@@ -20,7 +20,8 @@
     "sessionExpired": "Su sesión ha expirado. Por favor, inicie sesión de nuevo."
   },
   "receiving": {
-    "title": "Recepción"
+    "title": "Recepción",
+    "description": "Los flujos de recepción aparecerán aquí."
   },
   "inventory": {
     "title": "Inventario"

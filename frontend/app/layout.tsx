@@ -1,10 +1,24 @@
+import type { ReactNode } from "react";
+import { getLocale } from "next-intl/server";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 
-export default function RootLayout({
+const plusJakartaSans = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  weight: ["400", "500", "600", "700"],
+});
+
+export default async function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
-  // [locale]/layout.tsx handles the HTML shell including font and lang.
-  return children as React.ReactElement;
+  const locale = await getLocale();
+
+  return (
+    <html lang={locale} className={plusJakartaSans.variable}>
+      <body>{children}</body>
+    </html>
+  );
 }

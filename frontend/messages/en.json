@@ -20,7 +20,8 @@
     "sessionExpired": "Your session has expired. Please sign in again."
   },
   "receiving": {
-    "title": "Receiving"
+    "title": "Receiving",
+    "description": "Receiving workflows will appear here."
   },
   "inventory": {
     "title": "Inventory"

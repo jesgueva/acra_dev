@@ -51,6 +51,7 @@ function makeAuth(roles: string[]): AuthContextValue {
     },
     token: "test-token",
     isAuthenticated: true,
+    authResolved: true,
     login: jest.fn(),
     logout: jest.fn(),
     hasPrivilege: jest.fn(() => false),

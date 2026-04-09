@@ -58,7 +58,7 @@ export function AdjustQuantityModal({
     setError(null);
     try {
       await apiClient.patch(`/inventory/${item.id}`, {
-        quantity: Number(quantity),
+        quantity_on_hand: Number(quantity),
         reason,
       });
       onSuccess();
@@ -75,7 +75,7 @@ export function AdjustQuantityModal({
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) handleClose(); }}>
       <DialogContent data-testid="adjust-modal">
         <DialogHeader>
-          <DialogTitle>Adjust Quantity — {item?.material_name}</DialogTitle>
+          <DialogTitle>Adjust Quantity — {item?.material_type}</DialogTitle>
           <DialogDescription>
             Enter the new quantity and a reason for this adjustment.
           </DialogDescription>
@@ -90,7 +90,7 @@ export function AdjustQuantityModal({
         {!confirming ? (
           <div className="space-y-4">
             <div className="space-y-1">
-              <Label htmlFor="new-quantity">New Quantity ({item?.unit})</Label>
+              <Label htmlFor="new-quantity">New Quantity</Label>
               <Input
                 id="new-quantity"
                 type="number"
@@ -121,8 +121,8 @@ export function AdjustQuantityModal({
         ) : (
           <div className="space-y-4">
             <p className="text-sm">
-              Set <strong>{item?.material_name}</strong> quantity to{" "}
-              <strong>{quantity}</strong> {item?.unit}?
+              Set <strong>{item?.material_type}</strong> quantity to{" "}
+              <strong>{quantity}</strong>?
             </p>
             {reason && <p className="text-sm text-muted-foreground">Reason: {reason}</p>}
             <DialogFooter>

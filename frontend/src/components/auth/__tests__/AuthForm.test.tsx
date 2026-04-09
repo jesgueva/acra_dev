@@ -28,6 +28,7 @@ function makeAuth(
     user: null,
     token: null,
     isAuthenticated: false,
+    authResolved: true,
     login: loginImpl,
     logout: jest.fn(),
     hasPrivilege: jest.fn(() => false),

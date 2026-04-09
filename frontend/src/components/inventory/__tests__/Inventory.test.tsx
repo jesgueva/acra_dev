@@ -59,6 +59,7 @@ function makeAuth(roles: string[]): AuthContextValue {
     },
     token: "test-token",
     isAuthenticated: true,
+    authResolved: true,
     login: jest.fn(),
     logout: jest.fn(),
     hasPrivilege: jest.fn(() => false),
@@ -68,23 +69,23 @@ function makeAuth(roles: string[]): AuthContextValue {
 const SAMPLE_ITEMS = [
   {
     id: 1,
-    material_name: "Steel Rod",
+    material_type: "Steel Rod",
     category: "raw",
     lot_batch_number: "LOT-001",
-    quantity: 150,
-    unit: "kg",
+    quantity_on_hand: 150,
+    storage_location: "RACK-A",
+    last_updated: "2026-04-01T10:00:00Z",
     is_triggered: false,
-    received_date: "2026-04-01",
   },
   {
     id: 2,
-    material_name: "Copper Wire",
-    category: "component",
+    material_type: "Copper Wire",
+    category: "finished",
     lot_batch_number: "LOT-002",
-    quantity: 5,
-    unit: "kg",
+    quantity_on_hand: 5,
+    storage_location: "RACK-B",
+    last_updated: "2026-04-02T10:00:00Z",
     is_triggered: true,
-    received_date: "2026-04-02",
   },
 ];
 
@@ -94,7 +95,7 @@ function setupInventoryQuery(items = SAMPLE_ITEMS, traceData?: object) {
     const key = (options.queryKey as string[])[0];
     if (key === "inventory") {
       return {
-        data: { items, total: items.length, page: 1, page_size: 50 },
+        data: { results: items, total: items.length, page: 1, page_size: 50 },
         isLoading: false,
         error: null,
       } as ReturnType<typeof useQuery>;

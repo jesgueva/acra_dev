@@ -3,24 +3,47 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
-import { apiClient } from "@/src/lib/api-client";
-import { filtersToParams, FilterState } from "./types";
+import { InventoryItem } from "./types";
 
 interface ExportButtonProps {
-  filters: FilterState;
+  items: InventoryItem[];
 }
 
-export function ExportButton({ filters }: ExportButtonProps) {
+function escapeCsv(value: string | number | boolean) {
+  const normalized = String(value).replaceAll('"', '""');
+  return `"${normalized}"`;
+}
+
+export function ExportButton({ items }: ExportButtonProps) {
   const [error, setError] = useState<string | null>(null);
 
-  const handleExport = async () => {
+  const handleExport = () => {
     setError(null);
     try {
-      const params = filtersToParams(filters);
-      const url = `/inventory/export${params.toString() ? `?${params}` : ""}`;
-      const res = await apiClient.get(url, { responseType: "blob" });
-      const blob = new Blob([res.data as BlobPart], { type: "text/csv" });
-      const href = URL.createObjectURL(blob);
+      const header = [
+        "material_type",
+        "category",
+        "lot_batch_number",
+        "quantity_on_hand",
+        "storage_location",
+        "last_updated",
+        "is_triggered",
+      ];
+      const rows = items.map((item) =>
+        [
+          item.material_type,
+          item.category,
+          item.lot_batch_number,
+          item.quantity_on_hand,
+          item.storage_location,
+          item.last_updated,
+          item.is_triggered,
+        ]
+          .map(escapeCsv)
+          .join(",")
+      );
+      const csv = [header.join(","), ...rows].join("\n");
+      const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
       const link = document.createElement("a");
       link.href = href;
       link.download = "inventory_export.csv";

@@ -49,31 +49,34 @@ export function TraceabilityView({ lotBatchNumber, onClose }: TraceabilityViewPr
               <section>
                 <h3 className="font-semibold mb-1">Source Delivery</h3>
                 <p>Supplier: {data.source_delivery.supplier}</p>
-                <p>Received: {data.source_delivery.received_date}</p>
-                <p>By: {data.source_delivery.received_by}</p>
+                <p>Carrier: {data.source_delivery.carrier}</p>
+                <p>Delivered: {data.source_delivery.delivery_date}</p>
+                <p>BOL: {data.source_delivery.bol_reference}</p>
               </section>
             )}
 
-            {data.inventory_item && (
+            {data.inventory_items.length > 0 && (
               <section>
                 <h3 className="font-semibold mb-1">Current Stock</h3>
-                <p>
-                  {data.inventory_item.material_name}: {data.inventory_item.quantity}{" "}
-                  {data.inventory_item.unit}
-                </p>
+                <ul className="space-y-1">
+                  {data.inventory_items.map((item) => (
+                    <li key={item.id}>
+                      {item.material_type}: {item.quantity_on_hand} at {item.storage_location}
+                    </li>
+                  ))}
+                </ul>
               </section>
             )}
 
             <section>
-              <h3 className="font-semibold mb-1">Work Orders Consumed</h3>
-              {data.work_orders_consumed.length === 0 ? (
+              <h3 className="font-semibold mb-1">Linked Work Orders</h3>
+              {data.work_orders.length === 0 ? (
                 <p className="text-muted-foreground">None</p>
               ) : (
                 <ul className="space-y-1">
-                  {data.work_orders_consumed.map((wo) => (
-                    <li key={wo.id}>
-                      {wo.title} — {wo.quantity_used} units
-                      {wo.completed_at && ` (completed ${wo.completed_at})`}
+                  {data.work_orders.map((wo) => (
+                    <li key={wo.work_order_id}>
+                      {wo.product} — {wo.status}
                     </li>
                   ))}
                 </ul>

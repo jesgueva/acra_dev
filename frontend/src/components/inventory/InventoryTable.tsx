@@ -34,7 +34,7 @@ export function InventoryTable({
             <th className="px-4 py-3 text-left font-medium">Category</th>
             <th className="px-4 py-3 text-left font-medium">Lot / Batch</th>
             <th className="px-4 py-3 text-left font-medium">Quantity</th>
-            <th className="px-4 py-3 text-left font-medium">Received</th>
+            <th className="px-4 py-3 text-left font-medium">Location</th>
             {isAdmin && <th className="px-4 py-3 text-left font-medium">Actions</th>}
           </tr>
         </thead>
@@ -46,12 +46,12 @@ export function InventoryTable({
               onClick={() => onRowClick(item)}
               data-testid={`row-${item.id}`}
             >
-              <td className="px-4 py-3 font-medium">{item.material_name}</td>
+              <td className="px-4 py-3 font-medium">{item.material_type}</td>
               <td className="px-4 py-3 capitalize">{item.category}</td>
               <td className="px-4 py-3 font-mono text-xs">{item.lot_batch_number}</td>
               <td className="px-4 py-3">
                 <span className="inline-flex items-center gap-2">
-                  {item.quantity} {item.unit}
+                  {item.quantity_on_hand}
                   {item.is_triggered && (
                     <Badge
                       variant="destructive"
@@ -63,7 +63,7 @@ export function InventoryTable({
                   )}
                 </span>
               </td>
-              <td className="px-4 py-3">{item.received_date}</td>
+              <td className="px-4 py-3">{item.storage_location}</td>
               {isAdmin && (
                 <td
                   className="px-4 py-3"

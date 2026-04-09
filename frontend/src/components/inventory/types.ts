@@ -1,16 +1,16 @@
 export interface InventoryItem {
   id: number;
-  material_name: string;
+  material_type: string;
   category: string;
   lot_batch_number: string;
-  quantity: number;
-  unit: string;
+  quantity_on_hand: number;
+  storage_location: string;
+  last_updated: string;
   is_triggered: boolean;
-  received_date: string;
 }
 
-export interface InventoryResponse {
-  items: InventoryItem[];
+export interface InventoryListResponse {
+  results: InventoryItem[];
   total: number;
   page: number;
   page_size: number;
@@ -18,14 +18,16 @@ export interface InventoryResponse {
 
 export interface FilterState {
   category: string;
-  search: string;
+  materialType: string;
+  storageLocation: string;
   dateFrom: string;
   dateTo: string;
 }
 
 export const DEFAULT_FILTERS: FilterState = {
   category: "",
-  search: "",
+  materialType: "",
+  storageLocation: "",
   dateFrom: "",
   dateTo: "",
 };
@@ -33,30 +35,54 @@ export const DEFAULT_FILTERS: FilterState = {
 export function filtersToParams(filters: FilterState): URLSearchParams {
   const p = new URLSearchParams();
   if (filters.category) p.set("category", filters.category);
-  if (filters.search) p.set("search", filters.search);
-  if (filters.dateFrom) p.set("date_from", filters.dateFrom);
-  if (filters.dateTo) p.set("date_to", filters.dateTo);
+  if (filters.materialType) p.set("material_type", filters.materialType);
+  if (filters.storageLocation) p.set("storage_location", filters.storageLocation);
   return p;
+}
+
+function toComparableDate(value: string) {
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+export function filterItemsByDateRange(
+  items: InventoryItem[],
+  dateFrom: string,
+  dateTo: string
+) {
+  return items.filter((item) => {
+    const itemDate = toComparableDate(item.last_updated);
+
+    if (dateFrom && itemDate < dateFrom) {
+      return false;
+    }
+
+    if (dateTo && itemDate > dateTo) {
+      return false;
+    }
+
+    return true;
+  });
 }
 
 export interface TraceabilityData {
   lot_batch_number: string;
   source_delivery: {
-    id: number;
+    delivery_id: number;
     supplier: string;
-    received_date: string;
-    received_by: string;
+    carrier: string;
+    delivery_date: string;
+    bol_reference: string;
   } | null;
-  inventory_item: {
+  inventory_items: Array<{
     id: number;
-    material_name: string;
-    quantity: number;
-    unit: string;
-  } | null;
-  work_orders_consumed: Array<{
-    id: number;
-    title: string;
-    quantity_used: number;
-    completed_at: string | null;
+    material_type: string;
+    category: string;
+    quantity_on_hand: number;
+    storage_location: string;
+  }>;
+  work_orders: Array<{
+    work_order_id: number;
+    product: string;
+    status: string;
   }>;
 }
