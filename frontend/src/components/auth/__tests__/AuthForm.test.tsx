@@ -22,7 +22,7 @@ import { useAuth } from "@/src/contexts/AuthContext";
 const mockPush = jest.fn();
 
 function makeAuth(
-  loginImpl: () => Promise<void> = jest.fn().mockResolvedValue(undefined)
+  loginImpl: (credentials: { username: string; password: string }) => Promise<void> = jest.fn().mockResolvedValue(undefined)
 ): AuthContextValue {
   return {
     user: null,
