@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -18,6 +18,7 @@ _OCR_ALLOWED_TYPES = {"image/jpeg", "image/png", "application/pdf"}
 
 @router.post("/ocr", response_model=OCRResponse)
 async def ocr_delivery(
+    request: Request,
     file: UploadFile = File(...),
     current_user: TokenUser = Depends(require_privilege("deliveries.create")),
 ) -> OCRResponse:
@@ -26,6 +27,12 @@ async def ocr_delivery(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Unsupported file type. Use JPEG, PNG, or PDF.",
+        )
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > _OCR_MAX_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="File exceeds maximum size of 10 MB.",
         )
     content = await file.read()
     if len(content) > _OCR_MAX_SIZE:

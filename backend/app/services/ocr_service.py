@@ -5,7 +5,6 @@ Two-tier pipeline:
   2. Claude Sonnet 4.6 — fallback (used when Gemini fails or returns confidence == 0.0)
 
 Both providers receive the raw file bytes (JPEG, PNG, or PDF) encoded as base64.
-No image preprocessing required — the models handle orientation, quality, and layout.
 """
 
 from __future__ import annotations
@@ -24,7 +23,29 @@ from app.schemas.delivery import OCRItemResult, OCRResponse
 
 logger = logging.getLogger("acra.ocr")
 
-_PROMPT = (
+# ---------------------------------------------------------------------------
+# Lazy singletons — initialized on first use, reused across requests
+# ---------------------------------------------------------------------------
+
+_gemini_client: genai.Client | None = None
+_anthropic_client: anthropic.Anthropic | None = None
+
+
+def _get_gemini_client() -> genai.Client:
+    global _gemini_client
+    if _gemini_client is None:
+        _gemini_client = genai.Client(api_key=settings.gemini_api_key)
+    return _gemini_client
+
+
+def _get_anthropic_client() -> anthropic.Anthropic:
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    return _anthropic_client
+
+# Gemini receives a text prompt because it uses free-form JSON mode.
+_GEMINI_PROMPT = (
     "Extract all Bill of Lading fields from this document. "
     "Return a JSON object with exactly these keys: "
     "supplier (string or null), "
@@ -38,11 +59,6 @@ _PROMPT = (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _confidence(r: OCRResponse) -> float:
-    filled = sum(1 for v in [r.supplier, r.carrier, r.bol_reference, r.delivery_date] if v)
-    return round(filled / 4.0, 2)
-
 
 def _parse_items(raw: list[dict[str, Any]]) -> list[OCRItemResult]:
     items = []
@@ -61,16 +77,19 @@ def _parse_items(raw: list[dict[str, Any]]) -> list[OCRItemResult]:
 
 
 def _build_response(data: dict[str, Any]) -> OCRResponse:
-    r = OCRResponse(
-        supplier=data.get("supplier"),
-        carrier=data.get("carrier"),
-        bol_reference=data.get("bol_reference"),
-        delivery_date=data.get("delivery_date"),
+    supplier = data.get("supplier")
+    carrier = data.get("carrier")
+    bol_reference = data.get("bol_reference")
+    delivery_date = data.get("delivery_date")
+    filled = sum(1 for v in [supplier, carrier, bol_reference, delivery_date] if v)
+    return OCRResponse(
+        supplier=supplier,
+        carrier=carrier,
+        bol_reference=bol_reference,
+        delivery_date=delivery_date,
         items=_parse_items(data.get("items", [])),
-        confidence=0.0,
+        confidence=round(filled / 4.0, 2),
     )
-    r.confidence = _confidence(r)
-    return r
 
 
 # ---------------------------------------------------------------------------
@@ -78,20 +97,17 @@ def _build_response(data: dict[str, Any]) -> OCRResponse:
 # ---------------------------------------------------------------------------
 
 def _extract_with_gemini(file_bytes: bytes, content_type: str) -> OCRResponse:
-    client = genai.Client(api_key=settings.gemini_api_key)
-    b64 = base64.b64encode(file_bytes).decode()
-    response = client.models.generate_content(
+    response = _get_gemini_client().models.generate_content(
         model="gemini-2.5-flash",
         contents=[
-            _PROMPT,
-            genai_types.Part.from_bytes(data=b64, mime_type=content_type),
+            _GEMINI_PROMPT,
+            genai_types.Part.from_bytes(data=base64.b64encode(file_bytes).decode(), mime_type=content_type),
         ],
         config=genai_types.GenerateContentConfig(
             response_mime_type="application/json",
         ),
     )
-    data = json.loads(response.text)
-    return _build_response(data)
+    return _build_response(json.loads(response.text))
 
 
 # ---------------------------------------------------------------------------
@@ -126,11 +142,10 @@ _CLAUDE_TOOL = {
 
 
 def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    b64 = base64.standard_b64encode(file_bytes).decode()
-
+    b64 = base64.b64encode(file_bytes).decode()
+    file_block: dict[str, Any]
     if content_type == "application/pdf":
-        file_block: dict[str, Any] = {
+        file_block = {
             "type": "document",
             "source": {"type": "base64", "media_type": "application/pdf", "data": b64},
         }
@@ -140,7 +155,7 @@ def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
             "source": {"type": "base64", "media_type": content_type, "data": b64},
         }
 
-    response = client.messages.create(
+    response = _get_anthropic_client().messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1024,
         tools=[_CLAUDE_TOOL],
@@ -155,8 +170,7 @@ def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
             }
         ],
     )
-    tool_input: dict[str, Any] = response.content[0].input
-    return _build_response(tool_input)
+    return _build_response(response.content[0].input)
 
 
 # ---------------------------------------------------------------------------
@@ -164,12 +178,6 @@ def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
 # ---------------------------------------------------------------------------
 
 def process_image_bytes(file_bytes: bytes, content_type: str) -> OCRResponse:
-    """Run the two-tier OCR pipeline.
-
-    Tries Gemini 2.5 Flash first; falls back to Claude Sonnet 4.6 on any
-    exception or if Gemini returns confidence == 0.0.
-    Returns confidence=0.0 if both providers fail.
-    """
     try:
         result = _extract_with_gemini(file_bytes, content_type)
         if result.confidence > 0.0:

@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, MagicMock
+
 from app.core.security import hash_password
 from app.models.user import User
 
@@ -17,3 +19,28 @@ def _override(session):
     async def _dep():
         yield session
     return _dep
+
+
+def _make_rbac_session(privileges=("deliveries.create", "deliveries.view")):
+    """Mock AsyncSession satisfying the 3 RBAC execute() calls."""
+    user = _make_user()
+    session = AsyncMock()
+    call_no = {"n": 0}
+
+    async def _execute(query, *args, **kwargs):
+        result = MagicMock()
+        call_no["n"] += 1
+        n = call_no["n"]
+        if n == 1:
+            result.scalar_one_or_none.return_value = user
+        elif n == 2:
+            result.fetchall.return_value = [("receiving_clerk",)]
+        else:
+            result.fetchall.return_value = [(p,) for p in privileges]
+        return result
+
+    session.execute = _execute
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    return session

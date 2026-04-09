@@ -21,7 +21,7 @@ from app.schemas.delivery import (
     DeliveryResponse,
 )
 from app.schemas.auth import TokenUser
-from tests.conftest import _make_user, _override
+from tests.conftest import _make_user, _make_rbac_session, _override
 
 BASE_URL = "http://test"
 
@@ -45,30 +45,6 @@ _VALID_BODY = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _make_rbac_session(privileges=("deliveries.create", "deliveries.view")):
-    """Mock session that satisfies the 3 RBAC execute() calls."""
-    user = _make_user()
-    session = AsyncMock()
-    call_no = {"n": 0}
-
-    async def _execute(query, *args, **kwargs):
-        result = MagicMock()
-        call_no["n"] += 1
-        n = call_no["n"]
-        if n == 1:
-            result.scalar_one_or_none.return_value = user
-        elif n == 2:
-            result.fetchall.return_value = [("receiving_clerk",)]
-        else:
-            result.fetchall.return_value = [(p,) for p in privileges]
-        return result
-
-    session.execute = _execute
-    session.add = MagicMock()
-    session.flush = AsyncMock()
-    session.commit = AsyncMock()
-    return session
 
 
 def _make_flush(added, delivery_id=1, item_base=10, inv_base=100, created_at=None):
