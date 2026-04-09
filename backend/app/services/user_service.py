@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select
@@ -11,17 +11,34 @@ from app.schemas.auth import TokenUser
 from app.schemas.user import PaginatedUsers, UserCreate, UserResponse, UserUpdate
 
 
+async def _get_user_or_404(db: AsyncSession, user_id: int) -> User:
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
+
+
+async def _fetch_roles_for_users(db: AsyncSession, user_ids: List[int]) -> Dict[int, List[str]]:
+    """Fetch roles for multiple users in a single query — avoids N+1."""
+    rows = (
+        await db.execute(
+            select(UserRoleAssignment.user_id, Role.role_name)
+            .join(Role, Role.id == UserRoleAssignment.role_id)
+            .where(UserRoleAssignment.user_id.in_(user_ids))
+        )
+    ).fetchall()
+    result: Dict[int, List[str]] = {uid: [] for uid in user_ids}
+    for uid, role_name in rows:
+        result[uid].append(role_name)
+    return result
+
+
 async def _get_user_roles(db: AsyncSession, user_id: int) -> List[str]:
-    result = await db.execute(
-        select(Role.role_name)
-        .join(UserRoleAssignment, Role.id == UserRoleAssignment.role_id)
-        .where(UserRoleAssignment.user_id == user_id)
-    )
-    return [r[0] for r in result.fetchall()]
+    roles = await _fetch_roles_for_users(db, [user_id])
+    return roles[user_id]
 
 
-async def _user_to_response(db: AsyncSession, user: User) -> UserResponse:
-    roles = await _get_user_roles(db, user.id)
+def _user_to_response(user: User, roles: List[str]) -> UserResponse:
     return UserResponse(
         id=user.id,
         username=user.username,
@@ -31,6 +48,21 @@ async def _user_to_response(db: AsyncSession, user: User) -> UserResponse:
         status=user.status,
         created_at=user.created_at,
     )
+
+
+async def _validate_role_ids(db: AsyncSession, role_ids: List[int]) -> None:
+    """Validate all role IDs exist in a single query."""
+    if not role_ids:
+        return
+    found: Set[int] = set(
+        (await db.execute(select(Role.id).where(Role.id.in_(role_ids)))).scalars().all()
+    )
+    missing = set(role_ids) - found
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Roles not found: {sorted(missing)}",
+        )
 
 
 async def list_users(
@@ -61,17 +93,19 @@ async def list_users(
         await db.execute(main_q.offset((page - 1) * page_size).limit(page_size))
     ).scalars().all()
 
-    results = [await _user_to_response(db, u) for u in users]
+    if users:
+        roles_map = await _fetch_roles_for_users(db, [u.id for u in users])
+    else:
+        roles_map = {}
+
+    results = [_user_to_response(u, roles_map[u.id]) for u in users]
     return PaginatedUsers(total=total, page=page, page_size=page_size, results=results)
 
 
 async def get_user(db: AsyncSession, user_id: int) -> UserResponse:
-    user = (
-        await db.execute(select(User).where(User.id == user_id))
-    ).scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return await _user_to_response(db, user)
+    user = await _get_user_or_404(db, user_id)
+    roles = await _get_user_roles(db, user.id)
+    return _user_to_response(user, roles)
 
 
 async def create_user(db: AsyncSession, data: UserCreate, actor_id: int) -> UserResponse:
@@ -80,6 +114,8 @@ async def create_user(db: AsyncSession, data: UserCreate, actor_id: int) -> User
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists")
+
+    await _validate_role_ids(db, data.role_ids)
 
     user = User(
         username=data.username,
@@ -92,30 +128,19 @@ async def create_user(db: AsyncSession, data: UserCreate, actor_id: int) -> User
     await db.flush()
 
     for role_id in data.role_ids:
-        role = (
-            await db.execute(select(Role).where(Role.id == role_id))
-        ).scalar_one_or_none()
-        if role is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Role {role_id} not found",
-            )
         db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
 
     await write_audit(db, actor_id, "create_user", "user", user.id, {"username": data.username})
     await db.commit()
     await db.refresh(user)
-    return await _user_to_response(db, user)
+    roles = await _get_user_roles(db, user.id)
+    return _user_to_response(user, roles)
 
 
 async def update_user(
     db: AsyncSession, user_id: int, data: UserUpdate, actor_id: int
 ) -> UserResponse:
-    user = (
-        await db.execute(select(User).where(User.id == user_id))
-    ).scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user = await _get_user_or_404(db, user_id)
 
     if data.status == "inactive":
         admin_role = (
@@ -154,19 +179,17 @@ async def update_user(
     await write_audit(db, actor_id, "update_user", "user", user_id)
     await db.commit()
     await db.refresh(user)
-    return await _user_to_response(db, user)
+    roles = await _get_user_roles(db, user.id)
+    return _user_to_response(user, roles)
 
 
 async def update_me(db: AsyncSession, user_id: int, preferred_language: str) -> UserResponse:
-    user = (
-        await db.execute(select(User).where(User.id == user_id))
-    ).scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user = await _get_user_or_404(db, user_id)
     user.preferred_language = preferred_language
     await db.commit()
     await db.refresh(user)
-    return await _user_to_response(db, user)
+    roles = await _get_user_roles(db, user.id)
+    return _user_to_response(user, roles)
 
 
 async def change_password(
@@ -176,11 +199,7 @@ async def change_password(
     new_password: str,
     actor: TokenUser,
 ) -> dict:
-    user = (
-        await db.execute(select(User).where(User.id == user_id))
-    ).scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user = await _get_user_or_404(db, user_id)
 
     is_admin = "users.manage" in actor.effective_privileges
     is_self = actor.user_id == user_id
@@ -204,26 +223,16 @@ async def change_password(
 async def replace_roles(
     db: AsyncSession, user_id: int, role_ids: List[int], actor_id: int
 ) -> UserResponse:
-    user = (
-        await db.execute(select(User).where(User.id == user_id))
-    ).scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user = await _get_user_or_404(db, user_id)
 
+    await _validate_role_ids(db, role_ids)
     await db.execute(delete(UserRoleAssignment).where(UserRoleAssignment.user_id == user_id))
 
     for role_id in role_ids:
-        role = (
-            await db.execute(select(Role).where(Role.id == role_id))
-        ).scalar_one_or_none()
-        if role is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Role {role_id} not found",
-            )
         db.add(UserRoleAssignment(user_id=user_id, role_id=role_id))
 
     await write_audit(db, actor_id, "replace_roles", "user", user_id)
     await db.commit()
     await db.refresh(user)
-    return await _user_to_response(db, user)
+    roles = await _get_user_roles(db, user.id)
+    return _user_to_response(user, roles)

@@ -107,7 +107,6 @@ def _make_service_db():
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     db.flush = AsyncMock()
-    db.delete = AsyncMock()
     return db
 
 
@@ -276,10 +275,11 @@ async def test_replace_roles_http():
 async def test_svc_list_users():
     user = _make_db_user()
     db = _make_service_db()
+    # count, main users, then one batched roles query (uid, role_name) tuples
     db.execute.side_effect = [
         _r_scalar_count(1),
         _r_scalars_all([user]),
-        _r_fetchall([("company_admin",)]),
+        _r_fetchall([(1, "company_admin")]),
     ]
     result = await user_service.list_users(db, 1, 20, None, None)
     assert result.total == 1
@@ -290,9 +290,10 @@ async def test_svc_list_users():
 async def test_svc_get_user_success():
     user = _make_db_user()
     db = _make_service_db()
+    # _get_user_or_404, then _fetch_roles_for_users
     db.execute.side_effect = [
         _r_scalar(user),
-        _r_fetchall([("company_admin",)]),
+        _r_fetchall([(1, "company_admin")]),
     ]
     result = await user_service.get_user(db, 1)
     assert result.id == 1
@@ -316,9 +317,11 @@ async def test_svc_create_user_success():
             u.created_at = datetime(2026, 1, 1)
 
     db.flush = _on_flush
+    # duplicate check (None = no conflict); role_ids=[] so _validate_role_ids skips;
+    # after commit: _fetch_roles_for_users
     db.execute.side_effect = [
-        _r_scalar(None),                    # no duplicate username
-        _r_fetchall([("company_admin",)]),  # roles for response
+        _r_scalar(None),
+        _r_fetchall([(7, "company_admin")]),
     ]
     data = UserCreate(
         username="alice", full_name="Alice", password="pass123",
@@ -332,9 +335,10 @@ async def test_svc_create_user_success():
 async def test_svc_update_user_success():
     user = _make_db_user()
     db = _make_service_db()
+    # _get_user_or_404, then _fetch_roles_for_users after commit
     db.execute.side_effect = [
         _r_scalar(user),
-        _r_fetchall([("company_admin",)]),
+        _r_fetchall([(1, "company_admin")]),
     ]
     data = UserUpdate(full_name="Changed Name")
     result = await user_service.update_user(db, 1, data, actor_id=1)
@@ -352,10 +356,10 @@ async def test_svc_update_user_last_admin():
     ura.role_id = 1
     db = _make_service_db()
     db.execute.side_effect = [
-        _r_scalar(user),
-        _r_scalar(admin_role),
-        _r_scalar_count(1),
-        _r_scalar(ura),
+        _r_scalar(user),         # _get_user_or_404
+        _r_scalar(admin_role),   # company_admin role lookup
+        _r_scalar_count(1),      # count active admins
+        _r_scalar(ura),          # user IS the last admin
     ]
     data = UserUpdate(status="inactive")
     with pytest.raises(HTTPException) as exc_info:
@@ -370,7 +374,7 @@ async def test_svc_update_me():
     db = _make_service_db()
     db.execute.side_effect = [
         _r_scalar(user),
-        _r_fetchall([("company_admin",)]),
+        _r_fetchall([(1, "company_admin")]),
     ]
     result = await user_service.update_me(db, 1, "es")
     assert result.preferred_language == "es"
@@ -397,10 +401,10 @@ async def test_svc_replace_roles():
     op_role.role_name = "operator"
     db = _make_service_db()
     db.execute.side_effect = [
-        _r_scalar(user),
-        MagicMock(),                   # DELETE result (unused)
-        _r_scalar(op_role),
-        _r_fetchall([("operator",)]),
+        _r_scalar(user),                    # _get_user_or_404
+        _r_scalars_all([2]),                # _validate_role_ids: found role ids
+        MagicMock(),                        # DELETE UserRoleAssignment
+        _r_fetchall([(1, "operator")]),     # _fetch_roles_for_users after commit
     ]
     result = await user_service.replace_roles(db, 1, [2], actor_id=1)
     assert "operator" in result.roles
