@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useTranslations } from "next-intl";
+import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,34 +42,21 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
   const t = useTranslations("receiving");
   const tc = useTranslations("common");
 
-  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [supplierFilter, setSupplierFilter] = useState("");
-  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    const params: Record<string, string | number> = { page, page_size: PAGE_SIZE };
-    if (supplierFilter) params.supplier = supplierFilter;
-    apiClient
-      .get<PaginatedDeliveries>("/deliveries", { params })
-      .then(({ data }) => {
-        if (!cancelled) {
-          setDeliveries(data.items);
-          setTotal(data.total);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [page, supplierFilter, refetch]);
+  const { data, isLoading } = useQuery({
+    queryKey: ["deliveries", page, supplierFilter, refetch],
+    queryFn: async () => {
+      const params: Record<string, string | number> = { page, page_size: PAGE_SIZE };
+      if (supplierFilter) params.supplier = supplierFilter;
+      const { data } = await apiClient.get<PaginatedDeliveries>("/deliveries", { params });
+      return data;
+    },
+  });
 
+  const deliveries = data?.items ?? [];
+  const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
@@ -102,7 +90,7 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading ? (
+            {isLoading ? (
               <TableRow>
                 <TableCell colSpan={4} className="text-center py-8">
                   {tc("loading")}
@@ -138,7 +126,7 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
           <Button
             variant="outline"
             size="sm"
-            disabled={page <= 1 || loading}
+            disabled={page <= 1 || isLoading}
             onClick={() => setPage((p) => p - 1)}
           >
             {t("previous")}
@@ -149,7 +137,7 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
           <Button
             variant="outline"
             size="sm"
-            disabled={page >= totalPages || loading}
+            disabled={page >= totalPages || isLoading}
             onClick={() => setPage((p) => p + 1)}
           >
             {t("next")}

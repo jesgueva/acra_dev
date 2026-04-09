@@ -1,6 +1,7 @@
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -33,6 +34,13 @@ import DeliveryList from "../DeliveryList";
 
 function makeFile(name = "bol.jpg", type = "image/jpeg") {
   return new File(["data"], name, { type });
+}
+
+function makeQueryWrapper() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  );
 }
 
 const emptyPagedResponse = {
@@ -92,7 +100,6 @@ describe("NewDeliveryForm", () => {
 
   test("4: renders with exactly one item row by default", () => {
     render(<NewDeliveryForm onSuccess={jest.fn()} />);
-    // Each row has an itemName label; there should be exactly one
     expect(screen.getAllByText("receiving.itemName")).toHaveLength(1);
   });
 
@@ -172,7 +179,7 @@ describe("DeliveryList", () => {
       },
     });
 
-    render(<DeliveryList refetch={0} />);
+    render(<DeliveryList refetch={0} />, { wrapper: makeQueryWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("ACME Corp")).toBeInTheDocument();
@@ -183,7 +190,8 @@ describe("DeliveryList", () => {
   test("9: re-fetches when refetch prop increments", async () => {
     (apiClient.get as jest.Mock).mockResolvedValue(emptyPagedResponse);
 
-    const { rerender } = render(<DeliveryList refetch={0} />);
+    const wrapper = makeQueryWrapper();
+    const { rerender } = render(<DeliveryList refetch={0} />, { wrapper });
 
     await waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(1));
 
