@@ -15,6 +15,7 @@ from app.schemas.work_order import (
     WorkOrderStatusUpdate,
 )
 from app.services import work_order_service
+from app.services import allocation_service
 
 router = APIRouter(prefix="/api/v1/work-orders", tags=["work-orders"])
 
@@ -94,4 +95,15 @@ async def update_sequence(
 ) -> WorkOrderResponse:
     return await work_order_service.update_sequence(
         db=db, wo_id=wo_id, display_sequence=body.display_sequence, user_id=current_user.user_id
+    )
+
+
+@router.patch("/{wo_id}/allocate", response_model=WorkOrderResponse)
+async def allocate_materials(
+    wo_id: int,
+    current_user: TokenUser = Depends(require_privilege("work_orders.allocate")),
+    db: AsyncSession = Depends(get_db),
+) -> WorkOrderResponse:
+    return await allocation_service.allocate_materials(
+        db=db, wo_id=wo_id, user_id=current_user.user_id
     )
