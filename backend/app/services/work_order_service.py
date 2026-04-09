@@ -21,7 +21,6 @@ from app.schemas.work_order import (
     WorkOrderStatusUpdate,
 )
 
-# Statuses that count as "active" for capacity warning purposes
 _ACTIVE_STATUSES = ("created", "materials_allocated", "in_production")
 
 
@@ -74,7 +73,6 @@ async def create_work_order(
     user_id: int,
     force: bool = False,
 ) -> WorkOrderCreateResponse:
-    # Duplicate check: same product + quantity_required + target_date
     dup_res = await db.execute(
         select(WorkOrder).where(
             WorkOrder.product == data.product,
@@ -89,7 +87,6 @@ async def create_work_order(
             detail="Duplicate work order. Use force=true to override.",
         )
 
-    # Material availability check
     material_types = [m.material_type for m in data.materials]
     qty_res = await db.execute(
         select(
@@ -126,11 +123,13 @@ async def create_work_order(
         product=data.product,
         quantity_required=data.quantity_required,
         priority=data.priority,
+        status="created",
         target_date=data.target_date,
         production_line=data.production_line,
         created_by=user_id,
     )
     db.add(wo)
+    await db.flush()  # populates wo.id from the DB sequence
 
     for m in data.materials:
         db.add(WorkOrderMaterial(
@@ -153,7 +152,7 @@ async def create_work_order(
     return WorkOrderCreateResponse(
         id=wo_id,
         wo_number=f"WO-{wo_id:04d}",
-        status=wo.status or "created",
+        status=wo.status,
         material_availability=availability,
     )
 
@@ -168,7 +167,6 @@ async def list_work_orders(
 ) -> WorkOrderListResponse:
     q = select(WorkOrder)
 
-    # Machine operators are auto-filtered to their own production line
     if current_user and "machine_operator" in current_user.roles:
         if current_user.production_line:
             q = q.where(WorkOrder.production_line == current_user.production_line)
@@ -185,11 +183,19 @@ async def list_work_orders(
     wos_res = await db.execute(q.offset(offset).limit(page_size))
     wos = wos_res.scalars().all()
 
-    results = []
-    for wo in wos:
-        materials = await _fetch_materials(db, wo.id or 0)
-        results.append(_wo_response(wo, materials))
+    # Fetch all materials for the page in one query instead of one per WO
+    wo_ids = [wo.id for wo in wos if wo.id is not None]
+    if wo_ids:
+        mats_res = await db.execute(
+            select(WorkOrderMaterial).where(WorkOrderMaterial.work_order_id.in_(wo_ids))
+        )
+        mats_by_wo: dict[int, list] = {wid: [] for wid in wo_ids}
+        for m in mats_res.scalars().all():
+            mats_by_wo[m.work_order_id].append(m)
+    else:
+        mats_by_wo = {}
 
+    results = [_wo_response(wo, mats_by_wo.get(wo.id or 0, [])) for wo in wos]
     return WorkOrderListResponse(total=total, page=page, page_size=page_size, results=results)
 
 
@@ -200,7 +206,6 @@ async def get_work_order(
 ) -> WorkOrderResponse:
     wo = await _fetch_wo_or_404(db, wo_id)
 
-    # Machine operators can only view WOs assigned to their production line
     if current_user and "machine_operator" in current_user.roles:
         if current_user.production_line and wo.production_line != current_user.production_line:
             raise HTTPException(
@@ -220,7 +225,6 @@ async def assign_work_order(
 ) -> WorkOrderAssignResponse:
     wo = await _fetch_wo_or_404(db, wo_id)
 
-    # Capacity check: count active orders already on the target line (excluding this WO)
     count_res = await db.execute(
         select(func.count()).where(
             WorkOrder.production_line == data.production_line,
@@ -250,30 +254,8 @@ async def assign_work_order(
     await db.commit()
 
     materials = await _fetch_materials(db, wo_id)
-    wo_id_val = wo.id or 0
     return WorkOrderAssignResponse(
-        id=wo_id_val,
-        wo_number=f"WO-{wo_id_val:04d}",
-        product=wo.product,
-        status=wo.status,
-        priority=wo.priority,
-        display_sequence=wo.display_sequence,
-        production_line=wo.production_line,
-        target_date=wo.target_date,
-        quantity_required=float(wo.quantity_required),
-        quantity_produced=float(wo.quantity_produced),
-        created_by=wo.created_by,
-        created_at=wo.created_at,
-        updated_at=wo.updated_at,
-        materials=[
-            WorkOrderMaterialResponse(
-                id=m.id,
-                material_type=m.material_type,
-                quantity_required=float(m.quantity_required),
-                quantity_allocated=float(m.quantity_allocated),
-            )
-            for m in materials
-        ],
+        **_wo_response(wo, materials).model_dump(),
         capacity_warning=capacity_warning,
     )
 
@@ -292,7 +274,6 @@ async def update_status(
     if data.quantity_produced is not None:
         wo.quantity_produced = data.quantity_produced
 
-    # When completed, create a finished goods inventory item
     if data.status == "completed":
         qty_produced = (
             data.quantity_produced
