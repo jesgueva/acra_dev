@@ -1,10 +1,11 @@
 """
-Tests for T08 — OCR Service & API.
-Expected: 6 passed, 0 failed.
-All tests run without a live database connection or real tesseract binary.
+Tests for T08 — OCR Service & API (Vision LLM pipeline).
+Expected: 6+ passed, 0 failed.
+All tests run without live API keys — Gemini and Claude calls are mocked.
 """
+import json
 from io import BytesIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -18,6 +19,7 @@ from app.services import ocr_service
 from tests.conftest import _make_user, _override
 
 BASE_URL = "http://test"
+_OCR_MAX_SIZE = 10 * 1024 * 1024  # mirrors router constant
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,21 +50,12 @@ def _make_rbac_session(privileges=("deliveries.create",)):
 
 
 def _small_jpeg_bytes() -> bytes:
-    """Return a minimal valid JPEG image as bytes."""
-    img = Image.new("RGB", (20, 20), color=(255, 255, 255))
     buf = BytesIO()
-    img.save(buf, format="JPEG")
+    Image.new("RGB", (20, 20), color=(255, 255, 255)).save(buf, format="JPEG")
     return buf.getvalue()
 
 
-def _small_png_bytes() -> bytes:
-    img = Image.new("RGB", (20, 20), color=(200, 200, 200))
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-_GOOD_OCR_RESPONSE = OCRResponse(
+_GOOD_RESPONSE = OCRResponse(
     supplier="Acme Metals",
     carrier="Fast Freight",
     bol_reference="BOL-2026-001",
@@ -73,17 +66,14 @@ _GOOD_OCR_RESPONSE = OCRResponse(
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — POST /deliveries/ocr with valid JPEG returns 200
+# Test 1 — POST /deliveries/ocr returns 200 on success (Gemini path)
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_ocr_jpeg_returns_200():
+async def test_ocr_endpoint_success_returns_200():
     token = create_access_token(user_id=1)
     session = _make_rbac_session()
 
-    with patch(
-        "app.services.ocr_service.process_image_bytes",
-        return_value=_GOOD_OCR_RESPONSE,
-    ):
+    with patch("app.services.ocr_service.process_image_bytes", return_value=_GOOD_RESPONSE):
         app.dependency_overrides[get_db] = _override(session)
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
@@ -103,10 +93,10 @@ async def test_ocr_jpeg_returns_200():
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — POST /deliveries/ocr without auth token returns 401/403
+# Test 2 — No auth token returns 401/403
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_ocr_no_auth_returns_401():
+async def test_ocr_endpoint_no_auth_returns_401():
     async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
         resp = await client.post(
             "/api/v1/deliveries/ocr",
@@ -116,20 +106,19 @@ async def test_ocr_no_auth_returns_401():
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — POST /deliveries/ocr with file > 10 MB returns 422
+# Test 3 — File > 10 MB returns 422
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_ocr_file_too_large_returns_422():
+async def test_ocr_endpoint_file_too_large_returns_422():
     token = create_access_token(user_id=1)
     session = _make_rbac_session()
-    oversized = b"x" * (_OCR_MAX_SIZE + 1)
 
     app.dependency_overrides[get_db] = _override(session)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
             resp = await client.post(
                 "/api/v1/deliveries/ocr",
-                files={"file": ("big.jpg", oversized, "image/jpeg")},
+                files={"file": ("big.jpg", b"x" * (_OCR_MAX_SIZE + 1), "image/jpeg")},
                 headers={"Authorization": f"Bearer {token}"},
             )
         assert resp.status_code == 422
@@ -139,10 +128,10 @@ async def test_ocr_file_too_large_returns_422():
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — POST /deliveries/ocr with unsupported content-type returns 422
+# Test 4 — Unsupported content-type returns 422
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_ocr_unsupported_type_returns_422():
+async def test_ocr_endpoint_unsupported_type_returns_422():
     token = create_access_token(user_id=1)
     session = _make_rbac_session()
 
@@ -161,17 +150,14 @@ async def test_ocr_unsupported_type_returns_422():
 
 
 # ---------------------------------------------------------------------------
-# Test 5 — POST /deliveries/ocr when OCR confidence is 0.0 returns 422
+# Test 5 — confidence == 0.0 after both providers fail → 422
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_ocr_zero_confidence_returns_422():
+async def test_ocr_endpoint_both_providers_fail_returns_422():
     token = create_access_token(user_id=1)
     session = _make_rbac_session()
 
-    with patch(
-        "app.services.ocr_service.process_image_bytes",
-        return_value=OCRResponse(confidence=0.0),
-    ):
+    with patch("app.services.ocr_service.process_image_bytes", return_value=OCRResponse(confidence=0.0)):
         app.dependency_overrides[get_db] = _override(session)
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
@@ -187,64 +173,120 @@ async def test_ocr_zero_confidence_returns_422():
 
 
 # ---------------------------------------------------------------------------
-# Test 6 — service pipeline: process_image_bytes with mocked pytesseract
+# Test 6 — Gemini fails → Claude fallback succeeds
 # ---------------------------------------------------------------------------
-@pytest.mark.asyncio
-async def test_ocr_service_pipeline_with_mocked_tesseract():
-    """Exercises preprocess(), _deskew(), and process_image_bytes() directly."""
-    sample_bol = (
-        "BILL OF LADING\n"
-        "Supplier: Acme Metals Inc\n"
-        "Carrier: FastFreight Co\n"
-        "BOL #: BOL-2026-001\n"
-        "Date: 01/15/2026\n"
-        "Lot #: LOT-A01\n"
-        "Steel Rod 50.0 kg\n"
-    )
-
-    with patch("pytesseract.image_to_string", return_value=sample_bol):
+def test_ocr_service_falls_back_to_claude_when_gemini_fails():
+    """process_image_bytes() falls back to Claude when Gemini raises an exception."""
+    with (
+        patch(
+            "app.services.ocr_service._extract_with_gemini",
+            side_effect=Exception("Gemini API error"),
+        ),
+        patch(
+            "app.services.ocr_service._extract_with_claude",
+            return_value=_GOOD_RESPONSE,
+        ),
+    ):
         result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
 
-    assert result.supplier is not None
-    assert result.bol_reference == "BOL-2026-001"
-    assert result.delivery_date == "01/15/2026"
-    assert result.confidence > 0.0
-    # items regex requires "Steel Rod 50.0 kg" pattern
-    assert len(result.items) == 1
+    assert result.supplier == "Acme Metals"
+    assert result.confidence == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — _build_response and _parse_items helpers
+# ---------------------------------------------------------------------------
+def test_ocr_service_build_response_and_parse_items():
+    """Exercises _build_response and _parse_items without any API calls."""
+    data = {
+        "supplier": "Acme Metals",
+        "carrier": "Fast Freight",
+        "bol_reference": "BOL-2026-001",
+        "delivery_date": "01/15/2026",
+        "items": [
+            {"material_type": "Steel Rod", "quantity": 50.0, "lot_batch_number": "LOT-001"},
+            {"material_type": "Bolt", "quantity": None, "lot_batch_number": None},
+        ],
+    }
+    result = ocr_service._build_response(data)
+    assert result.supplier == "Acme Metals"
+    assert result.confidence == 1.0
+    assert len(result.items) == 2
     assert result.items[0].quantity == 50.0
+    assert result.items[1].quantity is None
 
 
 # ---------------------------------------------------------------------------
-# Test 7 — process_image_bytes: empty OCR text → confidence 0.0 (no raise)
+# Test 8 — _extract_with_gemini with mocked google-genai client
 # ---------------------------------------------------------------------------
-def test_ocr_service_empty_text_returns_zero_confidence():
-    """process_image_bytes returns confidence=0.0 when pytesseract yields empty text."""
-    with patch("pytesseract.image_to_string", return_value="   "):
+def test_ocr_service_extract_with_gemini():
+    """Calls _extract_with_gemini() with a fully mocked genai.Client."""
+    json_payload = json.dumps({
+        "supplier": "Acme Metals",
+        "carrier": "Fast Freight",
+        "bol_reference": "BOL-001",
+        "delivery_date": "01/15/2026",
+        "items": [],
+    })
+    mock_response = MagicMock()
+    mock_response.text = json_payload
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    with patch("app.services.ocr_service.genai.Client", return_value=mock_client):
+        result = ocr_service._extract_with_gemini(_small_jpeg_bytes(), "image/jpeg")
+
+    assert result.bol_reference == "BOL-001"
+    assert result.confidence == 1.0
+    mock_client.models.generate_content.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — _extract_with_claude JPEG + PDF paths with mocked anthropic client
+# ---------------------------------------------------------------------------
+def test_ocr_service_extract_with_claude_jpeg_and_pdf():
+    """Calls _extract_with_claude() for both JPEG and PDF content types."""
+    tool_input = {
+        "supplier": "Acme Metals",
+        "carrier": "Fast Freight",
+        "bol_reference": "BOL-001",
+        "delivery_date": "01/15/2026",
+        "items": [],
+    }
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(input=tool_input)]
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_response
+
+    with patch("app.services.ocr_service.anthropic.Anthropic", return_value=mock_client):
+        # JPEG path
+        result_jpeg = ocr_service._extract_with_claude(_small_jpeg_bytes(), "image/jpeg")
+        # PDF path
+        result_pdf = ocr_service._extract_with_claude(b"%PDF-1.4", "application/pdf")
+
+    assert result_jpeg.bol_reference == "BOL-001"
+    assert result_pdf.bol_reference == "BOL-001"
+    assert mock_client.messages.create.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Test 10 — process_image_bytes: Gemini returns confidence=0.0, Claude succeeds
+# ---------------------------------------------------------------------------
+def test_ocr_service_gemini_zero_confidence_falls_back_to_claude():
+    """When Gemini returns confidence=0.0 the pipeline retries with Claude."""
+    zero_result = OCRResponse(confidence=0.0)
+
+    with (
+        patch(
+            "app.services.ocr_service._extract_with_gemini",
+            return_value=zero_result,
+        ),
+        patch(
+            "app.services.ocr_service._extract_with_claude",
+            return_value=_GOOD_RESPONSE,
+        ),
+    ):
         result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
 
-    assert result.confidence == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Test 8 — _deskew: covers the warpAffine branch (angle > 0.5)
-# ---------------------------------------------------------------------------
-def test_ocr_service_deskew_applies_rotation():
-    """_deskew() rotates when the image has enough angular skew."""
-    import numpy as np
-
-    # Build a binary image with a ~45-degree diagonal strip so minAreaRect
-    # returns an angle far enough from 0 to trigger warpAffine.
-    arr = np.zeros((100, 100), dtype=np.uint8)
-    for i in range(100):
-        col = min(i, 99)
-        arr[i, col] = 255  # 45° diagonal line
-
-    rotated = ocr_service._deskew(arr)
-    # Result is still a 2-D array of the same shape
-    assert rotated.shape == arr.shape
-
-
-# ---------------------------------------------------------------------------
-# Module-level constant (mirrors the router constant for test 3)
-# ---------------------------------------------------------------------------
-_OCR_MAX_SIZE = 10 * 1024 * 1024
+    assert result.confidence == 1.0
+    assert result.supplier == "Acme Metals"

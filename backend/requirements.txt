@@ -8,11 +8,9 @@ pydantic-settings==2.7.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.18
-pytesseract==0.3.13
 Pillow==11.0.0
-opencv-python-headless==4.13.0.92
-pdf2image==1.17.0
-numpy==2.4.4
+google-genai>=1.0.0
+anthropic>=0.40.0
 httpx==0.27.2
 pytest==8.3.4
 pytest-asyncio==0.24.0

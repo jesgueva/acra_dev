@@ -1,135 +1,185 @@
-"""OCR Service — Full preprocessing pipeline for BOL document extraction.
+"""OCR Service — Vision LLM-based BOL field extraction.
 
-Pipeline: grayscale → Gaussian blur → Otsu binarization → deskew → 2x upscale
-          → pytesseract (eng+spa, --psm 6) → regex field extraction → confidence score
+Two-tier pipeline:
+  1. Gemini 2.5 Flash  — primary (fast, cheap, JSON schema output)
+  2. Claude Sonnet 4.6 — fallback (used when Gemini fails or returns confidence == 0.0)
+
+Both providers receive the raw file bytes (JPEG, PNG, or PDF) encoded as base64.
+No image preprocessing required — the models handle orientation, quality, and layout.
 """
 
 from __future__ import annotations
 
-import io
-import re
-from typing import Optional
+import base64
+import json
+import logging
+from typing import Any
 
-import cv2
-import numpy as np
-import pytesseract
-from PIL import Image
+import anthropic
+from google import genai
+from google.genai import types as genai_types
 
+from app.core.config import settings
 from app.schemas.delivery import OCRItemResult, OCRResponse
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "application/pdf"}
+logger = logging.getLogger("acra.ocr")
 
-
-# ---------------------------------------------------------------------------
-# Preprocessing
-# ---------------------------------------------------------------------------
-
-def _deskew(binary: np.ndarray) -> np.ndarray:
-    """Rotate image to correct skew using minAreaRect on non-zero pixels."""
-    coords = np.column_stack(np.where(binary > 0)).astype(np.float32)
-    if len(coords) < 10:
-        return binary
-    rect = cv2.minAreaRect(coords)
-    angle = rect[-1]
-    if angle < -45:
-        angle = -(90 + angle)
-    else:
-        angle = -angle
-    if abs(angle) < 0.5:
-        return binary
-    h, w = binary.shape
-    center = (w // 2, h // 2)
-    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-    return cv2.warpAffine(
-        binary, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
-    )
-
-
-def preprocess(pil_image: Image.Image) -> Image.Image:
-    """Apply full preprocessing pipeline to a PIL image."""
-    arr = np.array(pil_image.convert("RGB"))
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    deskewed = _deskew(binary)
-    h, w = deskewed.shape
-    upscaled = cv2.resize(deskewed, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
-    return Image.fromarray(upscaled)
-
+_PROMPT = (
+    "Extract all Bill of Lading fields from this document. "
+    "Return a JSON object with exactly these keys: "
+    "supplier (string or null), "
+    "carrier (string or null), "
+    "bol_reference (string or null), "
+    "delivery_date (string or null, any format you find), "
+    "items (array — each element has material_type, quantity as number, lot_batch_number). "
+    "If a field is not present, use null."
+)
 
 # ---------------------------------------------------------------------------
-# Field extraction
+# Helpers
 # ---------------------------------------------------------------------------
 
-def _match(pattern: str, text: str, flags: int = re.IGNORECASE) -> Optional[str]:
-    m = re.search(pattern, text, flags)
-    return m.group(1).strip() if m else None
+def _confidence(r: OCRResponse) -> float:
+    filled = sum(1 for v in [r.supplier, r.carrier, r.bol_reference, r.delivery_date] if v)
+    return round(filled / 4.0, 2)
 
 
-def _extract_items(text: str) -> list[OCRItemResult]:
-    item_re = re.compile(
-        r"([A-Za-z][^\n\r]{2,40}?)\s+(\d+(?:\.\d+)?)\s*(?:units?|kg|lbs?|pcs?|pieces?)",
-        re.IGNORECASE,
-    )
-    lot_re = re.compile(r"(?:lot|batch)\s*[#:\s]+([A-Z0-9\-]+)", re.IGNORECASE)
-    lots = lot_re.findall(text)
-    items: list[OCRItemResult] = []
-    for i, m in enumerate(item_re.finditer(text)):
-        items.append(
-            OCRItemResult(
-                material_type=m.group(1).strip(),
-                quantity=float(m.group(2)),
-                lot_batch_number=lots[i] if i < len(lots) else None,
+def _parse_items(raw: list[dict[str, Any]]) -> list[OCRItemResult]:
+    items = []
+    for entry in raw or []:
+        try:
+            items.append(
+                OCRItemResult(
+                    material_type=entry.get("material_type"),
+                    quantity=float(entry["quantity"]) if entry.get("quantity") is not None else None,
+                    lot_batch_number=entry.get("lot_batch_number"),
+                )
             )
-        )
+        except (TypeError, ValueError):
+            pass
     return items
 
 
-def _extract_fields(text: str) -> OCRResponse:
-    """Extract BOL header fields and line items from raw OCR text."""
-    supplier = _match(r"(?:supplier|shipper|from)[:\s]+([^\n\r]+)", text)
-    carrier = _match(r"(?:carrier|transported by|trucking)[:\s]+([^\n\r]+)", text)
-    bol_reference = _match(r"\bBOL\s*[#:]+\s*([A-Z0-9\-]+)", text)
-    delivery_date = _match(r"\b(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})\b", text)
-
-    items = _extract_items(text)
-    filled = sum(1 for v in [supplier, carrier, bol_reference, delivery_date] if v)
-    confidence = round(filled / 4.0, 2)
-
-    return OCRResponse(
-        supplier=supplier,
-        carrier=carrier,
-        bol_reference=bol_reference,
-        delivery_date=delivery_date,
-        items=items,
-        confidence=confidence,
+def _build_response(data: dict[str, Any]) -> OCRResponse:
+    r = OCRResponse(
+        supplier=data.get("supplier"),
+        carrier=data.get("carrier"),
+        bol_reference=data.get("bol_reference"),
+        delivery_date=data.get("delivery_date"),
+        items=_parse_items(data.get("items", [])),
+        confidence=0.0,
     )
+    r.confidence = _confidence(r)
+    return r
+
+
+# ---------------------------------------------------------------------------
+# Gemini 2.5 Flash (primary)
+# ---------------------------------------------------------------------------
+
+def _extract_with_gemini(file_bytes: bytes, content_type: str) -> OCRResponse:
+    client = genai.Client(api_key=settings.gemini_api_key)
+    b64 = base64.b64encode(file_bytes).decode()
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            _PROMPT,
+            genai_types.Part.from_bytes(data=b64, mime_type=content_type),
+        ],
+        config=genai_types.GenerateContentConfig(
+            response_mime_type="application/json",
+        ),
+    )
+    data = json.loads(response.text)
+    return _build_response(data)
+
+
+# ---------------------------------------------------------------------------
+# Claude Sonnet 4.6 (fallback)
+# ---------------------------------------------------------------------------
+
+_CLAUDE_TOOL = {
+    "name": "extract_bol_fields",
+    "description": "Extract structured Bill of Lading fields from a document.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "supplier": {"type": ["string", "null"]},
+            "carrier": {"type": ["string", "null"]},
+            "bol_reference": {"type": ["string", "null"]},
+            "delivery_date": {"type": ["string", "null"]},
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "material_type": {"type": ["string", "null"]},
+                        "quantity": {"type": ["number", "null"]},
+                        "lot_batch_number": {"type": ["string", "null"]},
+                    },
+                },
+            },
+        },
+        "required": ["supplier", "carrier", "bol_reference", "delivery_date", "items"],
+    },
+}
+
+
+def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    b64 = base64.standard_b64encode(file_bytes).decode()
+
+    if content_type == "application/pdf":
+        file_block: dict[str, Any] = {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": b64},
+        }
+    else:
+        file_block = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": content_type, "data": b64},
+        }
+
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        tools=[_CLAUDE_TOOL],
+        tool_choice={"type": "tool", "name": "extract_bol_fields"},
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    file_block,
+                    {"type": "text", "text": "Extract all Bill of Lading fields from this document."},
+                ],
+            }
+        ],
+    )
+    tool_input: dict[str, Any] = response.content[0].input
+    return _build_response(tool_input)
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _load_images(file_bytes: bytes, content_type: str) -> list[Image.Image]:
-    if content_type == "application/pdf":
-        from pdf2image import convert_from_bytes  # requires poppler-utils on host
-        return convert_from_bytes(file_bytes)
-    return [Image.open(io.BytesIO(file_bytes))]
-
-
 def process_image_bytes(file_bytes: bytes, content_type: str) -> OCRResponse:
-    """Run the full OCR pipeline on raw file bytes.
+    """Run the two-tier OCR pipeline.
 
-    Returns an OCRResponse with confidence=0.0 if extraction fails.
+    Tries Gemini 2.5 Flash first; falls back to Claude Sonnet 4.6 on any
+    exception or if Gemini returns confidence == 0.0.
+    Returns confidence=0.0 if both providers fail.
     """
-    images = _load_images(file_bytes, content_type)
-    if not images:
-        return OCRResponse(confidence=0.0)
+    try:
+        result = _extract_with_gemini(file_bytes, content_type)
+        if result.confidence > 0.0:
+            return result
+        logger.info("Gemini returned confidence=0.0 — falling back to Claude")
+    except Exception as exc:
+        logger.warning("Gemini OCR failed (%s) — falling back to Claude", exc)
 
-    processed = preprocess(images[0])
-    text = pytesseract.image_to_string(processed, lang="eng+spa", config="--psm 6")
-    if not text.strip():
+    try:
+        return _extract_with_claude(file_bytes, content_type)
+    except Exception as exc:
+        logger.error("Claude OCR also failed: %s", exc)
         return OCRResponse(confidence=0.0)
-
-    return _extract_fields(text)
