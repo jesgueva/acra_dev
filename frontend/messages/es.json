@@ -20,7 +20,29 @@
     "sessionExpired": "Su sesión ha expirado. Por favor, inicie sesión de nuevo."
   },
   "receiving": {
-    "title": "Recepción"
+    "title": "Recepción",
+    "supplier": "Proveedor",
+    "bolNumber": "Número de BOL",
+    "bolDuplicate": "Este número de BOL ya existe.",
+    "proceedAnyway": "Continuar de todos modos",
+    "addItem": "Agregar artículo",
+    "removeItem": "Eliminar",
+    "submit": "Registrar entrega",
+    "itemName": "Nombre del artículo",
+    "lotBatch": "Número de lote",
+    "quantity": "Cantidad",
+    "unit": "Unidad",
+    "ocrDragDrop": "Arrastra una imagen de BOL o haz clic para subir",
+    "uploadFile": "Subir imagen de BOL",
+    "ocrSuccess": "Formulario completado automáticamente desde la imagen.",
+    "ocrError": "No se pudo extraer la información. Por favor ingrésela manualmente.",
+    "uploading": "Subiendo...",
+    "deliveryDate": "Fecha de entrega",
+    "status": "Estado",
+    "noDeliveries": "No se encontraron entregas.",
+    "filterBySupplier": "Filtrar por proveedor",
+    "previous": "Anterior",
+    "next": "Siguiente"
   },
   "inventory": {
     "title": "Inventario"

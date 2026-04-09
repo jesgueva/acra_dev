@@ -20,7 +20,29 @@
     "sessionExpired": "Your session has expired. Please sign in again."
   },
   "receiving": {
-    "title": "Receiving"
+    "title": "Receiving",
+    "supplier": "Supplier",
+    "bolNumber": "BOL Number",
+    "bolDuplicate": "This BOL number already exists.",
+    "proceedAnyway": "Proceed Anyway",
+    "addItem": "Add Item",
+    "removeItem": "Remove",
+    "submit": "Record Delivery",
+    "itemName": "Item Name",
+    "lotBatch": "Lot/Batch Number",
+    "quantity": "Quantity",
+    "unit": "Unit",
+    "ocrDragDrop": "Drag & drop a BOL image or click to upload",
+    "uploadFile": "Upload BOL image",
+    "ocrSuccess": "Form pre-populated from BOL image.",
+    "ocrError": "Unable to extract data. Please enter manually.",
+    "uploading": "Uploading...",
+    "deliveryDate": "Delivery Date",
+    "status": "Status",
+    "noDeliveries": "No deliveries found.",
+    "filterBySupplier": "Filter by supplier",
+    "previous": "Previous",
+    "next": "Next"
   },
   "inventory": {
     "title": "Inventory"

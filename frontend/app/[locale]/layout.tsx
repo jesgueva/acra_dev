@@ -4,6 +4,7 @@ import { getMessages, getLocale } from "next-intl/server";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import { AuthProvider } from "@/src/contexts/AuthContext";
 import { QueryProvider } from "@/src/components/providers/QueryProvider";
+import { Toaster } from "@/components/ui/sonner";
 import "../globals.css";
 
 const plusJakartaSans = Plus_Jakarta_Sans({
@@ -24,7 +25,10 @@ export default async function LocaleLayout({
       <body>
         <NextIntlClientProvider locale={locale} messages={messages}>
           <QueryProvider>
-            <AuthProvider>{children}</AuthProvider>
+            <AuthProvider>
+              {children}
+              <Toaster />
+            </AuthProvider>
           </QueryProvider>
         </NextIntlClientProvider>
       </body>
