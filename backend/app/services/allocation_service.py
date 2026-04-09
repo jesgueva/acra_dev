@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
@@ -5,7 +6,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
-from app.models.inventory import InventoryItem, LowStockAlert
+from app.models.inventory import InventoryItem
 from app.models.work_order import MaterialAllocation, WorkOrder, WorkOrderMaterial
 from app.schemas.work_order import WorkOrderResponse
 from app.services.work_order_service import _fetch_materials, _wo_response
@@ -21,10 +22,10 @@ async def allocate_materials(
 
     1. SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
     2. Lock work order FOR UPDATE
-    3. For each material: SELECT raw inventory ORDER BY last_updated ASC FOR UPDATE → deduct FIFO
-    4. INSERT material_allocations, UPDATE quantity_allocated
+    3. Batch-fetch all raw inventory FOR UPDATE, grouped by material_type, FIFO ordered
+    4. Deduct FIFO per material, INSERT material_allocations
     5. SET work_order.status = 'materials_allocated'
-    6. COMMIT → evaluate low-stock alerts
+    6. COMMIT
     """
     await db.execute(text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
 
@@ -48,23 +49,35 @@ async def allocate_materials(
     )
     materials = mats_res.scalars().all()
 
+    needed_types = [
+        m.material_type
+        for m in materials
+        if float(m.quantity_required) - float(m.quantity_allocated) > 0
+    ]
+
+    inv_by_type: dict[str, list] = defaultdict(list)
+    if needed_types:
+        inv_res = await db.execute(
+            select(InventoryItem)
+            .where(
+                InventoryItem.material_type.in_(needed_types),
+                InventoryItem.category == "raw",
+                InventoryItem.quantity_on_hand > 0,
+            )
+            .order_by(InventoryItem.material_type, InventoryItem.last_updated.asc())
+            .with_for_update()
+        )
+        for item in inv_res.scalars().all():
+            inv_by_type[item.material_type].append(item)
+
+    now = datetime.now(timezone.utc)
+
     for mat in materials:
         needed = float(mat.quantity_required) - float(mat.quantity_allocated)
         if needed <= 0:
             continue
 
-        inv_res = await db.execute(
-            select(InventoryItem)
-            .where(
-                InventoryItem.material_type == mat.material_type,
-                InventoryItem.category == "raw",
-                InventoryItem.quantity_on_hand > 0,
-            )
-            .order_by(InventoryItem.last_updated.asc())
-            .with_for_update()
-        )
-        inventory_items = inv_res.scalars().all()
-
+        inventory_items = inv_by_type.get(mat.material_type, [])
         total_available = sum(float(item.quantity_on_hand) for item in inventory_items)
         if total_available < needed:
             raise HTTPException(
@@ -81,14 +94,14 @@ async def allocate_materials(
                 break
             qty_taken = min(remaining, float(inv_item.quantity_on_hand))
             inv_item.quantity_on_hand = float(inv_item.quantity_on_hand) - qty_taken
-            inv_item.last_updated = datetime.now(timezone.utc)
+            inv_item.last_updated = now
             db.add(
                 MaterialAllocation(
                     work_order_material_id=mat.id,
                     inventory_id=inv_item.id,
                     lot_batch_number=inv_item.lot_batch_number,
                     quantity_allocated=qty_taken,
-                    allocated_at=datetime.now(timezone.utc),
+                    allocated_at=now,
                 )
             )
             remaining -= qty_taken
@@ -96,7 +109,7 @@ async def allocate_materials(
         mat.quantity_allocated = float(mat.quantity_required)
 
     wo.status = "materials_allocated"
-    wo.updated_at = datetime.now(timezone.utc)
+    wo.updated_at = now
 
     await write_audit(
         db=db,
@@ -108,17 +121,5 @@ async def allocate_materials(
     )
     await db.commit()
 
-    await _evaluate_low_stock_alerts(db, [m.material_type for m in materials])
-
     final_materials = await _fetch_materials(db, wo_id)
     return _wo_response(wo, final_materials)
-
-
-async def _evaluate_low_stock_alerts(db: AsyncSession, material_types: list[str]) -> None:
-    """Check whether any low-stock thresholds are now breached after allocation."""
-    if not material_types:
-        return
-    alerts_res = await db.execute(
-        select(LowStockAlert).where(LowStockAlert.material_type.in_(material_types))
-    )
-    _ = alerts_res.scalars().all()
