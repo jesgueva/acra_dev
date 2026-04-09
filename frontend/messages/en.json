@@ -1,0 +1,43 @@
+{
+  "nav": {
+    "receiving": "Receiving",
+    "inventory": "Inventory",
+    "workOrders": "Work Orders",
+    "users": "Users",
+    "audit": "Audit Log",
+    "language": "Language",
+    "logout": "Logout"
+  },
+  "auth": {
+    "login": "Login",
+    "username": "Username",
+    "password": "Password",
+    "loginButton": "Sign In",
+    "loginError": "Invalid credentials",
+    "inactiveError": "Account is inactive"
+  },
+  "receiving": {
+    "title": "Receiving"
+  },
+  "inventory": {
+    "title": "Inventory"
+  },
+  "workOrders": {
+    "title": "Work Orders"
+  },
+  "users": {
+    "title": "Users"
+  },
+  "audit": {
+    "title": "Audit Log"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "loading": "Loading...",
+    "error": "Error",
+    "dateFormat": "MM/DD/YYYY"
+  }
+}
