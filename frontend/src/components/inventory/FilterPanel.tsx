@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { FilterState } from "./types";
+import { DEFAULT_FILTERS, FilterState } from "./types";
 
 interface FilterPanelProps {
   filters: FilterState;
@@ -14,6 +14,12 @@ const CATEGORIES = ["", "raw", "component", "finished"];
 
 export function FilterPanel({ filters, onChange }: FilterPanelProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   const handleSearchChange = useCallback(
     (value: string) => {
@@ -27,7 +33,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
 
   const handleClear = () => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    onChange({ category: "", search: "", dateFrom: "", dateTo: "" });
+    onChange(DEFAULT_FILTERS);
   };
 
   return (

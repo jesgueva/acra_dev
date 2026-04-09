@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { ROLES } from "@/src/lib/privileges";
@@ -11,14 +11,13 @@ import { TraceabilityView } from "./TraceabilityView";
 import { AdjustQuantityModal } from "./AdjustQuantityModal";
 import { ExportButton } from "./ExportButton";
 import { InventoryTrendLine } from "./InventoryTrendLine";
-import { FilterState, InventoryItem, InventoryResponse } from "./types";
-
-const DEFAULT_FILTERS: FilterState = {
-  category: "",
-  search: "",
-  dateFrom: "",
-  dateTo: "",
-};
+import {
+  DEFAULT_FILTERS,
+  filtersToParams,
+  FilterState,
+  InventoryItem,
+  InventoryResponse,
+} from "./types";
 
 export function Inventory() {
   const { user } = useAuth();
@@ -31,23 +30,31 @@ export function Inventory() {
   const [selectedLot, setSelectedLot] = useState<string | null>(null);
   const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null);
 
-  const queryParams = new URLSearchParams();
-  if (filters.category) queryParams.set("category", filters.category);
-  if (filters.search) queryParams.set("search", filters.search);
-  if (filters.dateFrom) queryParams.set("date_from", filters.dateFrom);
-  if (filters.dateTo) queryParams.set("date_to", filters.dateTo);
-
   const { data, isLoading } = useQuery<InventoryResponse>({
     queryKey: ["inventory", filters],
     queryFn: async () => {
+      const params = filtersToParams(filters);
       const res = await apiClient.get<InventoryResponse>(
-        `/inventory${queryParams.toString() ? `?${queryParams}` : ""}`
+        `/inventory${params.toString() ? `?${params}` : ""}`
       );
       return res.data;
     },
   });
 
-  const items = data?.items ?? [];
+  const items = useMemo(() => data?.items ?? [], [data]);
+
+  const handleRowClick = useCallback(
+    (item: InventoryItem) => setSelectedLot(item.lot_batch_number),
+    []
+  );
+  const handleAdjust = useCallback(
+    (item: InventoryItem) => setAdjustItem(item),
+    []
+  );
+  const handleAdjustSuccess = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ["inventory"] }),
+    [queryClient]
+  );
 
   return (
     <div className="space-y-6 p-6">
@@ -68,8 +75,8 @@ export function Inventory() {
         <InventoryTable
           items={items}
           isAdmin={isAdmin}
-          onRowClick={(item) => setSelectedLot(item.lot_batch_number)}
-          onAdjust={(item) => setAdjustItem(item)}
+          onRowClick={handleRowClick}
+          onAdjust={handleAdjust}
         />
       )}
 
@@ -81,7 +88,7 @@ export function Inventory() {
       <AdjustQuantityModal
         item={adjustItem}
         onClose={() => setAdjustItem(null)}
-        onSuccess={() => queryClient.invalidateQueries({ queryKey: ["inventory"] })}
+        onSuccess={handleAdjustSuccess}
       />
     </div>
   );

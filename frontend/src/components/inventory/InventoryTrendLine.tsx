@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -18,12 +19,17 @@ interface InventoryTrendLineProps {
 
 // TODO: Replace with time-series data in v2 when backend supports historical snapshots.
 export function InventoryTrendLine({ items }: InventoryTrendLineProps) {
-  const chartData = items.slice(0, 10).map((item) => ({
-    name: item.material_name.length > 12
-      ? item.material_name.slice(0, 12) + "…"
-      : item.material_name,
-    quantity: item.quantity,
-  }));
+  const chartData = useMemo(
+    () =>
+      items.slice(0, 10).map((item) => ({
+        name:
+          item.material_name.length > 12
+            ? item.material_name.slice(0, 12) + "…"
+            : item.material_name,
+        quantity: item.quantity,
+      })),
+    [items]
+  );
 
   return (
     <Card>

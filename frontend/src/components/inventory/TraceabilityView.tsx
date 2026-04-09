@@ -22,6 +22,7 @@ export function TraceabilityView({ lotBatchNumber, onClose }: TraceabilityViewPr
   const { data, isLoading } = useQuery<TraceabilityData>({
     queryKey: ["traceability", lotBatchNumber],
     queryFn: async () => {
+      if (!lotBatchNumber) throw new Error("No lot selected");
       const res = await apiClient.get<TraceabilityData>(
         `/inventory/trace/${lotBatchNumber}`
       );

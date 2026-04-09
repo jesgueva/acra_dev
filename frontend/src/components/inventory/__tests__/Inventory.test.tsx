@@ -2,6 +2,7 @@ import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Inventory } from "../Inventory";
 import { AuthContextValue } from "@/src/contexts/AuthContext";
+import { ROLES } from "@/src/lib/privileges";
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
@@ -87,8 +88,7 @@ const SAMPLE_ITEMS = [
   },
 ];
 
-// useQuery is called twice: once for inventory list, once for traceability.
-// We route by queryKey[0] so mocks stay stable across re-renders.
+// Routes useQuery calls by queryKey[0] so mocks stay stable across re-renders.
 function setupInventoryQuery(items = SAMPLE_ITEMS, traceData?: object) {
   mockUseQuery.mockImplementation((options: Parameters<typeof useQuery>[0]) => {
     const key = (options.queryKey as string[])[0];
@@ -117,7 +117,7 @@ beforeEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test("renders inventory table with items", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Supervisor"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.SUPERVISOR]));
   setupInventoryQuery();
 
   render(<Inventory />);
@@ -128,21 +128,18 @@ test("renders inventory table with items", () => {
 });
 
 test("shows red low-stock badge when is_triggered is true", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Supervisor"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.SUPERVISOR]));
   setupInventoryQuery();
 
   render(<Inventory />);
 
-  // Copper Wire (id 2) has is_triggered: true
   expect(screen.getByTestId("low-stock-badge-2")).toBeInTheDocument();
   expect(screen.getByTestId("low-stock-badge-2")).toHaveTextContent("Low Stock");
-
-  // Steel Rod (id 1) has is_triggered: false — no badge
   expect(screen.queryByTestId("low-stock-badge-1")).not.toBeInTheDocument();
 });
 
 test("opens TraceabilityView dialog when row is clicked", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Supervisor"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.SUPERVISOR]));
   setupInventoryQuery();
 
   render(<Inventory />);
@@ -153,7 +150,7 @@ test("opens TraceabilityView dialog when row is clicked", () => {
 });
 
 test("admin sees Adjust button; clicking opens AdjustQuantityModal", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Admin"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
   setupInventoryQuery();
 
   render(<Inventory />);
@@ -167,7 +164,7 @@ test("admin sees Adjust button; clicking opens AdjustQuantityModal", () => {
 });
 
 test("non-admin user does not see Adjust button", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Clerk"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.CLERK]));
   setupInventoryQuery();
 
   render(<Inventory />);
@@ -176,7 +173,7 @@ test("non-admin user does not see Adjust button", () => {
 });
 
 test("AdjustQuantityModal shows inline error for negative quantity", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Admin"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
   setupInventoryQuery();
 
   render(<Inventory />);
@@ -193,22 +190,19 @@ test("AdjustQuantityModal shows inline error for negative quantity", () => {
 });
 
 test("FilterPanel Clear Filters button resets all filter state", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Supervisor"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.SUPERVISOR]));
   setupInventoryQuery();
 
   render(<Inventory />);
 
-  // Select a category filter
   fireEvent.click(screen.getByTestId("category-raw"));
-  // Then clear all filters
   fireEvent.click(screen.getByTestId("clear-filters"));
 
-  // "All" category button should be present (filter reset to "")
   expect(screen.getByTestId("category-all")).toBeInTheDocument();
 });
 
 test("admin sees InventoryTrendLine bar chart when items are present", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Admin"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
   setupInventoryQuery();
 
   render(<Inventory />);

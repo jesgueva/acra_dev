@@ -23,6 +23,22 @@ export interface FilterState {
   dateTo: string;
 }
 
+export const DEFAULT_FILTERS: FilterState = {
+  category: "",
+  search: "",
+  dateFrom: "",
+  dateTo: "",
+};
+
+export function filtersToParams(filters: FilterState): URLSearchParams {
+  const p = new URLSearchParams();
+  if (filters.category) p.set("category", filters.category);
+  if (filters.search) p.set("search", filters.search);
+  if (filters.dateFrom) p.set("date_from", filters.dateFrom);
+  if (filters.dateTo) p.set("date_to", filters.dateTo);
+  return p;
+}
+
 export interface TraceabilityData {
   lot_batch_number: string;
   source_delivery: {
