@@ -25,9 +25,11 @@ export function AssignLineDropdown({
   capacityWarning,
   onAssigned,
 }: AssignLineDropdownProps) {
+  const [selectedLine, setSelectedLine] = useState(currentLine ?? "");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSelect = async (line: string) => {
+    setSelectedLine(line);
     setIsLoading(true);
     try {
       const res = await apiClient.patch<{
@@ -43,8 +45,8 @@ export function AssignLineDropdown({
   return (
     <div className="space-y-2">
       <Select
+        value={selectedLine || undefined}
         onValueChange={handleSelect}
-        defaultValue={currentLine ?? undefined}
         disabled={isLoading}
       >
         <SelectTrigger className="w-48">

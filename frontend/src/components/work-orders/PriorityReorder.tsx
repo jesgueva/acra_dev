@@ -19,6 +19,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { apiClient } from "@/src/lib/api-client";
 import type { WorkOrder } from "./types";
 
@@ -42,14 +43,16 @@ function SortableItem({ wo }: SortableItemProps) {
       style={style}
       className="flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm shadow-sm"
     >
-      <button
+      <Button
+        variant="ghost"
+        size="icon-sm"
         {...attributes}
         {...listeners}
         className="cursor-grab text-muted-foreground hover:text-foreground"
         aria-label="Drag to reorder"
       >
         <GripVertical className="h-4 w-4" />
-      </button>
+      </Button>
       <span className="font-mono text-xs text-muted-foreground">
         {wo.wo_number}
       </span>
@@ -83,17 +86,16 @@ export function PriorityReorder({
     const oldIdx = items.findIndex((wo) => wo.id === active.id);
     const newIdx = items.findIndex((wo) => wo.id === over.id);
     const reordered = arrayMove(items, oldIdx, newIdx);
+    const previousItems = items;
     setItems(reordered);
     onReordered?.(reordered);
 
-    // Persist new sequence for the moved item
     const movedWo = reordered[newIdx];
-    await apiClient.patch(`/work-orders/${movedWo.id}/sequence`, {
-      display_sequence: newIdx,
-    }).catch(() => {
-      // Revert on failure
-      setItems(items);
-    });
+    await apiClient
+      .patch(`/work-orders/${movedWo.id}/sequence`, {
+        display_sequence: newIdx,
+      })
+      .catch(() => setItems(previousItems));
   };
 
   return (

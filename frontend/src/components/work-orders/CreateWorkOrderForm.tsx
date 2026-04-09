@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import axios from "axios";
 import {
   Dialog,
   DialogContent,
@@ -38,10 +39,6 @@ interface CreateWorkOrderFormProps {
   open: boolean;
   onClose: () => void;
   onCreated?: () => void;
-}
-
-interface AxiosErrorLike {
-  response?: { data?: { detail?: string } };
 }
 
 export function CreateWorkOrderForm({
@@ -96,8 +93,11 @@ export function CreateWorkOrderForm({
       setAvailability(res.data.material_availability);
       onCreated?.();
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorLike;
-      setError(axiosErr.response?.data?.detail ?? "Failed to create work order.");
+      if (axios.isAxiosError(err)) {
+        setError(err.response?.data?.detail ?? "Failed to create work order.");
+      } else {
+        setError("Failed to create work order.");
+      }
     } finally {
       setIsLoading(false);
     }

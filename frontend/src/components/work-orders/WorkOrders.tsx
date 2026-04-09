@@ -30,7 +30,7 @@ export function WorkOrders() {
   const [showCreate, setShowCreate] = useState(false);
 
   const { data, refetch } = useQuery<WorkOrderListResponse>({
-    queryKey: ["work-orders"],
+    queryKey: ["work-orders", isOperator],
     queryFn: async () => {
       const params = new URLSearchParams({ page_size: "250" });
       if (isOperator) params.set("status", "in_production");

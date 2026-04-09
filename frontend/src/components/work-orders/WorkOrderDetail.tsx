@@ -20,28 +20,10 @@ import {
 } from "@/components/ui/table";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { PRIVILEGES } from "@/src/lib/privileges";
+import { STATUS_LABELS, STATUS_BADGE_VARIANTS } from "./constants";
 import type { WorkOrder } from "./types";
 import { AllocateMaterialsModal } from "./AllocateMaterialsModal";
 import { AssignLineDropdown } from "./AssignLineDropdown";
-
-const STATUS_LABELS: Record<string, string> = {
-  created: "Created",
-  materials_allocated: "Materials Allocated",
-  in_production: "In Production",
-  completed: "Completed",
-  ready_for_shipment: "Ready for Shipment",
-};
-
-const STATUS_VARIANTS: Record<
-  string,
-  "default" | "secondary" | "destructive" | "outline"
-> = {
-  created: "outline",
-  materials_allocated: "secondary",
-  in_production: "default",
-  completed: "secondary",
-  ready_for_shipment: "default",
-};
 
 const STATUS_TIMELINE: Array<{ key: string; label: string }> = [
   { key: "created", label: "Created" },
@@ -63,9 +45,7 @@ export function WorkOrderDetail({
 }: WorkOrderDetailProps) {
   const { hasPrivilege } = useAuth();
   const [allocateOpen, setAllocateOpen] = useState(false);
-  const [capacityWarning, setCapacityWarning] = useState<string | null>(
-    null
-  );
+  const [capacityWarning, setCapacityWarning] = useState<string | null>(null);
 
   const canAllocate = hasPrivilege(PRIVILEGES.WORK_ORDERS_ALLOCATE);
   const canAssign = hasPrivilege(PRIVILEGES.WORK_ORDERS_ASSIGN);
@@ -84,9 +64,8 @@ export function WorkOrderDetail({
           </SheetHeader>
 
           <div className="mt-4 space-y-6">
-            {/* Status & meta */}
             <div className="flex flex-wrap gap-2">
-              <Badge variant={STATUS_VARIANTS[workOrder.status] ?? "outline"}>
+              <Badge variant={STATUS_BADGE_VARIANTS[workOrder.status] ?? "outline"}>
                 {STATUS_LABELS[workOrder.status] ?? workOrder.status}
               </Badge>
               <Badge variant="outline">{workOrder.priority}</Badge>
@@ -113,7 +92,6 @@ export function WorkOrderDetail({
 
             <Separator />
 
-            {/* Status timeline */}
             <div>
               <p className="mb-2 text-sm font-medium">Progress</p>
               <ol className="flex gap-4">
@@ -138,7 +116,6 @@ export function WorkOrderDetail({
 
             <Separator />
 
-            {/* Materials table */}
             <div>
               <p className="mb-2 text-sm font-medium">Materials</p>
               {workOrder.materials.length === 0 ? (
@@ -167,7 +144,6 @@ export function WorkOrderDetail({
 
             <Separator />
 
-            {/* Actions */}
             <div className="space-y-4">
               {showAllocate && (
                 <Button onClick={() => setAllocateOpen(true)}>
@@ -193,17 +169,16 @@ export function WorkOrderDetail({
         </SheetContent>
       </Sheet>
 
-      {allocateOpen && (
-        <AllocateMaterialsModal
-          open={allocateOpen}
-          workOrderId={workOrder.id}
-          onClose={() => setAllocateOpen(false)}
-          onSuccess={() => {
-            setAllocateOpen(false);
-            onUpdated?.();
-          }}
-        />
-      )}
+      {/* Always rendered so Dialog manages its own open state and Radix portals correctly */}
+      <AllocateMaterialsModal
+        open={allocateOpen}
+        workOrderId={workOrder.id}
+        onClose={() => setAllocateOpen(false)}
+        onSuccess={() => {
+          setAllocateOpen(false);
+          onUpdated?.();
+        }}
+      />
     </>
   );
 }

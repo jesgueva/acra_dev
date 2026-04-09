@@ -23,6 +23,10 @@ jest.mock("@/src/lib/api-client", () => ({
   },
 }));
 
+jest.mock("axios", () => ({
+  isAxiosError: jest.fn((err) => err?.isAxiosError === true),
+}));
+
 jest.mock("@dnd-kit/core", () => ({
   DndContext: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
@@ -67,6 +71,7 @@ import { AssignLineDropdown } from "../AssignLineDropdown";
 import { CreateWorkOrderForm } from "../CreateWorkOrderForm";
 import type { WorkOrder } from "../types";
 import type { AuthContextValue } from "@/src/contexts/AuthContext";
+import { PRIVILEGES, ROLES } from "@/src/lib/privileges";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -135,7 +140,7 @@ beforeEach(() => {
 
 test("WorkOrders: admin sees all status group sections", () => {
   mockUseAuth.mockReturnValue(
-    makeAuth(["Admin"], ["work_orders.view", "work_orders.create"])
+    makeAuth([ROLES.ADMIN], [PRIVILEGES.WORK_ORDERS_VIEW, PRIVILEGES.WORK_ORDERS_CREATE])
   );
   setupWorkOrdersQuery([
     makeWO({ id: 1, status: "created", product: "Widget A" }),
@@ -155,7 +160,7 @@ test("WorkOrders: admin sees all status group sections", () => {
 });
 
 test("WorkOrders: Machine Operator only sees in_production group", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Machine Operator"], ["work_orders.view"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.OPERATOR], [PRIVILEGES.WORK_ORDERS_VIEW]));
   setupWorkOrdersQuery([
     makeWO({ id: 1, status: "created", product: "Widget A" }),
     makeWO({ id: 2, status: "in_production", product: "Widget B" }),
@@ -175,7 +180,7 @@ test("WorkOrders: Machine Operator only sees in_production group", () => {
 });
 
 test("WorkOrderDetail: renders materials table rows", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Admin"], ["work_orders.view"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN], [PRIVILEGES.WORK_ORDERS_VIEW]));
 
   const wo = makeWO({
     materials: [
@@ -192,7 +197,7 @@ test("WorkOrderDetail: renders materials table rows", () => {
 
 test("WorkOrderDetail: Allocate button hidden when status is not 'created'", () => {
   mockUseAuth.mockReturnValue(
-    makeAuth(["Admin"], ["work_orders.view", "work_orders.allocate"])
+    makeAuth([ROLES.ADMIN], [PRIVILEGES.WORK_ORDERS_VIEW, PRIVILEGES.WORK_ORDERS_ALLOCATE])
   );
 
   const wo = makeWO({ status: "materials_allocated" });
@@ -220,6 +225,7 @@ test("AllocateMaterialsModal: shows insufficiency warning when open", () => {
 
 test("AllocateMaterialsModal: shows 409 inline error with material name", async () => {
   const err = Object.assign(new Error("Conflict"), {
+    isAxiosError: true,
     response: {
       status: 409,
       data: { detail: "Insufficient stock for: Steel" },
@@ -278,7 +284,6 @@ test("CreateWorkOrderForm: shows green/red material availability after submit", 
   await userEvent.type(screen.getByLabelText(/quantity/i), "50");
   await userEvent.type(screen.getByLabelText(/target date/i), "2026-06-01");
 
-  // Fill the first material row
   const materialInputs = screen.getAllByPlaceholderText("Material type");
   const qtyInputs = screen.getAllByPlaceholderText("Qty");
   await userEvent.type(materialInputs[0], "Steel");

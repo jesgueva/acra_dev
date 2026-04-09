@@ -2,27 +2,10 @@
 
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { STATUS_LABELS, STATUS_BADGE_VARIANTS } from "./constants";
 import type { WorkOrder } from "./types";
-
-const STATUS_LABELS: Record<string, string> = {
-  created: "Created",
-  materials_allocated: "Materials Allocated",
-  in_production: "In Production",
-  completed: "Completed",
-  ready_for_shipment: "Ready for Shipment",
-};
-
-const STATUS_BADGE_VARIANTS: Record<
-  string,
-  "default" | "secondary" | "destructive" | "outline"
-> = {
-  created: "outline",
-  materials_allocated: "secondary",
-  in_production: "default",
-  completed: "secondary",
-  ready_for_shipment: "default",
-};
 
 interface WorkOrderRowProps {
   wo: WorkOrder;
@@ -31,8 +14,9 @@ interface WorkOrderRowProps {
 
 function WorkOrderRow({ wo, onSelect }: WorkOrderRowProps) {
   return (
-    <button
-      className="flex w-full items-center justify-between rounded-md border bg-white px-4 py-3 text-left text-sm shadow-sm hover:bg-muted/50"
+    <Button
+      variant="ghost"
+      className="flex h-auto w-full items-center justify-between rounded-md border bg-white px-4 py-3 text-left shadow-sm hover:bg-muted/50"
       onClick={() => onSelect(wo)}
       data-testid={`wo-row-${wo.id}`}
     >
@@ -48,7 +32,7 @@ function WorkOrderRow({ wo, onSelect }: WorkOrderRowProps) {
         </Badge>
         <span className="text-xs text-muted-foreground">{wo.target_date}</span>
       </div>
-    </button>
+    </Button>
   );
 }
 
@@ -64,8 +48,9 @@ function StatusGroup({ status, workOrders, onSelect }: StatusGroupProps) {
 
   return (
     <section aria-label={label}>
-      <button
-        className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground"
+      <Button
+        variant="ghost"
+        className="mb-2 flex h-auto items-center gap-2 px-0 text-sm font-semibold text-foreground"
         onClick={() => setCollapsed((c) => !c)}
         aria-expanded={!collapsed}
       >
@@ -78,7 +63,7 @@ function StatusGroup({ status, workOrders, onSelect }: StatusGroupProps) {
         <span className="ml-1 rounded-full bg-muted px-1.5 text-xs font-normal text-muted-foreground">
           {workOrders.length}
         </span>
-      </button>
+      </Button>
       {!collapsed && (
         <div className="space-y-2">
           {workOrders.map((wo) => (

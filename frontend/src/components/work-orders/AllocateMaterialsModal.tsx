@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import axios from "axios";
 import {
   Dialog,
   DialogContent,
@@ -16,13 +17,6 @@ interface AllocateMaterialsModalProps {
   workOrderId: number;
   onClose: () => void;
   onSuccess: () => void;
-}
-
-interface AxiosErrorLike {
-  response?: {
-    status: number;
-    data?: { detail?: string };
-  };
 }
 
 export function AllocateMaterialsModal({
@@ -42,9 +36,8 @@ export function AllocateMaterialsModal({
       onSuccess();
       onClose();
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorLike;
-      if (axiosErr.response?.status === 409) {
-        setError(axiosErr.response.data?.detail ?? "Insufficient stock");
+      if (axios.isAxiosError(err) && err.response?.status === 409) {
+        setError(err.response.data?.detail ?? "Insufficient stock");
       } else {
         setError("Allocation failed. Please try again.");
       }
