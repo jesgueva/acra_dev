@@ -1,4 +1,5 @@
 import axios from "axios";
+import { SESSION_EXPIRED_REASON } from "@/src/lib/auth-constants";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -43,7 +44,7 @@ apiClient.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       if (_logoutFn) _logoutFn();
-      _navigateFn("/login");
+      _navigateFn(`/login?reason=${SESSION_EXPIRED_REASON}`);
     }
     return Promise.reject(error);
   }

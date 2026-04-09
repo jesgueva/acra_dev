@@ -13,8 +13,11 @@
     "username": "Username",
     "password": "Password",
     "loginButton": "Sign In",
-    "loginError": "Invalid credentials",
-    "inactiveError": "Account is inactive"
+    "loginError": "Login failed. Please try again.",
+    "inactiveError": "Account is inactive",
+    "invalidCredentials": "Invalid username or password.",
+    "accountDeactivated": "Your account has been deactivated. Please contact an administrator.",
+    "sessionExpired": "Your session has expired. Please sign in again."
   },
   "receiving": {
     "title": "Receiving"

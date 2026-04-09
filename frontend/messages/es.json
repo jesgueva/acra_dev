@@ -13,8 +13,11 @@
     "username": "Usuario",
     "password": "Contraseña",
     "loginButton": "Entrar",
-    "loginError": "Credenciales inválidas",
-    "inactiveError": "La cuenta está inactiva"
+    "loginError": "Error al iniciar sesión. Por favor, inténtelo de nuevo.",
+    "inactiveError": "La cuenta está inactiva",
+    "invalidCredentials": "Usuario o contraseña incorrectos.",
+    "accountDeactivated": "Su cuenta ha sido desactivada. Contacte a un administrador.",
+    "sessionExpired": "Su sesión ha expirado. Por favor, inicie sesión de nuevo."
   },
   "receiving": {
     "title": "Recepción"
