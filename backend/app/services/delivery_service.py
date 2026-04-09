@@ -36,18 +36,15 @@ async def create_delivery(
     current_user: TokenUser,
     db: AsyncSession,
 ) -> DeliveryResponse:
-    # Check for duplicate BOL reference
-    dup_result = await db.execute(
-        select(Delivery).where(Delivery.bol_reference == body.bol_reference)
-    )
-    existing = dup_result.scalar_one_or_none()
+    existing = (
+        await db.execute(select(Delivery).where(Delivery.bol_reference == body.bol_reference))
+    ).scalar_one_or_none()
     if existing and not body.force:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Delivery with BOL reference '{body.bol_reference}' already exists. Use force=true to override.",
         )
 
-    # Insert delivery
     delivery = Delivery(
         supplier=body.supplier,
         carrier=body.carrier,
@@ -56,9 +53,8 @@ async def create_delivery(
         created_by=current_user.user_id,
     )
     db.add(delivery)
-    await db.flush()  # populate delivery.id
+    await db.flush()  # DB assigns delivery.id before items reference it
 
-    # Insert delivery items
     delivery_items: list[DeliveryItem] = []
     for item_data in body.items:
         item = DeliveryItem(
@@ -70,10 +66,10 @@ async def create_delivery(
         )
         db.add(item)
         delivery_items.append(item)
-    await db.flush()  # populate delivery item IDs
+    await db.flush()  # DB assigns item IDs before inventory rows reference them
 
-    # Insert inventory items (category='raw') and link back
-    inventory_items: list[InventoryItem] = []
+    # Build (item, inv) pairs so the link-back loop is explicit and order-safe
+    pairs: list[tuple[DeliveryItem, InventoryItem]] = []
     for item in delivery_items:
         inv = InventoryItem(
             material_type=item.material_type,
@@ -84,11 +80,10 @@ async def create_delivery(
             source_delivery_item_id=item.id,
         )
         db.add(inv)
-        inventory_items.append(inv)
-    await db.flush()  # populate inventory item IDs
+        pairs.append((item, inv))
+    await db.flush()  # DB assigns inventory IDs before we write them back
 
-    # Link inventory_item_id back to each delivery item
-    for item, inv in zip(delivery_items, inventory_items):
+    for item, inv in pairs:
         item.inventory_item_id = inv.id
 
     await write_audit(
@@ -113,12 +108,12 @@ async def create_delivery(
             DeliveryItemResponse(
                 id=item.id,
                 material_type=item.material_type,
-                quantity=float(item.quantity),
+                quantity=item.quantity,
                 lot_batch_number=item.lot_batch_number,
                 storage_location=item.storage_location,
                 inventory_item_id=item.inventory_item_id,
             )
-            for item in delivery_items
+            for item, _ in pairs
         ],
     )
 
@@ -147,10 +142,9 @@ async def list_deliveries(
 
     results: list[DeliveryResponse] = []
     if rows:
-        row_ids = [d.id for d in rows]
         items_rows = (
             await db.execute(
-                select(DeliveryItem).where(DeliveryItem.delivery_id.in_(row_ids))
+                select(DeliveryItem).where(DeliveryItem.delivery_id.in_([d.id for d in rows]))
             )
         ).scalars().all()
 

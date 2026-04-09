@@ -11,9 +11,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.database import get_db
-from app.core.security import create_access_token, hash_password
+from app.core.security import create_access_token
 from app.main import app
-from app.models.user import User
 from app.schemas.delivery import (
     DeliveryCreate,
     DeliveryItemCreate,
@@ -22,6 +21,7 @@ from app.schemas.delivery import (
     DeliveryResponse,
 )
 from app.schemas.auth import TokenUser
+from tests.conftest import _make_user, _override
 
 BASE_URL = "http://test"
 
@@ -45,17 +45,6 @@ _VALID_BODY = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _make_user() -> User:
-    u = User()
-    u.id = 1
-    u.username = "clerk"
-    u.full_name = "Test Clerk"
-    u.preferred_language = "en"
-    u.status = "active"
-    u.password_hash = hash_password("pass")
-    return u
-
 
 def _make_rbac_session(privileges=("deliveries.create", "deliveries.view")):
     """Mock session that satisfies the 3 RBAC execute() calls."""
@@ -82,10 +71,23 @@ def _make_rbac_session(privileges=("deliveries.create", "deliveries.view")):
     return session
 
 
-def _override(session):
-    async def _dep():
-        yield session
-    return _dep
+def _make_flush(added, delivery_id=1, item_base=10, inv_base=100, created_at=None):
+    """Return a flush coroutine that assigns DB-generated IDs to added objects."""
+    _dt = created_at or datetime(2026, 1, 15, tzinfo=timezone.utc)
+
+    async def _flush():
+        for d in added.get("deliveries", []):
+            if d.id is None:
+                d.id = delivery_id
+                d.created_at = _dt
+        for idx, item in enumerate(added.get("delivery_items", [])):
+            if item.id is None:
+                item.id = item_base + idx
+        for idx, inv in enumerate(added.get("inventory_items", [])):
+            if inv.id is None:
+                inv.id = inv_base + idx
+
+    return _flush
 
 
 def _make_mock_delivery_response():
@@ -202,40 +204,14 @@ async def test_list_deliveries_no_auth_returns_401():
 async def test_service_create_delivery_atomic():
     from app.services.delivery_service import create_delivery
 
-    # Build mock session
     session = AsyncMock()
-
     bol_result = MagicMock()
-    bol_result.scalar_one_or_none.return_value = None  # no duplicate
+    bol_result.scalar_one_or_none.return_value = None
     session.execute = AsyncMock(return_value=bol_result)
 
     added = defaultdict(list)
-
-    def _add(obj):
-        added[obj.__class__.__tablename__].append(obj)
-
-    session.add = MagicMock(side_effect=_add)
-
-    flush_count = [0]
-
-    async def _flush():
-        flush_count[0] += 1
-        n = flush_count[0]
-        if n == 1:  # after Delivery
-            for d in added.get("deliveries", []):
-                if d.id is None:
-                    d.id = 1
-                    d.created_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
-        elif n == 2:  # after DeliveryItems
-            for idx, item in enumerate(added.get("delivery_items", [])):
-                if item.id is None:
-                    item.id = 10 + idx
-        elif n == 3:  # after InventoryItems
-            for idx, inv in enumerate(added.get("inventory_items", [])):
-                if inv.id is None:
-                    inv.id = 100 + idx
-
-    session.flush = _flush
+    session.add = MagicMock(side_effect=lambda obj: added[obj.__class__.__tablename__].append(obj))
+    session.flush = _make_flush(added, delivery_id=1, item_base=10, inv_base=100)
     session.commit = AsyncMock()
 
     body = DeliveryCreate(
@@ -262,16 +238,12 @@ async def test_service_create_delivery_atomic():
 
     result = await create_delivery(body, user, session)
 
-    # Delivery was created with correct ID
     assert result.id == 1
     assert result.bol_reference == "BOL-2026-001"
-    # Item was created and linked to inventory
     assert len(result.items) == 1
     assert result.items[0].id == 10
     assert result.items[0].inventory_item_id == 100
-    # Session was committed
     assert session.commit.called
-    # Correct tables populated
     assert len(added["deliveries"]) == 1
     assert len(added["delivery_items"]) == 1
     assert len(added["inventory_items"]) == 1
@@ -294,9 +266,6 @@ async def test_service_duplicate_bol_raises_409():
     bol_result = MagicMock()
     bol_result.scalar_one_or_none.return_value = existing
     session.execute = AsyncMock(return_value=bol_result)
-    session.add = MagicMock()
-    session.flush = AsyncMock()
-    session.commit = AsyncMock()
 
     body = DeliveryCreate(
         supplier="Acme",
@@ -332,29 +301,15 @@ async def test_service_force_true_overrides_duplicate():
 
     session = AsyncMock()
     bol_result = MagicMock()
-    bol_result.scalar_one_or_none.return_value = existing  # duplicate exists
+    bol_result.scalar_one_or_none.return_value = existing
     session.execute = AsyncMock(return_value=bol_result)
 
     added = defaultdict(list)
-
-    def _add(obj):
-        added[obj.__class__.__tablename__].append(obj)
-
-    session.add = MagicMock(side_effect=_add)
-
-    async def _flush():
-        for d in added.get("deliveries", []):
-            if d.id is None:
-                d.id = 2
-                d.created_at = datetime(2026, 1, 20, tzinfo=timezone.utc)
-        for idx, item in enumerate(added.get("delivery_items", [])):
-            if item.id is None:
-                item.id = 20 + idx
-        for idx, inv in enumerate(added.get("inventory_items", [])):
-            if inv.id is None:
-                inv.id = 200 + idx
-
-    session.flush = _flush
+    session.add = MagicMock(side_effect=lambda obj: added[obj.__class__.__tablename__].append(obj))
+    session.flush = _make_flush(
+        added, delivery_id=2, item_base=20, inv_base=200,
+        created_at=datetime(2026, 1, 20, tzinfo=timezone.utc),
+    )
     session.commit = AsyncMock()
 
     body = DeliveryCreate(
@@ -363,7 +318,7 @@ async def test_service_force_true_overrides_duplicate():
         delivery_date=date(2026, 1, 20),
         bol_reference="BOL-DUP",
         items=[DeliveryItemCreate(material_type="Steel", quantity=10.0, lot_batch_number="L2", storage_location="B1")],
-        force=True,  # override duplicate
+        force=True,
     )
     user = TokenUser(
         user_id=1, full_name="Clerk", roles=[], preferred_language="en",
@@ -410,13 +365,13 @@ async def test_service_list_deliveries_returns_paginated():
         result = MagicMock()
         call_no["n"] += 1
         n = call_no["n"]
-        if n == 1:  # count
+        if n == 1:
             result.scalar.return_value = 1
-        elif n == 2:  # list deliveries
+        elif n == 2:
             scalars = MagicMock()
             scalars.all.return_value = [mock_delivery]
             result.scalars.return_value = scalars
-        else:  # list items
+        else:
             scalars = MagicMock()
             scalars.all.return_value = [mock_item]
             result.scalars.return_value = scalars
