@@ -88,8 +88,15 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 ## Tech Stack
 
 - **Backend:** FastAPI, SQLAlchemy (async), Alembic, PostgreSQL, bcrypt, python-jose
-- **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS, shadcn/ui, next-intl, Recharts
+- **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS v4, shadcn/ui (Nova preset, Radix), next-intl, Recharts
 - **Testing:** pytest (backend), Playwright (E2E)
+
+## Frontend UI Conventions
+
+- **Always use shadcn/ui components** for all UI elements — `Button`, `Input`, `Label`, `Card`, `Dialog`, etc. Never use raw `<button>`, `<input>`, or `<label>` HTML elements in pages or feature components.
+- Add new shadcn/ui components via: `npx shadcn@latest add <component> -y` from `frontend/`
+- Components live in `frontend/components/ui/`. Import as `@/components/ui/<component>`.
+- Privilege constants live in `src/lib/privileges.ts` — always use `PRIVILEGES.*` instead of raw strings.
 
 ## Backend Testing Patterns
 

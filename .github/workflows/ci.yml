@@ -54,8 +54,8 @@ jobs:
         working-directory: backend
         run: pytest tests/ -v --tb=short
 
-  frontend-lint:
-    name: Frontend Lint
+  frontend:
+    name: Frontend Tests, Lint & Build
     runs-on: ubuntu-latest
 
     steps:
@@ -72,6 +72,14 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Jest unit tests
+        working-directory: frontend
+        run: npx jest src/contexts/__tests__/AuthContext.test.tsx src/components/layout/__tests__/NavSidebar.test.tsx src/lib/__tests__/api-client.test.ts --no-coverage
+
       - name: Lint
         working-directory: frontend
         run: npm run lint
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build

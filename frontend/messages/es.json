@@ -1,0 +1,43 @@
+{
+  "nav": {
+    "receiving": "Recepción",
+    "inventory": "Inventario",
+    "workOrders": "Órdenes de Trabajo",
+    "users": "Usuarios",
+    "audit": "Registro de Auditoría",
+    "language": "Idioma",
+    "logout": "Cerrar Sesión"
+  },
+  "auth": {
+    "login": "Iniciar Sesión",
+    "username": "Usuario",
+    "password": "Contraseña",
+    "loginButton": "Entrar",
+    "loginError": "Credenciales inválidas",
+    "inactiveError": "La cuenta está inactiva"
+  },
+  "receiving": {
+    "title": "Recepción"
+  },
+  "inventory": {
+    "title": "Inventario"
+  },
+  "workOrders": {
+    "title": "Órdenes de Trabajo"
+  },
+  "users": {
+    "title": "Usuarios"
+  },
+  "audit": {
+    "title": "Registro de Auditoría"
+  },
+  "common": {
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "loading": "Cargando...",
+    "error": "Error",
+    "dateFormat": "DD/MM/YYYY"
+  }
+}
