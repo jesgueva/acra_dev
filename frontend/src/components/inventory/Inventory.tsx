@@ -55,6 +55,8 @@ export function Inventory() {
     () => queryClient.invalidateQueries({ queryKey: ["inventory"] }),
     [queryClient]
   );
+  const handleCloseLot = useCallback(() => setSelectedLot(null), []);
+  const handleCloseAdjust = useCallback(() => setAdjustItem(null), []);
 
   return (
     <div className="space-y-6 p-6">
@@ -82,12 +84,12 @@ export function Inventory() {
 
       <TraceabilityView
         lotBatchNumber={selectedLot}
-        onClose={() => setSelectedLot(null)}
+        onClose={handleCloseLot}
       />
 
       <AdjustQuantityModal
         item={adjustItem}
-        onClose={() => setAdjustItem(null)}
+        onClose={handleCloseAdjust}
         onSuccess={handleAdjustSuccess}
       />
     </div>

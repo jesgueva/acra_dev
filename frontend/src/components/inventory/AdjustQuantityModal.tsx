@@ -81,6 +81,12 @@ export function AdjustQuantityModal({
           </DialogDescription>
         </DialogHeader>
 
+        {error && (
+          <p className="text-sm text-destructive" data-testid="adjust-error">
+            {error}
+          </p>
+        )}
+
         {!confirming ? (
           <div className="space-y-4">
             <div className="space-y-1">
@@ -105,11 +111,6 @@ export function AdjustQuantityModal({
                 data-testid="reason-input"
               />
             </div>
-            {error && (
-              <p className="text-sm text-destructive" data-testid="adjust-error">
-                {error}
-              </p>
-            )}
             <DialogFooter>
               <Button variant="outline" onClick={handleClose}>
                 Cancel
@@ -124,11 +125,6 @@ export function AdjustQuantityModal({
               <strong>{quantity}</strong> {item?.unit}?
             </p>
             {reason && <p className="text-sm text-muted-foreground">Reason: {reason}</p>}
-            {error && (
-              <p className="text-sm text-destructive" data-testid="adjust-error">
-                {error}
-              </p>
-            )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setConfirming(false)}>
                 Back

@@ -31,10 +31,10 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
     [filters, onChange]
   );
 
-  const handleClear = () => {
+  const handleClear = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     onChange(DEFAULT_FILTERS);
-  };
+  }, [onChange]);
 
   return (
     <div className="flex flex-wrap gap-3 items-end">
