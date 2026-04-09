@@ -1,7 +1,6 @@
 import csv
 import io
 from datetime import datetime, timezone
-from typing import Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
@@ -22,34 +21,44 @@ from app.schemas.inventory import (
 )
 
 
+def _build_item_query(
+    category: str | None = None,
+    material_type: str | None = None,
+    storage_location: str | None = None,
+):
+    q = select(InventoryItem)
+    if category:
+        q = q.where(InventoryItem.category == category)
+    if material_type:
+        q = q.where(InventoryItem.material_type.ilike(f"%{material_type}%"))
+    if storage_location:
+        q = q.where(InventoryItem.storage_location.ilike(f"%{storage_location}%"))
+    return q
+
+
+async def _fetch_thresholds(db: AsyncSession) -> dict[str, float]:
+    alerts_res = await db.execute(select(LowStockAlert))
+    return {a.material_type: float(a.threshold) for a in alerts_res.scalars().all()}
+
+
 async def list_inventory(
     db: AsyncSession,
     page: int = 1,
     page_size: int = 50,
-    category: Optional[str] = None,
-    material_type: Optional[str] = None,
-    storage_location: Optional[str] = None,
+    category: str | None = None,
+    material_type: str | None = None,
+    storage_location: str | None = None,
 ) -> InventoryListResponse:
-    base_q = select(InventoryItem)
-    if category:
-        base_q = base_q.where(InventoryItem.category == category)
-    if material_type:
-        base_q = base_q.where(InventoryItem.material_type.ilike(f"%{material_type}%"))
-    if storage_location:
-        base_q = base_q.where(InventoryItem.storage_location.ilike(f"%{storage_location}%"))
+    base_q = _build_item_query(category, material_type, storage_location)
 
-    # Query 1: total count
     count_res = await db.execute(select(func.count()).select_from(base_q.subquery()))
     total = count_res.scalar() or 0
 
-    # Query 2: paginated items
     offset = (page - 1) * page_size
     items_res = await db.execute(base_q.offset(offset).limit(page_size))
     items = items_res.scalars().all()
 
-    # Query 3: alert thresholds for is_triggered computation
-    alerts_res = await db.execute(select(LowStockAlert))
-    thresholds = {a.material_type: float(a.threshold) for a in alerts_res.scalars().all()}
+    thresholds = await _fetch_thresholds(db)
 
     results = []
     for item in items:
@@ -79,7 +88,6 @@ async def adjust_quantity(
     reason: str,
     user_id: int,
 ) -> InventoryAdjustResponse:
-    # Query 1: item lookup
     res = await db.execute(select(InventoryItem).where(InventoryItem.id == item_id))
     item = res.scalar_one_or_none()
     if item is None:
@@ -106,7 +114,6 @@ async def adjust_quantity(
 
 
 async def trace_lot(db: AsyncSession, lot_batch_number: str) -> TraceabilityResponse:
-    # Query 1: all inventory items with this lot
     items_res = await db.execute(
         select(InventoryItem).where(InventoryItem.lot_batch_number == lot_batch_number)
     )
@@ -123,7 +130,6 @@ async def trace_lot(db: AsyncSession, lot_batch_number: str) -> TraceabilityResp
         for i in items
     ]
 
-    # Query 2 (conditional): source delivery via first linked delivery_item
     source_delivery = None
     source_ids = [i.source_delivery_item_id for i in items if i.source_delivery_item_id]
     if source_ids:
@@ -132,7 +138,6 @@ async def trace_lot(db: AsyncSession, lot_batch_number: str) -> TraceabilityResp
         )
         di = di_res.scalar_one_or_none()
         if di:
-            # Query 3 (conditional): parent delivery
             d_res = await db.execute(select(Delivery).where(Delivery.id == di.delivery_id))
             d = d_res.scalar_one_or_none()
             if d:
@@ -144,7 +149,6 @@ async def trace_lot(db: AsyncSession, lot_batch_number: str) -> TraceabilityResp
                     "bol_reference": d.bol_reference,
                 }
 
-    # Query: material allocations for this lot
     alloc_res = await db.execute(
         select(MaterialAllocation).where(MaterialAllocation.lot_batch_number == lot_batch_number)
     )
@@ -177,11 +181,9 @@ async def trace_lot(db: AsyncSession, lot_batch_number: str) -> TraceabilityResp
 
 
 async def list_alerts(db: AsyncSession) -> LowStockAlertListResponse:
-    # Query 1: all alerts
     alerts_res = await db.execute(select(LowStockAlert))
     alerts = alerts_res.scalars().all()
 
-    # Query 2: current quantity per material_type
     qty_res = await db.execute(
         select(InventoryItem.material_type, func.sum(InventoryItem.quantity_on_hand).label("total"))
         .group_by(InventoryItem.material_type)
@@ -210,7 +212,6 @@ async def create_alert(
     data: LowStockAlertCreate,
     user_id: int,
 ) -> LowStockAlertResponse:
-    # Query 1: check for existing alert (upsert on material_type)
     res = await db.execute(
         select(LowStockAlert).where(LowStockAlert.material_type == data.material_type)
     )
@@ -238,8 +239,7 @@ async def create_alert(
     )
 
 
-async def delete_alert(db: AsyncSession, alert_id: int, user_id: int) -> None:
-    # Query 1: alert lookup
+async def delete_alert(db: AsyncSession, alert_id: int) -> None:
     res = await db.execute(select(LowStockAlert).where(LowStockAlert.id == alert_id))
     alert = res.scalar_one_or_none()
     if alert is None:
@@ -251,25 +251,16 @@ async def delete_alert(db: AsyncSession, alert_id: int, user_id: int) -> None:
 
 async def export_csv(
     db: AsyncSession,
-    category: Optional[str] = None,
-    material_type: Optional[str] = None,
-    storage_location: Optional[str] = None,
+    category: str | None = None,
+    material_type: str | None = None,
+    storage_location: str | None = None,
 ) -> str:
-    base_q = select(InventoryItem)
-    if category:
-        base_q = base_q.where(InventoryItem.category == category)
-    if material_type:
-        base_q = base_q.where(InventoryItem.material_type.ilike(f"%{material_type}%"))
-    if storage_location:
-        base_q = base_q.where(InventoryItem.storage_location.ilike(f"%{storage_location}%"))
+    base_q = _build_item_query(category, material_type, storage_location)
 
-    # Query 1: all matching items (no pagination for export)
     items_res = await db.execute(base_q)
     items = items_res.scalars().all()
 
-    # Query 2: alert thresholds
-    alerts_res = await db.execute(select(LowStockAlert))
-    thresholds = {a.material_type: float(a.threshold) for a in alerts_res.scalars().all()}
+    thresholds = await _fetch_thresholds(db)
 
     output = io.StringIO()
     writer = csv.writer(output)

@@ -82,7 +82,7 @@ async def delete_alert(
     current_user: TokenUser = Depends(require_privilege("inventory.adjust")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    await inventory_service.delete_alert(db=db, alert_id=alert_id, user_id=current_user.user_id)
+    await inventory_service.delete_alert(db=db, alert_id=alert_id)
 
 
 @router.get("/trace/{lot_batch_number}", response_model=TraceabilityResponse)
