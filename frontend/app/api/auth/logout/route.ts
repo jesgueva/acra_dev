@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-
-const COOKIE_NAME = "acra_token";
+import { AUTH_COOKIE } from "@/src/lib/auth-cookie";
 
 export async function POST() {
   const cookieStore = await cookies();
-  cookieStore.delete(COOKIE_NAME);
+  cookieStore.delete(AUTH_COOKIE);
   return NextResponse.json({ ok: true });
 }

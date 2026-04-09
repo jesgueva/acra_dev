@@ -1,10 +1,12 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { useAuth } from "@/src/contexts/AuthContext";
+import { apiClient } from "@/src/lib/api-client";
+import { PRIVILEGES } from "@/src/lib/privileges";
 
 interface NavLink {
   href: string;
@@ -18,27 +20,30 @@ export default function NavSidebar() {
   const pathname = usePathname();
   const { hasPrivilege, logout, user } = useAuth();
 
-  const navLinks: NavLink[] = [
-    { href: `/${locale}/receiving`, label: t("receiving"), privilege: "receiving.view" },
-    { href: `/${locale}/inventory`, label: t("inventory"), privilege: "inventory.view" },
-    { href: `/${locale}/work-orders`, label: t("workOrders"), privilege: "work_orders.view" },
-    { href: `/${locale}/users`, label: t("users"), privilege: "users.manage" },
-    { href: `/${locale}/audit`, label: t("audit"), privilege: "audit.view" },
-  ];
+  const navLinks = useMemo<NavLink[]>(
+    () => [
+      { href: `/${locale}/receiving`, label: t("receiving"), privilege: PRIVILEGES.RECEIVING_VIEW },
+      { href: `/${locale}/inventory`, label: t("inventory"), privilege: PRIVILEGES.INVENTORY_VIEW },
+      { href: `/${locale}/work-orders`, label: t("workOrders"), privilege: PRIVILEGES.WORK_ORDERS_VIEW },
+      { href: `/${locale}/users`, label: t("users"), privilege: PRIVILEGES.USERS_MANAGE },
+      { href: `/${locale}/audit`, label: t("audit"), privilege: PRIVILEGES.AUDIT_VIEW },
+    ],
+    [locale, t]
+  );
 
-  const visibleLinks = navLinks.filter((link) => hasPrivilege(link.privilege));
+  const visibleLinks = useMemo(
+    () => navLinks.filter((link) => hasPrivilege(link.privilege)),
+    [navLinks, hasPrivilege]
+  );
 
   async function handleLanguageToggle() {
     if (!user) return;
     const newLang = locale === "en" ? "es" : "en";
-    await fetch("/api/v1/users/me", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ preferred_language: newLang }),
-    }).catch(() => {});
-    // Redirect to same path with new locale
-    const newPath = pathname.replace(`/${locale}`, `/${newLang}`);
-    window.location.href = newPath;
+    await apiClient
+      .patch("/users/me", { preferred_language: newLang })
+      .catch(() => {});
+    // Hard reload needed to re-hydrate next-intl server messages for the new locale
+    window.location.href = pathname.replace(`/${locale}`, `/${newLang}`);
   }
 
   return (
@@ -75,7 +80,7 @@ export default function NavSidebar() {
           </button>
         )}
         <button
-          onClick={() => logout()}
+          onClick={logout}
           className="w-full text-left px-3 py-2 rounded-md text-sm text-gray-700 hover:bg-gray-100"
           aria-label="logout"
         >

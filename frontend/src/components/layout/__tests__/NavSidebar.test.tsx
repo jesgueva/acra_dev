@@ -2,10 +2,14 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import NavSidebar from "../NavSidebar";
 import { AuthContextValue } from "@/src/contexts/AuthContext";
+import { PRIVILEGES } from "@/src/lib/privileges";
 
-// Mock AuthContext
 jest.mock("@/src/contexts/AuthContext", () => ({
   useAuth: jest.fn(),
+}));
+
+jest.mock("@/src/lib/api-client", () => ({
+  apiClient: { patch: jest.fn() },
 }));
 
 import { useAuth } from "@/src/contexts/AuthContext";
@@ -30,7 +34,9 @@ function makeAuth(privileges: string[]): AuthContextValue {
 }
 
 test("shows nav links only for privileges the user has", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["receiving.view", "inventory.view"]));
+  mockUseAuth.mockReturnValue(
+    makeAuth([PRIVILEGES.RECEIVING_VIEW, PRIVILEGES.INVENTORY_VIEW])
+  );
 
   render(<NavSidebar />);
 
@@ -51,6 +57,5 @@ test("hides all nav links when user has no privileges", () => {
   expect(screen.queryByText("nav.workOrders")).not.toBeInTheDocument();
   expect(screen.queryByText("nav.users")).not.toBeInTheDocument();
   expect(screen.queryByText("nav.audit")).not.toBeInTheDocument();
-  // Logout always visible
   expect(screen.getByText("nav.logout")).toBeInTheDocument();
 });
