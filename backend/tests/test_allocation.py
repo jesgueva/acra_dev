@@ -18,6 +18,9 @@ BASE_URL = "http://test"
 
 PRIVS_ALLOC = ["work_orders.view", "work_orders.allocate"]
 
+# No-op handler for the SET TRANSACTION ISOLATION LEVEL execute call.
+_noop = lambda r: None  # noqa: E731
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -97,13 +100,12 @@ async def test_allocate_success():
     inv = _make_inv_item(qty=50.0)
     mat_after = _make_material(qty_allocated=5.0)
 
-    def h0(r): pass                                              # SET TRANSACTION
-    def h1(r): r.scalar_one_or_none.return_value = wo           # SELECT WO FOR UPDATE
-    def h2(r): r.scalars.return_value.all.return_value = [mat]  # SELECT materials
-    def h3(r): r.scalars.return_value.all.return_value = [inv]  # batch inventory FOR UPDATE
-    def h4(r): r.scalars.return_value.all.return_value = [mat_after]  # final _fetch_materials
+    def h_wo(r): r.scalar_one_or_none.return_value = wo
+    def h_mats(r): r.scalars.return_value.all.return_value = [mat]
+    def h_inv(r): r.scalars.return_value.all.return_value = [inv]
+    def h_final(r): r.scalars.return_value.all.return_value = [mat_after]
 
-    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [h0, h1, h2, h3, h4])
+    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv, h_final])
     resp = await _patch_allocate(session)
 
     assert resp.status_code == 200
@@ -117,10 +119,9 @@ async def test_allocate_wo_not_found():
     """PATCH on non-existent WO returns 404."""
     user = _make_user()
 
-    def h0(r): pass
-    def h1(r): r.scalar_one_or_none.return_value = None
+    def h_wo(r): r.scalar_one_or_none.return_value = None
 
-    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [h0, h1])
+    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo])
     resp = await _patch_allocate(session, wo_id=999)
 
     assert resp.status_code == 404
@@ -131,10 +132,9 @@ async def test_allocate_wrong_status_returns_409():
     user = _make_user()
     wo = _make_wo(status="materials_allocated")
 
-    def h0(r): pass
-    def h1(r): r.scalar_one_or_none.return_value = wo
+    def h_wo(r): r.scalar_one_or_none.return_value = wo
 
-    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [h0, h1])
+    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo])
     resp = await _patch_allocate(session)
 
     assert resp.status_code == 409
@@ -148,12 +148,11 @@ async def test_allocate_insufficient_stock_returns_409():
     mat = _make_material(qty_required=10.0)
     inv = _make_inv_item(qty=3.0)
 
-    def h0(r): pass
-    def h1(r): r.scalar_one_or_none.return_value = wo
-    def h2(r): r.scalars.return_value.all.return_value = [mat]
-    def h3(r): r.scalars.return_value.all.return_value = [inv]
+    def h_wo(r): r.scalar_one_or_none.return_value = wo
+    def h_mats(r): r.scalars.return_value.all.return_value = [mat]
+    def h_inv(r): r.scalars.return_value.all.return_value = [inv]
 
-    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [h0, h1, h2, h3])
+    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv])
     resp = await _patch_allocate(session)
 
     assert resp.status_code == 409
@@ -169,13 +168,12 @@ async def test_allocate_fifo_consumes_oldest_first():
     newer = _make_inv_item(id=11, qty=10.0, lot="LOT-NEW")
     mat_after = _make_material(qty_allocated=5.0)
 
-    def h0(r): pass
-    def h1(r): r.scalar_one_or_none.return_value = wo
-    def h2(r): r.scalars.return_value.all.return_value = [mat]
-    def h3(r): r.scalars.return_value.all.return_value = [older, newer]
-    def h4(r): r.scalars.return_value.all.return_value = [mat_after]
+    def h_wo(r): r.scalar_one_or_none.return_value = wo
+    def h_mats(r): r.scalars.return_value.all.return_value = [mat]
+    def h_inv(r): r.scalars.return_value.all.return_value = [older, newer]
+    def h_final(r): r.scalars.return_value.all.return_value = [mat_after]
 
-    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [h0, h1, h2, h3, h4])
+    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv, h_final])
     resp = await _patch_allocate(session)
 
     assert resp.status_code == 200
@@ -192,13 +190,12 @@ async def test_allocate_spans_multiple_inventory_items():
     inv2 = _make_inv_item(id=11, qty=10.0, lot="LOT-B")
     mat_after = _make_material(qty_allocated=8.0)
 
-    def h0(r): pass
-    def h1(r): r.scalar_one_or_none.return_value = wo
-    def h2(r): r.scalars.return_value.all.return_value = [mat]
-    def h3(r): r.scalars.return_value.all.return_value = [inv1, inv2]
-    def h4(r): r.scalars.return_value.all.return_value = [mat_after]
+    def h_wo(r): r.scalar_one_or_none.return_value = wo
+    def h_mats(r): r.scalars.return_value.all.return_value = [mat]
+    def h_inv(r): r.scalars.return_value.all.return_value = [inv1, inv2]
+    def h_final(r): r.scalars.return_value.all.return_value = [mat_after]
 
-    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [h0, h1, h2, h3, h4])
+    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv, h_final])
 
     added_objects = []
     session.add = lambda obj: added_objects.append(obj)
@@ -225,13 +222,12 @@ async def test_allocate_multiple_materials_success():
     mat1_after = _make_material(id=1, material_type="Steel", qty_required=5.0, qty_allocated=5.0)
     mat2_after = _make_material(id=2, material_type="Rubber", qty_required=2.0, qty_allocated=2.0)
 
-    def h0(r): pass
-    def h1(r): r.scalar_one_or_none.return_value = wo
-    def h2(r): r.scalars.return_value.all.return_value = [mat1, mat2]
-    def h3(r): r.scalars.return_value.all.return_value = [inv_steel, inv_rubber]  # batched
-    def h4(r): r.scalars.return_value.all.return_value = [mat1_after, mat2_after]
+    def h_wo(r): r.scalar_one_or_none.return_value = wo
+    def h_mats(r): r.scalars.return_value.all.return_value = [mat1, mat2]
+    def h_inv(r): r.scalars.return_value.all.return_value = [inv_steel, inv_rubber]
+    def h_final(r): r.scalars.return_value.all.return_value = [mat1_after, mat2_after]
 
-    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [h0, h1, h2, h3, h4])
+    session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv, h_final])
     resp = await _patch_allocate(session)
 
     assert resp.status_code == 200
@@ -279,23 +275,21 @@ async def test_allocation_concurrent_requests_no_double_deduction():
     inv = _make_inv_item(qty=10.0)
     mat_after = _make_material(qty_required=10.0, qty_allocated=10.0)
 
-    def h0(r): pass
-    def h1(r): r.scalar_one_or_none.return_value = wo_created
-    def h2(r): r.scalars.return_value.all.return_value = [mat]
-    def h3(r): r.scalars.return_value.all.return_value = [inv]
-    def h4(r): r.scalars.return_value.all.return_value = [mat_after]
+    def h_wo(r): r.scalar_one_or_none.return_value = wo_created
+    def h_mats(r): r.scalars.return_value.all.return_value = [mat]
+    def h_inv(r): r.scalars.return_value.all.return_value = [inv]
+    def h_final(r): r.scalars.return_value.all.return_value = [mat_after]
 
-    session1 = _make_session(user, ["company_admin"], PRIVS_ALLOC, [h0, h1, h2, h3, h4])
+    session1 = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv, h_final])
     resp1 = await _patch_allocate(session1)
     assert resp1.status_code == 200
     assert resp1.json()["status"] == "materials_allocated"
 
     wo_allocated = _make_wo(status="materials_allocated")
 
-    def g0(r): pass
-    def g1(r): r.scalar_one_or_none.return_value = wo_allocated
+    def h_wo_allocated(r): r.scalar_one_or_none.return_value = wo_allocated
 
-    session2 = _make_session(user, ["company_admin"], PRIVS_ALLOC, [g0, g1])
+    session2 = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo_allocated])
     resp2 = await _patch_allocate(session2)
     assert resp2.status_code == 409
 

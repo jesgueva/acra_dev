@@ -14,8 +14,7 @@ from app.schemas.work_order import (
     WorkOrderSequenceUpdate,
     WorkOrderStatusUpdate,
 )
-from app.services import work_order_service
-from app.services import allocation_service
+from app.services import allocation_service, work_order_service
 
 router = APIRouter(prefix="/api/v1/work-orders", tags=["work-orders"])
 
