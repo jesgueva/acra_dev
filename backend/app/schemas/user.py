@@ -35,3 +35,16 @@ class PaginatedUsers(BaseModel):
     page: int
     page_size: int
     results: List[UserResponse]
+
+
+class SelfLanguageUpdate(BaseModel):
+    preferred_language: Literal["en", "es"]
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: Optional[str] = None
+    new_password: str
+
+
+class RolesUpdate(BaseModel):
+    role_ids: List[int]
