@@ -24,7 +24,7 @@ function buildHighlightedFields(result: OCRResult): string[] {
   if (result.bol_reference) fields.push("bol_reference");
   if (result.delivery_date) fields.push("delivery_date");
   result.items?.forEach((_, i) => {
-    fields.push(`items.${i}.item_name`);
+    fields.push(`items.${i}.product_id`);
     fields.push(`items.${i}.description`);
   });
   return fields;
@@ -53,7 +53,7 @@ export default function ReceivingView() {
       <PageHeader title={t("title")} description={t("subtitle")} />
 
       <div className="flex-1 p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-[440px_1fr] gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[600px_1fr] gap-6 items-start">
           <Card>
             <CardHeader>
               <div className="flex items-center gap-2">

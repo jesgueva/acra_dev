@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,8 @@ export function AdjustQuantityModal({
   onClose,
   onSuccess,
 }: AdjustQuantityModalProps) {
+  const t = useTranslations("inventory");
+  const tc = useTranslations("common");
   const [delta, setDelta] = useState("");
   const [reason, setReason] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -48,11 +51,11 @@ export function AdjustQuantityModal({
     setError(null);
     const d = Number(delta);
     if (isNaN(d) || d === 0) {
-      setError("Enter a non-zero adjustment amount.");
+      setError(t("adjustNonZeroError"));
       return;
     }
     if (!reason.trim()) {
-      setError("A reason is required.");
+      setError(t("reasonRequired"));
       return;
     }
     setConfirming(true);
@@ -70,7 +73,7 @@ export function AdjustQuantityModal({
       onSuccess();
       handleClose();
     } catch {
-      setError("Failed to adjust quantity. Please try again.");
+      setError(t("adjustFailed"));
       setConfirming(false);
     } finally {
       setIsLoading(false);
@@ -86,11 +89,16 @@ export function AdjustQuantityModal({
       <DialogContent data-testid="adjust-modal">
         <DialogHeader>
           <DialogTitle>
-            Adjust Quantity — {item?.product_name ?? `Lot #${item?.id}`}
+            {t("adjustQuantityHeading", {
+              name:
+                item?.product_name ??
+                (item ? t("lotShort", { id: item.id }) : ""),
+            })}
           </DialogTitle>
           <DialogDescription>
-            Current quantity: <strong>{item ? toDisplay(item.quantity_on_hand) : "—"}</strong>.
-            Enter a positive or negative adjustment.
+            {t("adjustDialogDescription", {
+              qty: item ? toDisplay(item.quantity_on_hand) : "—",
+            })}
           </DialogDescription>
         </DialogHeader>
 
@@ -103,53 +111,59 @@ export function AdjustQuantityModal({
         {!confirming ? (
           <div className="space-y-4">
             <div className="space-y-1">
-              <Label htmlFor="delta">Adjustment Amount</Label>
+              <Label htmlFor="delta">{t("adjustAmount")}</Label>
               <Input
                 id="delta"
                 type="number"
                 step="0.01"
                 value={delta}
                 onChange={(e) => setDelta(e.target.value)}
-                placeholder="e.g. +10.00 or -5.00"
+                placeholder={t("adjustPlaceholder")}
                 data-testid="quantity-input"
               />
               {delta && !isNaN(Number(delta)) && (
                 <p className="text-xs text-muted-foreground">
-                  New quantity: {previewQty}
+                  {t("newQuantity", { qty: previewQty })}
                 </p>
               )}
             </div>
             <div className="space-y-1">
-              <Label htmlFor="reason">Reason</Label>
+              <Label htmlFor="reason">{t("reason")}</Label>
               <Input
                 id="reason"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="Reason for adjustment"
+                placeholder={t("reasonPlaceholder")}
                 data-testid="reason-input"
               />
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={handleClose}>
-                Cancel
+                {tc("cancel")}
               </Button>
-              <Button onClick={handleSubmit}>Review</Button>
+              <Button onClick={handleSubmit}>{t("review")}</Button>
             </DialogFooter>
           </div>
         ) : (
           <div className="space-y-4">
             <p className="text-sm">
-              Adjust <strong>{item?.product_name ?? `Lot #${item?.id}`}</strong> by{" "}
-              <strong>{Number(delta) >= 0 ? "+" : ""}{delta}</strong>?
-              New quantity: <strong>{previewQty}</strong>
+              {t("adjustConfirmQuestion", {
+                name: item?.product_name ?? (item ? t("lotShort", { id: item.id }) : ""),
+                delta: `${Number(delta) >= 0 ? "+" : ""}${delta}`,
+                qty: previewQty,
+              })}
             </p>
-            {reason && <p className="text-sm text-muted-foreground">Reason: {reason}</p>}
+            {reason && (
+              <p className="text-sm text-muted-foreground">
+                {t("reasonLine", { reason })}
+              </p>
+            )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setConfirming(false)}>
-                Back
+                {t("back")}
               </Button>
               <Button onClick={handleConfirm} disabled={isLoading} data-testid="confirm-adjust">
-                {isLoading ? "Saving…" : "Confirm"}
+                {isLoading ? tc("saving") : t("confirm")}
               </Button>
             </DialogFooter>
           </div>

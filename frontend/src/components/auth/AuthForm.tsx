@@ -2,7 +2,7 @@
 
 import { type FormEvent, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useTranslations, useLocale } from "next-intl";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { SESSION_EXPIRED_REASON } from "@/src/lib/auth-constants";
@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 
 export default function AuthForm() {
   const t = useTranslations("auth");
+  const locale = useLocale();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login } = useAuth();
@@ -30,7 +31,7 @@ export default function AuthForm() {
     setLoading(true);
     try {
       await login({ username, password });
-      router.push("/dashboard");
+      router.push(`/${locale}/dashboard`);
     } catch (err) {
       const statusErr = err as Error & { status?: number };
       if (statusErr.status === 401) {

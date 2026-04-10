@@ -16,6 +16,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { CreatableCombobox } from "@/src/components/ui/creatable-combobox";
 import { apiClient, getResponseStatus } from "@/src/lib/api-client";
 import { toStore } from "@/src/lib/qty";
 import type { OCRResult } from "./OCRUploader";
@@ -34,6 +36,7 @@ interface ProductOption {
 
 interface ItemRow {
   product_id: number | null;
+  ocrProductName: string | null;  // OCR-extracted name when no product match
   description: string;
   quantity: string;        // display units, e.g. "50.25"
   pallets: string;
@@ -42,6 +45,7 @@ interface ItemRow {
 
 const emptyRow = (): ItemRow => ({
   product_id: null,
+  ocrProductName: null,
   description: "",
   quantity: "",
   pallets: "",
@@ -74,6 +78,8 @@ export default function NewDeliveryForm({
 
   const [contactId, setContactId] = useState<number | null>(null);
   const [carrierId, setCarrierId] = useState<number | null>(null);
+  const [pendingCarrierName, setPendingCarrierName] = useState<string | null>(null);
+  const [pendingSupplierName, setPendingSupplierName] = useState<string | null>(null);
   const [supplierLocked, setSupplierLocked] = useState(false);
   const [bolReference, setBolReference] = useState(initialValues?.bol_reference ?? "");
   const [deliveryDate, setDeliveryDate] = useState(initialValues?.delivery_date ?? "");
@@ -87,7 +93,7 @@ export default function NewDeliveryForm({
     queryKey: ["contacts-for-delivery"],
     queryFn: () =>
       apiClient
-        .get<{ results: ContactOption[] }>("/contacts?page_size=200")
+        .get<{ results: ContactOption[] }>("/contacts?page_size=500")
         .then((r) => r.data.results),
   });
 
@@ -95,7 +101,7 @@ export default function NewDeliveryForm({
     queryKey: ["products-for-delivery"],
     queryFn: () =>
       apiClient
-        .get<{ results: ProductOption[] }>("/products?page_size=200")
+        .get<{ results: ProductOption[] }>("/products?page_size=500")
         .then((r) => r.data.results),
   });
 
@@ -115,13 +121,23 @@ export default function NewDeliveryForm({
         const match = contacts.find(
           (c) => c.name.toLowerCase() === initialValues.supplier?.toLowerCase()
         );
-        if (match) setContactId(match.id);
+        if (match) {
+          setContactId(match.id);
+          setPendingSupplierName(null);
+        } else {
+          setPendingSupplierName(initialValues.supplier);
+        }
       }
       if (initialValues.carrier) {
         const match = contacts.find(
           (c) => c.name.toLowerCase() === initialValues.carrier?.toLowerCase()
         );
-        if (match) setCarrierId(match.id);
+        if (match) {
+          setCarrierId(match.id);
+          setPendingCarrierName(null);
+        } else {
+          setPendingCarrierName(initialValues.carrier);
+        }
       }
     }
 
@@ -133,6 +149,7 @@ export default function NewDeliveryForm({
           );
           return {
             product_id: match?.id ?? null,
+            ocrProductName: match ? null : (it.item_name ?? null),
             description: it.description ?? "",
             quantity: it.quantity != null ? String(it.quantity) : "",
             pallets: it.pallets != null ? String(it.pallets) : "",
@@ -145,12 +162,12 @@ export default function NewDeliveryForm({
 
   // Transfer detection: carrier name matches /transfer/i → lock to "Internal" provider
   useEffect(() => {
-    if (carrierId == null) {
-      setSupplierLocked(false);
-      return;
-    }
-    const carrierContact = contacts.find((c) => c.id === carrierId);
-    if (carrierContact && TRANSFER_RE.test(carrierContact.name)) {
+    const carrierName =
+      carrierId != null
+        ? contacts.find((c) => c.id === carrierId)?.name ?? ""
+        : pendingCarrierName ?? "";
+
+    if (TRANSFER_RE.test(carrierName)) {
       const internal = contacts.find(
         (c) => c.name.toLowerCase() === "internal" && c.type === "provider"
       );
@@ -159,7 +176,7 @@ export default function NewDeliveryForm({
     } else {
       setSupplierLocked(false);
     }
-  }, [carrierId, contacts]);
+  }, [carrierId, pendingCarrierName, contacts]);
 
   function isHighlighted(field: string) {
     return ocrHighlightedFields.includes(field);
@@ -180,7 +197,10 @@ export default function NewDeliveryForm({
   }
 
   async function submitDelivery(force = false) {
-    const missingProduct = items.some((row) => row.product_id == null);
+    // A row is truly missing a product only if it has no product_id AND no pending new name
+    const missingProduct = items.some(
+      (row) => row.product_id == null && !row.ocrProductName?.trim()
+    );
     if (missingProduct) {
       setValidationError(t("productRequired"));
       return;
@@ -189,14 +209,45 @@ export default function NewDeliveryForm({
     setLoading(true);
     setShowProceedAnyway(false);
     try {
+      // Auto-create any new contacts before posting the delivery
+      let resolvedCarrierId = carrierId;
+      if (carrierId === null && pendingCarrierName?.trim()) {
+        const { data } = await apiClient.post<{ id: number }>("/contacts", {
+          name: pendingCarrierName.trim(),
+          type: "carrier",
+        });
+        resolvedCarrierId = data.id;
+      }
+
+      let resolvedContactId = contactId;
+      if (contactId === null && pendingSupplierName?.trim()) {
+        const { data } = await apiClient.post<{ id: number }>("/contacts", {
+          name: pendingSupplierName.trim(),
+          type: "provider",
+        });
+        resolvedContactId = data.id;
+      }
+
+      // Auto-create any new products before posting the delivery
+      const resolvedItems = await Promise.all(
+        items.map(async (row) => {
+          if (row.product_id !== null || !row.ocrProductName?.trim()) return row;
+          const { data } = await apiClient.post<{ id: number }>("/products", {
+            name: row.ocrProductName.trim(),
+            category: "general",
+          });
+          return { ...row, product_id: data.id, ocrProductName: null };
+        })
+      );
+
       await apiClient.post("/deliveries", {
-        contact_id: contactId,
-        carrier_id: carrierId,
+        contact_id: resolvedContactId,
+        carrier_id: resolvedCarrierId,
         bol_reference: bolReference,
         delivery_date: deliveryDate,
         notes: notes || undefined,
         force,
-        items: items.map((row) => ({
+        items: resolvedItems.map((row) => ({
           product_id: row.product_id,
           description: row.description || undefined,
           quantity: toStore(parseFloat(row.quantity)),
@@ -212,9 +263,18 @@ export default function NewDeliveryForm({
       setBolReference("");
       setDeliveryDate("");
       setSupplierLocked(false);
+      setPendingCarrierName(null);
+      setPendingSupplierName(null);
     } catch (err: unknown) {
       if (getResponseStatus(err) === 409) {
         setShowProceedAnyway(true);
+      } else if (getResponseStatus(err) === 403) {
+        const isContactCreate =
+          (pendingCarrierName?.trim() && carrierId === null) ||
+          (pendingSupplierName?.trim() && contactId === null);
+        setValidationError(
+          isContactCreate ? t("contactCreateForbidden") : t("productCreateForbidden")
+        );
       }
     } finally {
       setLoading(false);
@@ -230,29 +290,23 @@ export default function NewDeliveryForm({
     <form onSubmit={handleSubmit} className="space-y-5">
       {/* Header fields */}
       <div className="grid grid-cols-2 gap-3">
-        {/* Carrier select */}
+        {/* Carrier combobox */}
         <div className="space-y-1.5">
           <Label>{t("carrier")}</Label>
-          <Select
-            value={carrierId?.toString() ?? ""}
-            onValueChange={(v) => setCarrierId(v ? Number(v) : null)}
-          >
-            <SelectTrigger
-              className={isHighlighted("carrier") ? "border-yellow-400 bg-yellow-50/10" : ""}
-            >
-              <SelectValue placeholder={t("selectCarrier")} />
-            </SelectTrigger>
-            <SelectContent>
-              {carriers.map((c) => (
-                <SelectItem key={c.id} value={c.id.toString()}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <CreatableCombobox
+            items={carriers.map((c) => ({ id: c.id, label: c.name }))}
+            value={carrierId}
+            pendingLabel={pendingCarrierName}
+            onSelect={(id) => { setCarrierId(id); setPendingCarrierName(null); }}
+            onCreate={(name) => { setCarrierId(null); setPendingCarrierName(name); }}
+            placeholder={t("selectCarrier")}
+            createLabel={(q) => t("createEntry", { name: q })}
+            noResultsText={t("noResults")}
+            highlighted={isHighlighted("carrier")}
+          />
         </div>
 
-        {/* Supplier / provider select */}
+        {/* Supplier / provider combobox */}
         <div className="space-y-1.5">
           <Label>
             {t("supplier")}
@@ -262,27 +316,18 @@ export default function NewDeliveryForm({
               </span>
             )}
           </Label>
-          <Select
-            value={contactId?.toString() ?? ""}
-            onValueChange={(v) => !supplierLocked && setContactId(v ? Number(v) : null)}
+          <CreatableCombobox
+            items={providers.map((c) => ({ id: c.id, label: c.name }))}
+            value={contactId}
+            pendingLabel={pendingSupplierName}
+            onSelect={(id) => { if (!supplierLocked) { setContactId(id); setPendingSupplierName(null); } }}
+            onCreate={(name) => { if (!supplierLocked) { setContactId(null); setPendingSupplierName(name); } }}
+            placeholder={t("selectProvider")}
+            createLabel={(q) => t("createEntry", { name: q })}
+            noResultsText={t("noResults")}
+            highlighted={isHighlighted("supplier")}
             disabled={supplierLocked}
-          >
-            <SelectTrigger
-              className={[
-                isHighlighted("supplier") ? "border-yellow-400 bg-yellow-50/10" : "",
-                supplierLocked ? "opacity-60" : "",
-              ].join(" ")}
-            >
-              <SelectValue placeholder={t("selectProvider")} />
-            </SelectTrigger>
-            <SelectContent>
-              {providers.map((c) => (
-                <SelectItem key={c.id} value={c.id.toString()}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          />
         </div>
 
         {/* BOL reference */}
@@ -338,30 +383,61 @@ export default function NewDeliveryForm({
               {/* Product select + description */}
               <div className="grid grid-cols-[1fr_1fr] gap-2">
                 <div className="space-y-1">
-                  <Label>{t("product")}</Label>
-                  <Select
-                    value={row.product_id?.toString() ?? ""}
-                    onValueChange={(v) =>
-                      updateItem(index, "product_id", v ? Number(v) : null)
-                    }
-                  >
-                    <SelectTrigger
-                      className={
-                        isHighlighted(`items.${index}.product_id`)
-                          ? "border-yellow-400 bg-yellow-50/10"
-                          : ""
-                      }
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor={row.ocrProductName !== null ? `new_product_${index}` : undefined}>
+                      {t("product")}
+                      {row.ocrProductName !== null && (
+                        <Badge variant="outline" className="ml-2 text-xs border-amber-400 text-amber-600 dark:text-amber-400">
+                          {t("newEntry")}
+                        </Badge>
+                      )}
+                    </Label>
+                    {row.ocrProductName !== null ? (
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 text-xs text-muted-foreground"
+                        onClick={() => updateItem(index, "ocrProductName", null)}
+                      >
+                        {t("pickExisting")}
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  {row.ocrProductName !== null ? (
+                    <Input
+                      id={`new_product_${index}`}
+                      value={row.ocrProductName}
+                      onChange={(e) => updateItem(index, "ocrProductName", e.target.value)}
+                      placeholder={t("newProductNamePlaceholder")}
+                      className="border-amber-400/60 focus-visible:border-amber-400"
+                    />
+                  ) : (
+                    <Select
+                      value={row.product_id?.toString() ?? ""}
+                      onValueChange={(v) => {
+                        updateItem(index, "product_id", v ? Number(v) : null);
+                      }}
                     >
-                      <SelectValue placeholder={t("selectProduct")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {products.map((p) => (
-                        <SelectItem key={p.id} value={p.id.toString()}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                      <SelectTrigger
+                        className={
+                          isHighlighted(`items.${index}.product_id`)
+                            ? "border-yellow-400 bg-yellow-50/10"
+                            : ""
+                        }
+                      >
+                        <SelectValue placeholder={t("selectProduct")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {products.map((p) => (
+                          <SelectItem key={p.id} value={p.id.toString()}>
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor={`description_${index}`}>{t("description")}</Label>

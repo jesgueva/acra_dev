@@ -52,6 +52,7 @@ class DeliveryResponse(BaseModel):
     bol_reference: str
     notes: Optional[str] = None
     created_by: int
+    created_by_name: Optional[str] = None  # User.full_name for display
     created_at: datetime
     items: List[DeliveryItemResponse] = []
 

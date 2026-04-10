@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { ROLES } from "@/src/lib/privileges";
 import { apiClient } from "@/src/lib/api-client";
 import { InventoryTable } from "./InventoryTable";
 import { FilterPanel } from "./FilterPanel";
-import { TraceabilityView } from "./TraceabilityView";
+import { InventoryDetailsModal } from "./InventoryDetailsModal";
 import { AdjustQuantityModal } from "./AdjustQuantityModal";
 import { LocationEditModal } from "./LocationEditModal";
 import { SplitLotModal } from "./SplitLotModal";
@@ -27,6 +28,7 @@ import {
 const PAGE_SIZE = 50;
 
 export function Inventory() {
+  const t = useTranslations("inventory");
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -35,7 +37,7 @@ export function Inventory() {
 
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [page, setPage] = useState(1);
-  const [selectedLotNumber, setSelectedLotNumber] = useState<string | null>(null);
+  const [selectedItem, setSelectedItem] = useState<InventoryLot | null>(null);
   const [adjustItem, setAdjustItem] = useState<InventoryLot | null>(null);
   const [locationItem, setLocationItem] = useState<InventoryLot | null>(null);
   const [splitItem, setSplitItem] = useState<InventoryLot | null>(null);
@@ -66,15 +68,14 @@ export function Inventory() {
     [queryClient]
   );
 
-  const handleRowClick = useCallback(
-    (item: InventoryLot) => setSelectedLotNumber(item.lot_number),
-    []
-  );
+  const handleRowClick = useCallback((item: InventoryLot) => {
+    setSelectedItem(item);
+  }, []);
 
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Inventory</h1>
+        <h1 className="text-2xl font-semibold">{t("title")}</h1>
         <ExportButton items={items} />
       </div>
 
@@ -105,7 +106,7 @@ export function Inventory() {
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          {total} {total === 1 ? "result" : "results"}
+          {t("resultCount", { count: total })}
         </p>
         <div className="flex items-center gap-2">
           <Button
@@ -114,7 +115,7 @@ export function Inventory() {
             disabled={page <= 1 || isLoading}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("previous")}
           </Button>
           <span className="text-sm">
             {page} / {totalPages}
@@ -125,14 +126,14 @@ export function Inventory() {
             disabled={page >= totalPages || isLoading}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("next")}
           </Button>
         </div>
       </div>
 
-      <TraceabilityView
-        lotNumber={selectedLotNumber}
-        onClose={() => setSelectedLotNumber(null)}
+      <InventoryDetailsModal
+        item={selectedItem}
+        onClose={() => setSelectedItem(null)}
       />
 
       <AdjustQuantityModal

@@ -1,11 +1,14 @@
 "use client";
 
+import { useMemo } from "react";
+import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { DataTable } from "@/src/components/layout/DataTable";
-import { toDisplay } from "@/src/lib/qty";
 import { InventoryLot } from "./types";
+import { InventoryQuantityDisplay } from "./InventoryQuantityDisplay";
+import { STATUS_VARIANT } from "./inventoryLabels";
 
 interface InventoryTableProps {
   items: InventoryLot[];
@@ -17,22 +20,6 @@ interface InventoryTableProps {
   onViewLog: (item: InventoryLot) => void;
 }
 
-const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  in_storage: "default",
-  in_production: "secondary",
-  shipped: "outline",
-  consumed: "outline",
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  in_storage: "In Storage",
-  in_production: "In Production",
-  shipped: "Shipped",
-  consumed: "Consumed",
-};
-
-const BASE_COLUMNS = ["Product", "Lot #", "Status", "Quantity", "Location"];
-
 export function InventoryTable({
   items,
   isAdmin,
@@ -42,13 +29,34 @@ export function InventoryTable({
   onSplit,
   onViewLog,
 }: InventoryTableProps) {
-  const columns = isAdmin ? [...BASE_COLUMNS, "Actions"] : BASE_COLUMNS;
+  const t = useTranslations("inventory");
+
+  const columns = useMemo(() => {
+    const base = [
+      t("columnProduct"),
+      t("columnLot"),
+      t("columnStatus"),
+      t("columnQuantity"),
+      t("columnLocation"),
+    ];
+    return isAdmin ? [...base, t("columnActions")] : base;
+  }, [isAdmin, t]);
+
+  const statusLabel = (status: string) => {
+    const labels: Record<string, string> = {
+      in_storage: t("status.in_storage"),
+      in_production: t("status.in_production"),
+      shipped: t("status.shipped"),
+      consumed: t("status.consumed"),
+    };
+    return labels[status] ?? status;
+  };
 
   return (
     <DataTable
       columns={columns}
       isEmpty={items.length === 0}
-      emptyMessage="No inventory lots found."
+      emptyMessage={t("emptyTable")}
       data-testid="inventory-table"
     >
       {items.map((item) => (
@@ -59,7 +67,8 @@ export function InventoryTable({
           data-testid={`row-${item.id}`}
         >
           <TableCell className="px-4 py-3 font-medium">
-            {item.product_name ?? `Product #${item.product_id}`}
+            {item.product_name ??
+              t("productNumber", { id: item.product_id ?? 0 })}
           </TableCell>
           <TableCell className="px-4 py-3 font-mono text-xs">
             {item.lot_number ?? "—"}
@@ -69,22 +78,15 @@ export function InventoryTable({
               variant={STATUS_VARIANT[item.status] ?? "outline"}
               data-testid={`status-badge-${item.id}`}
             >
-              {STATUS_LABEL[item.status] ?? item.status}
+              {statusLabel(item.status)}
             </Badge>
           </TableCell>
           <TableCell className="px-4 py-3">
-            <span className="inline-flex items-center gap-2">
-              {toDisplay(item.quantity_on_hand)}
-              {item.is_triggered && (
-                <Badge
-                  variant="destructive"
-                  className="text-xs"
-                  data-testid={`low-stock-badge-${item.id}`}
-                >
-                  Low Stock
-                </Badge>
-              )}
-            </span>
+            <InventoryQuantityDisplay
+              quantityOnHand={item.quantity_on_hand}
+              isTriggered={item.is_triggered}
+              lowStockBadgeTestId={`low-stock-badge-${item.id}`}
+            />
           </TableCell>
           <TableCell className="px-4 py-3">
             {item.storage_location ?? <span className="text-muted-foreground">—</span>}
@@ -101,7 +103,7 @@ export function InventoryTable({
                   onClick={() => onAdjust(item)}
                   data-testid={`adjust-btn-${item.id}`}
                 >
-                  Adjust
+                  {t("adjust")}
                 </Button>
                 <Button
                   size="sm"
@@ -109,7 +111,7 @@ export function InventoryTable({
                   onClick={() => onEditLocation(item)}
                   data-testid={`location-btn-${item.id}`}
                 >
-                  Location
+                  {t("location")}
                 </Button>
                 <Button
                   size="sm"
@@ -117,7 +119,7 @@ export function InventoryTable({
                   onClick={() => onSplit(item)}
                   data-testid={`split-btn-${item.id}`}
                 >
-                  Split
+                  {t("split")}
                 </Button>
                 <Button
                   size="sm"
@@ -125,7 +127,7 @@ export function InventoryTable({
                   onClick={() => onViewLog(item)}
                   data-testid={`log-btn-${item.id}`}
                 >
-                  Log
+                  {t("log")}
                 </Button>
               </div>
             </TableCell>

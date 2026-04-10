@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { useTranslations } from "next-intl";
 import {
   BarChart,
   Bar,
@@ -20,6 +21,8 @@ interface InventoryTrendLineProps {
 
 // TODO: Replace with time-series data in v2 when backend supports historical snapshots.
 export function InventoryTrendLine({ items }: InventoryTrendLineProps) {
+  const t = useTranslations("inventory");
+
   const chartData = useMemo(
     () =>
       items.slice(0, 10).map((item) => {
@@ -35,7 +38,7 @@ export function InventoryTrendLine({ items }: InventoryTrendLineProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Inventory Snapshot</CardTitle>
+        <CardTitle>{t("snapshotTitle")}</CardTitle>
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={220}>

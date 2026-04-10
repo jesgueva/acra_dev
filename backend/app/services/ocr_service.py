@@ -16,6 +16,7 @@ from typing import Any
 
 import anthropic
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
 from app.core.config import settings
@@ -45,18 +46,32 @@ def _get_anthropic_client() -> anthropic.Anthropic:
     return _anthropic_client
 
 
-_GEMINI_PROMPT = (
-    "Extract all Bill of Lading fields from this document. "
+_OCR_EXTRACTION_INSTRUCTIONS = (
+    "Extract all Bill of Lading fields from this document.\n\n"
     "Return a JSON object with exactly these keys: "
     "supplier (string or null), "
     "carrier (string or null), "
     "bol_reference (string or null), "
     "delivery_date (string or null, any format you find), "
     "items (array — each element has: item_name, description, quantity as number, "
-    "pallets as integer, units_per_pallet as integer). "
-    "IMPORTANT: if the carrier value contains 'TRANSFER' or 'TRANSFERENCIA' "
-    "(case-insensitive), set supplier to the string 'Internal'. "
-    "If a field is not present, use null."
+    "pallets as integer, units_per_pallet as integer or null).\n\n"
+    "Rules:\n"
+    "1) Supplier: If the carrier value contains 'TRANSFER' or 'TRANSFERENCIA' "
+    "(case-insensitive), set supplier to the string 'Internal'.\n"
+    "2) units_per_pallet: For each line item, if the table has a third numeric column "
+    "(units per pallet, Ud/Pallet, U/C, bultos/pallet, or similar), fill units_per_pallet. "
+    "Use null only when that value is truly absent or illegible.\n"
+    "3) European thousands: When a number uses a dot as a thousands separator "
+    "(e.g. 17.122 or 1.234.567 — typically groups of three digits after dots), "
+    "do not treat the dot as a decimal point; normalize to the correct integer or count. "
+    "When only one or two digits follow the dot (e.g. 5.44), treat as a decimal "
+    "unless the triplet rule below clearly indicates otherwise.\n"
+    "4) Triplet heuristic: If exactly three distinct numeric values appear on one item row "
+    "(same logical line), sort them ascending: smallest → pallets, middle → units_per_pallet, "
+    "largest → quantity (total units or weight for that row, per the document). "
+    "pallets × units_per_pallet should be approximately equal to quantity (allow small OCR rounding); "
+    "if column order is ambiguous, prefer this math over strict left-to-right order.\n"
+    "5) If a field is not present, use null."
 )
 
 # ---------------------------------------------------------------------------
@@ -81,19 +96,21 @@ def _parse_items(raw: list[dict[str, Any]]) -> list[OCRItemResult]:
     return items
 
 
-def _build_response(data: dict[str, Any]) -> OCRResponse:
+def _build_response(data: dict[str, Any], provider: str) -> OCRResponse:
     supplier = data.get("supplier")
     carrier = data.get("carrier")
     bol_reference = data.get("bol_reference")
     delivery_date = data.get("delivery_date")
     filled = sum(1 for v in [supplier, carrier, bol_reference, delivery_date] if v)
+    confidence = round(filled / 4.0, 2)
+    raw_items = data.get("items") or []
     return OCRResponse(
         supplier=supplier,
         carrier=carrier,
         bol_reference=bol_reference,
         delivery_date=delivery_date,
-        items=_parse_items(data.get("items", [])),
-        confidence=round(filled / 4.0, 2),
+        items=_parse_items(raw_items),
+        confidence=confidence,
     )
 
 
@@ -105,14 +122,15 @@ def _extract_with_gemini(file_bytes: bytes, content_type: str) -> OCRResponse:
     response = _get_gemini_client().models.generate_content(
         model="gemini-2.5-flash",
         contents=[
-            _GEMINI_PROMPT,
+            _OCR_EXTRACTION_INSTRUCTIONS,
             genai_types.Part.from_bytes(data=base64.b64encode(file_bytes).decode(), mime_type=content_type),
         ],
         config=genai_types.GenerateContentConfig(
             response_mime_type="application/json",
         ),
     )
-    return _build_response(json.loads(response.text))
+    parsed = json.loads(response.text)
+    return _build_response(parsed, "gemini")
 
 
 # ---------------------------------------------------------------------------
@@ -121,11 +139,7 @@ def _extract_with_gemini(file_bytes: bytes, content_type: str) -> OCRResponse:
 
 _CLAUDE_TOOL = {
     "name": "extract_bol_fields",
-    "description": (
-        "Extract structured Bill of Lading fields from a document. "
-        "If the carrier value contains 'TRANSFER' or 'TRANSFERENCIA' (case-insensitive), "
-        "set supplier to 'Internal'."
-    ),
+    "description": _OCR_EXTRACTION_INSTRUCTIONS,
     "input_schema": {
         "type": "object",
         "properties": {
@@ -168,7 +182,7 @@ def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
 
     response = _get_anthropic_client().messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1024,
+        max_tokens=2048,
         tools=[_CLAUDE_TOOL],
         tool_choice={"type": "tool", "name": "extract_bol_fields"},
         messages=[
@@ -176,12 +190,13 @@ def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
                 "role": "user",
                 "content": [
                     file_block,
-                    {"type": "text", "text": "Extract all Bill of Lading fields from this document."},
+                    {"type": "text", "text": _OCR_EXTRACTION_INSTRUCTIONS},
                 ],
             }
         ],
     )
-    return _build_response(response.content[0].input)
+    tool_block = response.content[0]
+    return _build_response(tool_block.input, "claude")
 
 
 # ---------------------------------------------------------------------------
@@ -193,12 +208,18 @@ def process_image_bytes(file_bytes: bytes, content_type: str) -> OCRResponse:
         result = _extract_with_gemini(file_bytes, content_type)
         if result.confidence > 0.0:
             return result
-        logger.info("Gemini returned confidence=0.0 — falling back to Claude")
-    except Exception as exc:
-        logger.warning("Gemini OCR failed (%s) — falling back to Claude", exc)
+    except genai_errors.ServerError as exc:
+        logger.warning("[gemini] server error %s (%s) — falling back to Claude", exc.code, exc.status)
+    except genai_errors.ClientError as exc:
+        logger.warning("[gemini] client error %s (%s) — falling back to Claude", exc.code, exc.status)
+    except json.JSONDecodeError as exc:
+        logger.warning("[gemini] invalid JSON in response (pos %d) — falling back to Claude", exc.pos)
+    except Exception:
+        logger.warning("[gemini] unexpected error — falling back to Claude", exc_info=True)
 
     try:
-        return _extract_with_claude(file_bytes, content_type)
+        result = _extract_with_claude(file_bytes, content_type)
+        return result
     except Exception as exc:
-        logger.error("Claude OCR also failed: %s", exc)
+        logger.error("[claude] also failed: %s", exc, exc_info=True)
         return OCRResponse(confidence=0.0)

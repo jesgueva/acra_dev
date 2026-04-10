@@ -5,9 +5,12 @@ Usage:
     python scripts/seed_fake_data.py
 
 Safe to re-run:
-- roles, privileges, users, alerts are upserted
+- roles, privileges, users, contacts, products, alerts are upserted
 - demo deliveries are skipped if their BOL already exists
 - demo work orders are skipped if their product already exists
+
+Schema: deliveries reference contacts; delivery_items and inventory_lots reference products;
+quantities are integer ×100 where applicable (inventory, delivery lines, low-stock thresholds).
 """
 
 import asyncio
@@ -30,14 +33,16 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.core.security import hash_password
+from app.models.contact import Contact
 from app.models.delivery import Delivery, DeliveryItem
-from app.models.inventory import InventoryItem, LowStockAlert
+from app.models.inventory import InventoryLot, InventoryTransaction, LowStockAlert
+from app.models.product import Product
 from app.models.user import Role, RolePrivilegeAssignment, User, UserRoleAssignment
 from app.models.work_order import MaterialAllocation, WorkOrder, WorkOrderMaterial
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/acra_db",
+    "postgresql+asyncpg://postgres:postgres@localhost:5433/acra_db",
 )
 
 ADMIN_PASSWORD = "admin123"
@@ -61,6 +66,7 @@ ROLE_DEFINITIONS: dict[str, dict[str, object]] = {
             "work_orders.allocate",
             "users.manage",
             "audit.view",
+            "master_data.manage",
         },
     },
     "receiving_clerk": {
@@ -202,6 +208,7 @@ class WorkOrderSeed:
     target_in_days: int
     production_line: str
     quantity_produced: Decimal
+    # material quantities: display units (matches work_order API); inventory uses ×100 internally
     materials: tuple[tuple[str, Decimal], ...]
 
 
@@ -318,8 +325,26 @@ WORK_ORDER_SEEDS = [
 ]
 
 
-def dec(value: int | float | str) -> Decimal:
-    return Decimal(str(value)).quantize(Decimal("0.001"))
+async def ensure_contact(db: AsyncSession, name: str, type_: str) -> Contact:
+    result = await db.execute(
+        select(Contact).where(Contact.name == name, Contact.type == type_)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = Contact(name=name, type=type_)
+        db.add(row)
+        await db.flush()
+    return row
+
+
+async def ensure_product(db: AsyncSession, name: str, *, category: str = "raw") -> Product:
+    result = await db.execute(select(Product).where(Product.name == name))
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = Product(name=name, category=category, description=None)
+        db.add(row)
+        await db.flush()
+    return row
 
 
 async def ensure_role(db: AsyncSession, role_name: str, description: str) -> tuple[Role, bool]:
@@ -402,32 +427,41 @@ async def ensure_user_role(db: AsyncSession, user_id: int, role_id: int) -> bool
 
 
 async def ensure_low_stock_alert(
-    db: AsyncSession, material_type: str, threshold: Decimal, created_by: int
+    db: AsyncSession,
+    *,
+    product_id: int,
+    threshold_x100: int,
+    created_by: int,
 ) -> bool:
     result = await db.execute(
-        select(LowStockAlert).where(LowStockAlert.item_name == material_type)
+        select(LowStockAlert).where(LowStockAlert.product_id == product_id)
     )
     alert = result.scalar_one_or_none()
     if alert is None:
         db.add(
             LowStockAlert(
-                item_name=material_type,
-                threshold=threshold,
+                product_id=product_id,
+                threshold=threshold_x100,
                 created_by=created_by,
             )
         )
         return True
-    alert.threshold = threshold
+    alert.threshold = threshold_x100
     alert.created_by = created_by
     return False
 
 
 async def create_demo_deliveries(
-    db: AsyncSession, created_by: int
+    db: AsyncSession,
+    *,
+    created_by: int,
+    supplier_ids: dict[str, int],
+    carrier_ids: dict[str, int],
+    products_by_name: dict[str, Product],
 ) -> tuple[int, int, int]:
     created_deliveries = 0
     created_delivery_items = 0
-    created_inventory_items = 0
+    created_inventory_lots = 0
     today = date.today()
 
     for index in range(1, 25):
@@ -439,11 +473,15 @@ async def create_demo_deliveries(
             continue
 
         delivery_date = today - timedelta(days=index * 2)
+        supplier_name = SUPPLIERS[(index - 1) % len(SUPPLIERS)]
+        carrier_name = CARRIERS[(index - 1) % len(CARRIERS)]
+
         delivery = Delivery(
-            supplier=SUPPLIERS[(index - 1) % len(SUPPLIERS)],
-            carrier=CARRIERS[(index - 1) % len(CARRIERS)],
+            contact_id=supplier_ids[supplier_name],
+            carrier_id=carrier_ids[carrier_name],
             delivery_date=delivery_date.strftime("%d/%m/%y"),
             bol_reference=bol_reference,
+            notes=None,
             created_by=created_by,
         )
         db.add(delivery)
@@ -451,96 +489,124 @@ async def create_demo_deliveries(
         created_deliveries += 1
 
         item_count = 2 + (index % 3)
-        delivery_items: list[DeliveryItem] = []
+        pairs: list[tuple[DeliveryItem, InventoryLot, Product]] = []
+
         for offset in range(item_count):
             material = RAW_MATERIALS[(index + offset - 1) % len(RAW_MATERIALS)]
+            product = products_by_name[str(material["material_type"])]
             pallets = 2 + ((index + offset) % 8)
             units_per_pallet = 100 + (((index * 3 + offset) % 10) * 50)
             total_units = pallets * units_per_pallet
-            quantity = dec(total_units)
+            quantity_x100 = int(total_units * 100)
+
             item = DeliveryItem(
                 delivery_id=delivery.id,
-                item_name=str(material["material_type"]),
-                description=f"Demo batch — {material['lot_prefix']}-{delivery_date.strftime('%y%m%d')}-{offset + 1}",
-                quantity=quantity,
+                product_id=product.id,
+                description=(
+                    f"Demo batch — {material['lot_prefix']}-"
+                    f"{delivery_date.strftime('%y%m%d')}-{offset + 1}"
+                ),
+                quantity=quantity_x100,
                 pallets=pallets,
                 units_per_pallet=units_per_pallet,
+                leftover=None,
             )
             db.add(item)
-            delivery_items.append(item)
+
+            lot = InventoryLot(
+                product_id=product.id,
+                lot_number=f"{material['lot_prefix']}-{bol_reference}-{offset + 1}",
+                storage_location=material["locations"][offset % len(material["locations"])],
+                status="in_storage",
+                quantity_on_hand=quantity_x100,
+                source_delivery_item_id=None,
+                pallet_number=pallets,
+            )
+            db.add(lot)
+            pairs.append((item, lot, product))
             created_delivery_items += 1
 
         await db.flush()
 
-        for item in delivery_items:
-            inventory_item = InventoryItem(
-                item_name=item.item_name,
-                category="raw",
-                quantity_on_hand=item.quantity,
-                source_delivery_item_id=item.id,
+        for item, lot, _product in pairs:
+            lot.source_delivery_item_id = item.id
+            item.inventory_lot_id = lot.id
+            db.add(
+                InventoryTransaction(
+                    lot_id=lot.id,
+                    transaction_type="receive",
+                    quantity=item.quantity,
+                    reference_type="delivery",
+                    reference_id=delivery.id,
+                    reason=f"Seeded receive — {delivery.bol_reference}",
+                    created_by=created_by,
+                )
             )
-            db.add(inventory_item)
-            await db.flush()
-            item.inventory_item_id = inventory_item.id
-            created_inventory_items += 1
+            created_inventory_lots += 1
 
-    return created_deliveries, created_delivery_items, created_inventory_items
+    return created_deliveries, created_delivery_items, created_inventory_lots
 
 
 async def build_inventory_index(
     db: AsyncSession,
-) -> dict[str, list[InventoryItem]]:
+) -> dict[str, list[InventoryLot]]:
     result = await db.execute(
-        select(InventoryItem)
-        .where(InventoryItem.category == "raw")
-        .order_by(InventoryItem.item_name, InventoryItem.last_updated.asc(), InventoryItem.id.asc())
+        select(InventoryLot, Product.name)
+        .join(Product, InventoryLot.product_id == Product.id)
+        .where(
+            Product.category == "raw",
+            InventoryLot.status == "in_storage",
+            InventoryLot.quantity_on_hand > 0,
+        )
+        .order_by(Product.name, InventoryLot.id.asc())
     )
-    items_by_type: dict[str, list[InventoryItem]] = defaultdict(list)
-    for item in result.scalars().all():
-        items_by_type[item.item_name].append(item)
+    items_by_type: dict[str, list[InventoryLot]] = defaultdict(list)
+    for lot, product_name in result.all():
+        items_by_type[product_name].append(lot)
     return items_by_type
 
 
 async def allocate_inventory(
     db: AsyncSession,
-    items_by_type: dict[str, list[InventoryItem]],
+    items_by_type: dict[str, list[InventoryLot]],
     *,
     material_type: str,
-    required_qty: Decimal,
+    required_qty_display: Decimal,
     work_order_material_id: int,
     timestamp: datetime,
 ) -> int:
-    remaining = required_qty
+    """Deduct display-unit requirement from lots stored as integer ×100."""
+    remaining_x100 = float(required_qty_display * Decimal("100"))
     allocation_count = 0
     inventory_items = items_by_type.get(material_type, [])
 
-    total_available = sum(dec(item.quantity_on_hand) for item in inventory_items)
-    if total_available < remaining:
+    total_available = sum(float(item.quantity_on_hand) for item in inventory_items)
+    if total_available < remaining_x100 - 1e-3:
         raise RuntimeError(
             f"Not enough seeded inventory for '{material_type}'. "
-            f"Need {required_qty}, have {total_available}."
+            f"Need {required_qty_display} (×100={remaining_x100}), have {total_available} on hand."
         )
 
     for item in inventory_items:
-        if remaining <= 0:
+        if remaining_x100 <= 0:
             break
-        available = dec(item.quantity_on_hand)
+        available = float(item.quantity_on_hand)
         if available <= 0:
             continue
 
-        qty_taken = min(available, remaining)
-        item.quantity_on_hand = available - qty_taken
-        item.last_updated = timestamp
+        qty_taken_x100 = min(remaining_x100, available)
+        item.quantity_on_hand = int(round(item.quantity_on_hand - qty_taken_x100))
+        lot_label = item.lot_number or f"LOT-{item.id}"
         db.add(
             MaterialAllocation(
                 work_order_material_id=work_order_material_id,
                 inventory_id=item.id,
-                lot_batch_number=item.lot_batch_number,
-                quantity_allocated=qty_taken,
+                lot_batch_number=lot_label,
+                quantity_allocated=qty_taken_x100,
                 allocated_at=timestamp,
             )
         )
-        remaining -= qty_taken
+        remaining_x100 -= qty_taken_x100
         allocation_count += 1
 
     return allocation_count
@@ -549,28 +615,25 @@ async def allocate_inventory(
 async def ensure_finished_inventory(
     db: AsyncSession,
     *,
-    item_name: str,
-    quantity_on_hand: Decimal,
-    lot_batch_number: str,
+    lot_number: str,
+    quantity_units: Decimal,
     storage_location: str,
     timestamp: datetime,
 ) -> bool:
     existing = await db.execute(
-        select(InventoryItem.id).where(
-            InventoryItem.lot_batch_number == lot_batch_number
-        )
+        select(InventoryLot.id).where(InventoryLot.lot_number == lot_number)
     )
     if existing.scalar_one_or_none() is not None:
         return False
 
+    qty_x100 = int((quantity_units * Decimal("100")).quantize(Decimal("1")))
     db.add(
-        InventoryItem(
-            item_name=item_name,
-            category="finished",
-            quantity_on_hand=quantity_on_hand,
-            lot_batch_number=lot_batch_number,
+        InventoryLot(
+            lot_number=lot_number,
             storage_location=storage_location,
-            last_updated=timestamp,
+            status="in_storage",
+            quantity_on_hand=qty_x100,
+            source_delivery_item_id=None,
         )
     )
     return True
@@ -612,11 +675,11 @@ async def create_demo_work_orders(
         await db.flush()
         created_work_orders += 1
 
-        for material_type, qty in spec.materials:
+        for material_type, qty_display in spec.materials:
             work_order_material = WorkOrderMaterial(
                 work_order_id=work_order.id,
                 material_type=material_type,
-                quantity_required=qty,
+                quantity_required=qty_display,
                 quantity_allocated=Decimal("0"),
             )
             db.add(work_order_material)
@@ -628,20 +691,19 @@ async def create_demo_work_orders(
                     db,
                     items_by_type,
                     material_type=material_type,
-                    required_qty=qty,
+                    required_qty_display=qty_display,
                     work_order_material_id=work_order_material.id,
                     timestamp=now,
                 )
-                work_order_material.quantity_allocated = qty
+                work_order_material.quantity_allocated = qty_display
                 created_allocations += allocation_rows
 
         if spec.status in {"completed", "ready_for_shipment"}:
-            lot_batch_number = f"DEMO-FG-{work_order.id:04d}"
+            lot_number = f"DEMO-FG-{work_order.id:04d}"
             created = await ensure_finished_inventory(
                 db,
-                item_name=spec.product,
-                quantity_on_hand=spec.quantity_produced,
-                lot_batch_number=lot_batch_number,
+                lot_number=lot_number,
+                quantity_units=spec.quantity_produced,
                 storage_location="FG-01",
                 timestamp=now,
             )
@@ -698,18 +760,39 @@ async def seed_fake_data() -> None:
                     await ensure_user_role(db, user.id, role_map[role_name].id)
                 )
 
+        supplier_ids: dict[str, int] = {}
+        for name in SUPPLIERS:
+            supplier_ids[name] = (await ensure_contact(db, name, "supplier")).id
+
+        carrier_ids: dict[str, int] = {}
+        for name in CARRIERS:
+            carrier_ids[name] = (await ensure_contact(db, name, "carrier")).id
+
+        products_by_name: dict[str, Product] = {}
+        for material in RAW_MATERIALS:
+            name = str(material["material_type"])
+            products_by_name[name] = await ensure_product(db, name, category="raw")
+
         admin_user = user_map["admin"]
         for material in RAW_MATERIALS:
+            product = products_by_name[str(material["material_type"])]
+            threshold_x100 = int((material["threshold"] * Decimal("100")).quantize(Decimal("1")))
             alert_create_count += int(
                 await ensure_low_stock_alert(
                     db,
-                    str(material["material_type"]),
-                    Decimal(material["threshold"]),
-                    admin_user.id,
+                    product_id=product.id,
+                    threshold_x100=threshold_x100,
+                    created_by=admin_user.id,
                 )
             )
 
-        delivery_counts = await create_demo_deliveries(db, user_map["clerk1"].id)
+        delivery_counts = await create_demo_deliveries(
+            db,
+            created_by=user_map["clerk1"].id,
+            supplier_ids=supplier_ids,
+            carrier_ids=carrier_ids,
+            products_by_name=products_by_name,
+        )
         work_order_counts = await create_demo_work_orders(
             db, created_by=user_map["supervisor1"].id
         )
@@ -733,11 +816,11 @@ async def seed_fake_data() -> None:
         print(f"  low-stock alerts created: {alert_create_count}")
         print(f"  deliveries created: {delivery_counts[0]}")
         print(f"  delivery items created: {delivery_counts[1]}")
-        print(f"  raw inventory items created: {delivery_counts[2]}")
+        print(f"  raw inventory lots created: {delivery_counts[2]}")
         print(f"  work orders created: {work_order_counts[0]}")
         print(f"  work-order materials created: {work_order_counts[1]}")
         print(f"  material allocations created: {work_order_counts[2]}")
-        print(f"  finished inventory items created: {work_order_counts[3]}")
+        print(f"  finished inventory lots created: {work_order_counts[3]}")
 
     await engine.dispose()
 

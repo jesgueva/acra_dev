@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,8 @@ interface LocationEditModalProps {
 }
 
 export function LocationEditModal({ lot, onClose, onSuccess }: LocationEditModalProps) {
+  const t = useTranslations("inventory");
+  const tc = useTranslations("common");
   const [location, setLocation] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -48,7 +51,7 @@ export function LocationEditModal({ lot, onClose, onSuccess }: LocationEditModal
       onSuccess();
       onClose();
     } catch {
-      setError("Failed to update location. Please try again.");
+      setError(t("locationUpdateFailed"));
     } finally {
       setIsLoading(false);
     }
@@ -58,10 +61,12 @@ export function LocationEditModal({ lot, onClose, onSuccess }: LocationEditModal
     <Dialog open={open} onOpenChange={handleOpen}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Edit Location — Lot #{lot?.id}</DialogTitle>
-          <DialogDescription>
-            Update the storage location for this lot. A move transaction will be recorded.
-          </DialogDescription>
+          <DialogTitle>
+            {lot
+              ? `${t("editLocationTitle")} — ${t("lotShort", { id: lot.id })}`
+              : t("editLocationTitle")}
+          </DialogTitle>
+          <DialogDescription>{t("editLocationDescription")}</DialogDescription>
         </DialogHeader>
 
         {error && (
@@ -71,21 +76,21 @@ export function LocationEditModal({ lot, onClose, onSuccess }: LocationEditModal
         )}
 
         <div className="space-y-2">
-          <Label htmlFor="location">Storage Location</Label>
+          <Label htmlFor="location">{t("storageLocation")}</Label>
           <Input
             id="location"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
-            placeholder="e.g. A-12-3"
+            placeholder={t("locationPlaceholder")}
           />
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {tc("cancel")}
           </Button>
           <Button onClick={handleSubmit} disabled={isLoading || !location.trim()}>
-            {isLoading ? "Saving…" : "Save"}
+            {isLoading ? tc("saving") : tc("save")}
           </Button>
         </DialogFooter>
       </DialogContent>

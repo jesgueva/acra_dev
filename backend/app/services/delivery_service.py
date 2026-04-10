@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 
 from fastapi import HTTPException, status
@@ -8,6 +9,7 @@ from sqlalchemy.orm import aliased
 from app.core.audit import write_audit
 from app.models.contact import Contact
 from app.models.delivery import Delivery, DeliveryItem
+from app.models.user import User
 from app.models.inventory import InventoryLot, InventoryTransaction
 from app.models.product import Product
 from app.schemas.auth import TokenUser
@@ -17,6 +19,8 @@ from app.schemas.delivery import (
     DeliveryListResponse,
     DeliveryResponse,
 )
+
+logger = logging.getLogger("acra.delivery")
 
 _TRANSFER_KEYWORDS = ("transfer", "transferencia")
 
@@ -53,12 +57,13 @@ async def create_delivery(
     existing = (
         await db.execute(select(Delivery).where(Delivery.bol_reference == body.bol_reference))
     ).scalar_one_or_none()
-    if existing and not body.force:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Delivery with BOL reference '{body.bol_reference}' already exists. Use force=true to override.",
-        )
-
+    if existing:
+        if not body.force:
+            logger.warning("Duplicate BOL rejected — bol=%r existing_id=%s", body.bol_reference, existing.id)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Delivery with BOL reference '{body.bol_reference}' already exists. Use force=true to override.",
+            )
     contact_id = body.contact_id
     if body.carrier_id:
         carrier_contact = (
@@ -99,6 +104,7 @@ async def create_delivery(
     for item_data in body.items:
         product = products_by_id.get(item_data.product_id)
         if not product:
+            logger.error("Product not found — product_id=%s", item_data.product_id)
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Product {item_data.product_id} not found",
@@ -183,6 +189,7 @@ async def create_delivery(
         bol_reference=delivery.bol_reference,
         notes=delivery.notes,
         created_by=delivery.created_by,
+        created_by_name=current_user.full_name,
         created_at=delivery.created_at,
         items=[
             DeliveryItemResponse(
@@ -256,6 +263,12 @@ async def list_deliveries(
             )
             products_by_id = {p.id: p for p in products_res.scalars().all()}
 
+        creator_ids: set[int] = {d.created_by for d in rows}
+        creators_by_id: dict[int, User] = {}
+        if creator_ids:
+            creators_res = await db.execute(select(User).where(User.id.in_(creator_ids)))
+            creators_by_id = {u.id: u for u in creators_res.scalars().all()}
+
         for d in rows:
             contact_obj = contacts_by_id.get(d.contact_id) if d.contact_id else None
             carrier_obj = contacts_by_id.get(d.carrier_id) if d.carrier_id else None
@@ -271,6 +284,11 @@ async def list_deliveries(
                     bol_reference=d.bol_reference,
                     notes=d.notes,
                     created_by=d.created_by,
+                    created_by_name=(
+                        creators_by_id[d.created_by].full_name
+                        if d.created_by in creators_by_id
+                        else None
+                    ),
                     created_at=d.created_at,
                     items=[
                         DeliveryItemResponse(

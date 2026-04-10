@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,15 +20,19 @@ interface FilterPanelProps {
 
 const ALL_SENTINEL = "__all__";
 
-const STATUSES = [
-  { value: ALL_SENTINEL, label: "All" },
-  { value: "in_storage", label: "In Storage" },
-  { value: "in_production", label: "In Production" },
-  { value: "shipped", label: "Shipped" },
-  { value: "consumed", label: "Consumed" },
-];
-
 export function FilterPanel({ filters, onChange }: FilterPanelProps) {
+  const t = useTranslations("inventory");
+
+  const statuses = useMemo(
+    () => [
+      { value: ALL_SENTINEL, label: t("statusAll") },
+      { value: "in_storage", label: t("status.in_storage") },
+      { value: "in_production", label: t("status.in_production") },
+      { value: "shipped", label: t("status.shipped") },
+      { value: "consumed", label: t("status.consumed") },
+    ],
+    [t]
+  );
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [search, setSearch] = useState(filters.search);
   const [prevSearch, setPrevSearch] = useState(filters.search);
@@ -68,10 +73,10 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
         }
       >
         <SelectTrigger className="w-44" data-testid="status-select">
-          <SelectValue placeholder="All statuses" />
+          <SelectValue placeholder={t("allStatuses")} />
         </SelectTrigger>
         <SelectContent>
-          {STATUSES.map(({ value, label }) => (
+          {statuses.map(({ value, label }) => (
             <SelectItem key={value} value={value}>
               {label}
             </SelectItem>
@@ -80,7 +85,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
       </Select>
 
       <Input
-        placeholder="Search product or location…"
+        placeholder={t("searchPlaceholder")}
         value={search}
         onChange={(e) => handleSearchChange(e.target.value)}
         className="w-72"
@@ -88,7 +93,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
       />
 
       <Button variant="ghost" size="sm" onClick={handleClear} data-testid="clear-filters">
-        Clear Filters
+        {t("clearFilters")}
       </Button>
     </div>
   );

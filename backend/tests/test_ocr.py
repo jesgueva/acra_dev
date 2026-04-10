@@ -152,7 +152,7 @@ def test_ocr_service_build_response_and_parse_items():
             {"material_type": "Bolt", "quantity": None, "lot_batch_number": None},
         ],
     }
-    result = ocr_service._build_response(data)
+    result = ocr_service._build_response(data, "gemini")
     assert result.supplier == "Acme Metals"
     assert result.confidence == 1.0
     assert len(result.items) == 2

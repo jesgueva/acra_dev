@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { toDisplay } from "@/src/lib/qty";
@@ -16,6 +17,7 @@ function escapeCsv(value: string | number | boolean | null | undefined) {
 }
 
 export function ExportButton({ items }: ExportButtonProps) {
+  const t = useTranslations("inventory");
   const [error, setError] = useState<string | null>(null);
 
   const handleExport = () => {
@@ -51,7 +53,7 @@ export function ExportButton({ items }: ExportButtonProps) {
       document.body.removeChild(link);
       URL.revokeObjectURL(href);
     } catch {
-      setError("Export failed. Please try again.");
+      setError(t("exportFailed"));
     }
   };
 
@@ -59,7 +61,7 @@ export function ExportButton({ items }: ExportButtonProps) {
     <div className="flex flex-col items-end gap-1">
       <Button variant="outline" size="sm" onClick={handleExport} data-testid="export-button">
         <Download className="mr-2 h-4 w-4" />
-        Export CSV
+        {t("exportCsv")}
       </Button>
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>

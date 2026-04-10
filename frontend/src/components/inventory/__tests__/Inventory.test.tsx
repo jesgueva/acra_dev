@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { Inventory } from "../Inventory";
 import { AuthContextValue } from "@/src/contexts/AuthContext";
 import { ROLES } from "@/src/lib/privileges";
@@ -124,20 +124,13 @@ const SAMPLE_ITEMS = [
 ];
 
 // Routes useQuery calls by queryKey[0] so mocks stay stable across re-renders.
-function setupInventoryQuery(items = SAMPLE_ITEMS, traceData?: object) {
+function setupInventoryQuery(items = SAMPLE_ITEMS) {
   mockUseQuery.mockImplementation((options: Parameters<typeof useQuery>[0]) => {
     const key = (options.queryKey as string[])[0];
     if (key === "inventory") {
       return {
         data: { results: items, total: items.length, page: 1, page_size: 50 },
         isLoading: false,
-        error: null,
-      } as ReturnType<typeof useQuery>;
-    }
-    if (key === "traceability") {
-      return {
-        data: traceData ?? undefined,
-        isLoading: traceData === undefined,
         error: null,
       } as ReturnType<typeof useQuery>;
     }
@@ -169,19 +162,23 @@ test("shows red low-stock badge when is_triggered is true", () => {
   render(<Inventory />);
 
   expect(screen.getByTestId("low-stock-badge-2")).toBeInTheDocument();
-  expect(screen.getByTestId("low-stock-badge-2")).toHaveTextContent("Low Stock");
+  expect(screen.getByTestId("low-stock-badge-2")).toHaveTextContent(
+    "inventory.lowStock"
+  );
   expect(screen.queryByTestId("low-stock-badge-1")).not.toBeInTheDocument();
 });
 
-test("opens TraceabilityView dialog when row is clicked", () => {
+test("opens inventory details dialog when row is clicked", () => {
   mockUseAuth.mockReturnValue(makeAuth([ROLES.SUPERVISOR]));
   setupInventoryQuery();
 
   render(<Inventory />);
   fireEvent.click(screen.getByTestId("row-1"));
 
-  expect(screen.getByTestId("traceability-dialog")).toBeInTheDocument();
-  expect(screen.getByText(/Traceability — LOT-001/)).toBeInTheDocument();
+  const detailsDialog = screen.getByTestId("inventory-details-dialog");
+  expect(detailsDialog).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Steel Rod" })).toBeInTheDocument();
+  expect(within(detailsDialog).getByText("LOT-001")).toBeInTheDocument();
 });
 
 test("admin sees Adjust button; clicking opens AdjustQuantityModal", () => {
@@ -195,7 +192,7 @@ test("admin sees Adjust button; clicking opens AdjustQuantityModal", () => {
 
   fireEvent.click(adjustBtn);
   expect(screen.getByTestId("adjust-modal")).toBeInTheDocument();
-  expect(screen.getByText(/Adjust Quantity — Steel Rod/)).toBeInTheDocument();
+  expect(screen.getByText("inventory.adjustQuantityHeading")).toBeInTheDocument();
 });
 
 test("non-admin user does not see Adjust button", () => {
@@ -217,10 +214,10 @@ test("AdjustQuantityModal shows inline error when adjustment delta is zero", () 
 
   const quantityInput = screen.getByTestId("quantity-input");
   fireEvent.change(quantityInput, { target: { value: "0" } });
-  fireEvent.click(screen.getByText("Review"));
+  fireEvent.click(screen.getByText("inventory.review"));
 
   expect(screen.getByTestId("adjust-error")).toHaveTextContent(
-    "Enter a non-zero adjustment amount."
+    "inventory.adjustNonZeroError"
   );
 });
 

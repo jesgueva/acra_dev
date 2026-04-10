@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,8 @@ interface SplitLotModalProps {
 }
 
 export function SplitLotModal({ lot, onClose, onSuccess }: SplitLotModalProps) {
+  const t = useTranslations("inventory");
+  const tc = useTranslations("common");
   const [splitQty, setSplitQty] = useState("");
   const [newLocation, setNewLocation] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -42,12 +45,15 @@ export function SplitLotModal({ lot, onClose, onSuccess }: SplitLotModalProps) {
     if (!lot) return;
     const qty = toStore(Number(splitQty));
     if (isNaN(qty) || qty <= 0) {
-      setError("Enter a valid positive quantity to split off.");
+      setError(t("splitQtyInvalid"));
       return;
     }
     if (qty > lot.quantity_on_hand) {
       setError(
-        `Split quantity (${toDisplay(qty)}) exceeds lot quantity (${toDisplay(lot.quantity_on_hand)}).`
+        t("splitQtyExceeds", {
+          split: toDisplay(qty),
+          total: toDisplay(lot.quantity_on_hand),
+        })
       );
       return;
     }
@@ -61,7 +67,7 @@ export function SplitLotModal({ lot, onClose, onSuccess }: SplitLotModalProps) {
       onSuccess();
       handleClose();
     } catch {
-      setError("Failed to split lot. Please try again.");
+      setError(t("splitFailed"));
     } finally {
       setIsLoading(false);
     }
@@ -71,10 +77,13 @@ export function SplitLotModal({ lot, onClose, onSuccess }: SplitLotModalProps) {
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) handleClose(); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Split Lot — #{lot?.id}</DialogTitle>
+          <DialogTitle>
+            {lot ? `${t("splitLotTitle")} — #${lot.id}` : t("splitLotTitle")}
+          </DialogTitle>
           <DialogDescription>
-            Move part of this lot to a new location. Current quantity:{" "}
-            <strong>{lot ? toDisplay(lot.quantity_on_hand) : "—"}</strong>
+            {t("splitDescription", {
+              qty: lot ? toDisplay(lot.quantity_on_hand) : "—",
+            })}
           </DialogDescription>
         </DialogHeader>
 
@@ -86,7 +95,7 @@ export function SplitLotModal({ lot, onClose, onSuccess }: SplitLotModalProps) {
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="split-qty">Quantity to Split Off</Label>
+            <Label htmlFor="split-qty">{t("quantityToSplit")}</Label>
             <Input
               id="split-qty"
               type="number"
@@ -94,26 +103,26 @@ export function SplitLotModal({ lot, onClose, onSuccess }: SplitLotModalProps) {
               step="0.01"
               value={splitQty}
               onChange={(e) => setSplitQty(e.target.value)}
-              placeholder="e.g. 50.00"
+              placeholder={t("splitQtyPlaceholder")}
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="new-location">New Location (optional)</Label>
+            <Label htmlFor="new-location">{t("newLocationOptional")}</Label>
             <Input
               id="new-location"
               value={newLocation}
               onChange={(e) => setNewLocation(e.target.value)}
-              placeholder="e.g. B-02-1"
+              placeholder={t("splitLocationPlaceholder")}
             />
           </div>
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={handleClose}>
-            Cancel
+            {tc("cancel")}
           </Button>
           <Button onClick={handleSubmit} disabled={isLoading || !splitQty}>
-            {isLoading ? "Splitting…" : "Split"}
+            {isLoading ? t("splitting") : t("split")}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -132,6 +132,7 @@ def _make_mock_delivery_response():
         bol_reference="BOL-2026-001",
         notes=None,
         created_by=1,
+        created_by_name="Test User",
         created_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         items=[
             DeliveryItemResponse(
@@ -314,6 +315,7 @@ async def test_service_create_delivery_atomic():
     assert result.items[0].product_id == 1
     assert result.items[0].quantity == 5000
     assert result.items[0].inventory_lot_id == 100
+    assert result.created_by_name == "Test Clerk"
     assert session.commit.called
     assert len(added["deliveries"]) == 1
     assert len(added["delivery_items"]) == 1
@@ -426,6 +428,7 @@ async def test_service_force_true_overrides_duplicate():
 
     assert result.id == 2
     assert result.bol_reference == "BOL-DUP"
+    assert result.created_by_name == "Clerk"
     assert session.commit.called
 
 
@@ -471,9 +474,22 @@ async def test_service_list_deliveries_returns_paginated():
             scalars = MagicMock()
             scalars.all.return_value = [mock_delivery]
             result.scalars.return_value = scalars
-        else:
+        elif n == 3:
             scalars = MagicMock()
             scalars.all.return_value = [mock_item]
+            result.scalars.return_value = scalars
+        elif n == 4:
+            from app.models.user import User
+
+            creator = User()
+            creator.id = 1
+            creator.full_name = "List Test Creator"
+            scalars = MagicMock()
+            scalars.all.return_value = [creator]
+            result.scalars.return_value = scalars
+        else:
+            scalars = MagicMock()
+            scalars.all.return_value = []
             result.scalars.return_value = scalars
         return result
 
@@ -489,6 +505,7 @@ async def test_service_list_deliveries_returns_paginated():
     assert result.results[0].carrier_name is None
     assert len(result.results[0].items) == 1
     assert result.results[0].items[0].inventory_lot_id == 100
+    assert result.results[0].created_by_name == "List Test Creator"
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +578,7 @@ async def test_service_transfer_carrier_sets_internal_supplier():
 
     assert result.contact_name == "Internal"
     assert result.carrier_name == "TRANSFERENCIA"
+    assert result.created_by_name == "Clerk"
     assert result.id == 5
     # Internal contact should have been created and added
     assert len(added["contacts"]) == 1

@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
 import {
   Dialog,
   DialogContent,
@@ -30,7 +31,21 @@ interface TransactionLogModalProps {
 }
 
 export function TransactionLogModal({ lotId, onClose }: TransactionLogModalProps) {
+  const t = useTranslations("inventory");
   const open = lotId !== null;
+
+  const txnTypeLabel = (type: string) => {
+    const labels: Record<string, string> = {
+      receive: t("txnType.receive"),
+      ship: t("txnType.ship"),
+      adjust: t("txnType.adjust"),
+      move: t("txnType.move"),
+      split: t("txnType.split"),
+      produce: t("txnType.produce"),
+      consume: t("txnType.consume"),
+    };
+    return labels[type] ?? type;
+  };
 
   const { data, isLoading } = useQuery<InventoryTransaction[]>({
     queryKey: ["transactions", lotId],
@@ -48,10 +63,12 @@ export function TransactionLogModal({ lotId, onClose }: TransactionLogModalProps
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Transaction Log — Lot #{lotId}</DialogTitle>
-          <DialogDescription>
-            Full audit trail of quantity changes for this lot.
-          </DialogDescription>
+          <DialogTitle>
+            {lotId !== null
+              ? `${t("transactionLogTitle")} — ${t("lotShort", { id: lotId })}`
+              : t("transactionLogTitle")}
+          </DialogTitle>
+          <DialogDescription>{t("transactionLogDescription")}</DialogDescription>
         </DialogHeader>
 
         {isLoading && (
@@ -63,15 +80,15 @@ export function TransactionLogModal({ lotId, onClose }: TransactionLogModalProps
         )}
 
         {data && data.length === 0 && (
-          <p className="text-sm text-muted-foreground">No transactions recorded.</p>
+          <p className="text-sm text-muted-foreground">{t("noTransactions")}</p>
         )}
 
         {data && data.length > 0 && (
           <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
             {data.map((txn) => (
               <div key={txn.id} className="flex items-start gap-3 rounded-md border p-3 text-sm">
-                <Badge variant={TYPE_VARIANT[txn.transaction_type] ?? "outline"} className="shrink-0 capitalize">
-                  {txn.transaction_type}
+                <Badge variant={TYPE_VARIANT[txn.transaction_type] ?? "outline"} className="shrink-0">
+                  {txnTypeLabel(txn.transaction_type)}
                 </Badge>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">

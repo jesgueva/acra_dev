@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.rbac import require_privilege
+from app.core.rbac import require_any_privilege, require_privilege
 from app.schemas.auth import TokenUser
 from app.schemas.contact import ContactCreate, ContactListResponse, ContactResponse, ContactUpdate
 from app.services import contact_service
@@ -17,8 +17,8 @@ async def list_contacts(
     type: Optional[str] = Query(None),
     name: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    current_user: TokenUser = Depends(require_privilege("master_data.view")),
+    page_size: int = Query(20, ge=1, le=500),
+    current_user: TokenUser = Depends(require_any_privilege("master_data.view", "deliveries.create")),
     db: AsyncSession = Depends(get_db),
 ) -> ContactListResponse:
     return await contact_service.list_contacts(
