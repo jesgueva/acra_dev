@@ -9,15 +9,15 @@ export default function AcraLogo({ size = "header" }: AcraLogoProps) {
   if (size === "login") {
     return (
       <div className="flex flex-col items-center gap-3">
-        <div className="rounded-3xl border border-border/60 bg-background/90 px-6 py-4 shadow-sm">
+        <div className="rounded-2xl border border-border/40 bg-white px-8 py-5 shadow-md">
           <Image
             src={acraLogo}
             alt="ACRAPACK logo"
             priority
-            className="h-auto w-[320px] max-w-full"
+            className="h-auto w-[260px] max-w-full"
           />
         </div>
-        <p className="text-sm font-medium tracking-[0.16em] text-muted-foreground">
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
           Manufacturing Execution System
         </p>
       </div>
@@ -25,12 +25,12 @@ export default function AcraLogo({ size = "header" }: AcraLogoProps) {
   }
 
   return (
-    <div className="rounded-2xl border border-border/60 bg-background/90 px-3 py-2 shadow-sm">
+    <div className="rounded-xl border border-border/40 bg-white px-3 py-1.5 shadow-sm">
       <Image
         src={acraLogo}
         alt="ACRAPACK logo"
         priority
-        className="h-auto w-[180px]"
+        className="h-auto w-[140px]"
       />
     </div>
   );

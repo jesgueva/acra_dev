@@ -11,6 +11,7 @@ import { TraceabilityView } from "./TraceabilityView";
 import { AdjustQuantityModal } from "./AdjustQuantityModal";
 import { ExportButton } from "./ExportButton";
 import { InventoryTrendLine } from "./InventoryTrendLine";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   DEFAULT_FILTERS,
   filterItemsByDateRange,
@@ -76,7 +77,12 @@ export function Inventory() {
       )}
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="space-y-2">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-3/4" />
+        </div>
       ) : (
         <InventoryTable
           items={items}

@@ -91,12 +91,49 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 - **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS v4, shadcn/ui (Nova preset, Radix), next-intl, Recharts
 - **Testing:** pytest (backend), Playwright (E2E)
 
+## Frontend Design System
+
+### Theme
+- **Dark by default.** `next-themes` manages the `class` attribute on `<html>`. Default is `"dark"`; light mode is toggled via `ThemeToggle` in the sidebar.
+- **Always use `resolvedTheme`** (not `theme`) from `useTheme()` — `theme` can return `"system"` and produce wrong labels/icons.
+- Color tokens are CSS variables in `app/globals.css`. Do not use hardcoded Tailwind color classes (e.g. `bg-yellow-100`) for semantic UI — use `bg-destructive`, `text-muted-foreground`, etc.
+
+### Fonts
+- **Headings:** `Barlow` — loaded in `app/layout.tsx` as `--font-heading`. Use class `font-heading` on `h1`–`h6` or headings that need the display face.
+- **Body/UI:** `IBM Plex Sans` — loaded as `--font-sans`. Applied globally via `html { font-family: var(--font-sans) }`.
+- All `h1`–`h6` elements automatically receive `font-heading` via `@layer base` in `globals.css`.
+
+### Installed shadcn/ui components
+`alert` · `badge` · `button` · `card` · `dialog` · `input` · `label` · `select` · `separator` · `skeleton`
+
+Add more with: `npx shadcn@latest add <component> -y` from `frontend/` (requires network access in sandbox).
+
 ## Frontend UI Conventions
 
-- **Always use shadcn/ui components** for all UI elements — `Button`, `Input`, `Label`, `Card`, `Dialog`, etc. Never use raw `<button>`, `<input>`, or `<label>` HTML elements in pages or feature components.
-- Add new shadcn/ui components via: `npx shadcn@latest add <component> -y` from `frontend/`
-- Components live in `frontend/components/ui/`. Import as `@/components/ui/<component>`.
+- **Always use shadcn/ui components** for all UI elements — `Button`, `Input`, `Label`, `Card`, `Alert`, `Badge`, `Separator`, etc. Never use raw `<button>`, `<input>`, or `<label>` HTML elements in pages or feature components.
+- Use `Alert` + `AlertDescription` (from `@/components/ui/alert`) for all inline status/error messages — not custom `<div role="alert">`.
+- Use `Badge` (from `@/components/ui/badge`) for status chips and reference tags — not custom `<span>` pills.
+- Use `Separator` (from `@/components/ui/separator`) for visual dividers — not `border-b` on wrapper divs.
+- Use `Skeleton` (from `@/components/ui/skeleton`) for loading states — not `<p>Loading…</p>`.
 - Privilege constants live in `src/lib/privileges.ts` — always use `PRIVILEGES.*` instead of raw strings.
+
+### Import path convention
+- shadcn primitives: `@/components/ui/<component>` (lives at `frontend/components/ui/`)
+- App components: `@/src/components/<domain>/<Component>` (lives at `frontend/src/components/`)
+- Do not mix the two roots — use the path that matches the physical location.
+
+### Locale routing
+**Always prefix internal links with `/${locale}/`.** Use `useLocale()` from `next-intl` in client components:
+```tsx
+const locale = useLocale();
+<Link href={`/${locale}/inventory`}>...</Link>
+```
+Bare paths like `href="/inventory"` will miss the locale segment and cause a redirect flash or 404.
+
+### Shared layout components
+- **`PageHeader`** (`src/components/layout/PageHeader.tsx`) — use on every page for the title/description/actions row. Accepts `title`, `description?`, and `children` (action buttons slot).
+- **`ModulePlaceholder`** (`src/components/layout/ModulePlaceholder.tsx`) — shared components for placeholder/coming-soon pages: `ComingSoonBadge`, `ModuleBanner`, `FeatureGrid`, `RequirementsBar`, `SectionLabel`.
+- **`ThemeToggle`** (`src/components/layout/ThemeToggle.tsx`) — already wired into `NavSidebar`. Do not add a second theme toggle elsewhere.
 
 ## Backend Testing Patterns
 

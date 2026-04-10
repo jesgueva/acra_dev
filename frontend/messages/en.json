@@ -21,19 +21,27 @@
   },
   "receiving": {
     "title": "Receiving",
+    "subtitle": "Log incoming material deliveries and process bills of lading.",
     "description": "Receiving workflows will appear here."
   },
   "inventory": {
-    "title": "Inventory"
+    "title": "Inventory",
+    "subtitle": "Real-time tracking of raw materials and finished goods."
   },
   "workOrders": {
-    "title": "Work Orders"
+    "title": "Work Orders",
+    "subtitle": "Create, assign, and track production orders through their lifecycle.",
+    "description": "Work order management will appear here."
   },
   "users": {
-    "title": "Users"
+    "title": "Users",
+    "subtitle": "Manage user accounts, roles, and access permissions.",
+    "description": "User management will appear here."
   },
   "audit": {
-    "title": "Audit Log"
+    "title": "Audit Log",
+    "subtitle": "Complete record of all system activities, changes, and events.",
+    "description": "Audit log entries will appear here."
   },
   "common": {
     "save": "Save",
@@ -42,6 +50,8 @@
     "edit": "Edit",
     "loading": "Loading...",
     "error": "Error",
-    "dateFormat": "MM/DD/YYYY"
+    "dateFormat": "MM/DD/YYYY",
+    "comingSoon": "Coming Soon",
+    "underDevelopment": "This module is under active development."
   }
 }

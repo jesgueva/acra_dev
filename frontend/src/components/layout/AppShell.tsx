@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useLocale } from "next-intl";
 import NavSidebar from "@/src/components/layout/NavSidebar";
+import { cn } from "@/lib/utils";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const locale = useLocale();
@@ -12,7 +13,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-background">
       <NavSidebar />
-      <div className={`flex flex-1 flex-col ${hasSidebar ? "ml-64" : ""}`}>
+      <div className={cn("flex flex-1 flex-col min-h-screen", hasSidebar && "ml-64")}>
         {children}
       </div>
     </div>

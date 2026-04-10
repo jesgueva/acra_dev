@@ -1,4 +1,5 @@
 import { AlertTriangle } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 export interface AlertItem {
   material_name: string;
@@ -15,16 +16,19 @@ export function AlertBanner({ alerts }: AlertBannerProps) {
   const triggered = alerts.filter((a) => a.is_triggered);
   if (triggered.length === 0) return null;
 
+  const count = triggered.length;
+  const names = triggered.map((a) => a.material_name).join(", ");
+
   return (
-    <div
-      role="alert"
-      className="flex items-center gap-3 rounded-md border border-yellow-400 bg-yellow-100 px-4 py-3 text-yellow-800"
-    >
-      <AlertTriangle className="h-5 w-5 shrink-0" aria-hidden />
-      <span>
-        <strong>Low Stock Alert:</strong>{" "}
-        {triggered.map((a) => a.material_name).join(", ")} below threshold.
-      </span>
-    </div>
+    <Alert variant="destructive">
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>
+        {count === 1 ? "Low Stock Alert" : `${count} Low Stock Alerts`}
+      </AlertTitle>
+      <AlertDescription>
+        {names}{" "}
+        {count === 1 ? "is" : "are"} below the configured threshold.
+      </AlertDescription>
+    </Alert>
   );
 }

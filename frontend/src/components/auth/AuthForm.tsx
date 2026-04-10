@@ -1,17 +1,12 @@
 "use client";
 
-import React, { useState } from "react";
+import { type FormEvent, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { SESSION_EXPIRED_REASON } from "@/src/lib/auth-constants";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,7 +24,7 @@ export default function AuthForm() {
 
   const sessionExpired = searchParams.get("reason") === SESSION_EXPIRED_REASON;
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     setLoading(true);
@@ -51,63 +46,70 @@ export default function AuthForm() {
   }
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardHeader>
-        <CardTitle>{t("login")}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {sessionExpired && (
-            <p
-              className="text-sm text-yellow-700 bg-yellow-50 rounded-md px-3 py-2"
-              role="status"
-            >
-              {t("sessionExpired")}
-            </p>
+    <div className="relative overflow-hidden rounded-xl border border-border bg-card p-6 shadow-lg shadow-black/20">
+      <div className="absolute left-0 right-0 top-0 h-px bg-linear-to-r from-transparent via-primary/60 to-transparent" />
+
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {sessionExpired && (
+          <Alert role="status" className="border-primary/30 bg-primary/8 text-primary [&>svg]:text-primary">
+            <AlertDescription>{t("sessionExpired")}</AlertDescription>
+          </Alert>
+        )}
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <div className="space-y-1.5">
+          <Label
+            htmlFor="username"
+            className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground"
+          >
+            {t("username")}
+          </Label>
+          <Input
+            id="username"
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+            required
+            className="bg-input/60 focus-visible:ring-primary/50"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label
+            htmlFor="password"
+            className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground"
+          >
+            {t("password")}
+          </Label>
+          <Input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
+            className="bg-input/60 focus-visible:ring-primary/50"
+          />
+        </div>
+
+        <Button
+          type="submit"
+          disabled={loading}
+          className="w-full bg-primary font-semibold text-primary-foreground hover:bg-primary/90"
+        >
+          {loading ? (
+            <Loader2 className="animate-spin" aria-label="loading" />
+          ) : (
+            t("loginButton")
           )}
-
-          {error && (
-            <p
-              className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2"
-              role="alert"
-            >
-              {error}
-            </p>
-          )}
-
-          <div className="space-y-1.5">
-            <Label htmlFor="username">{t("username")}</Label>
-            <Input
-              id="username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
-              required
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="password">{t("password")}</Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </div>
-
-          <Button type="submit" disabled={loading} className="w-full">
-            {loading ? (
-              <Loader2 className="animate-spin" aria-label="loading" />
-            ) : (
-              t("loginButton")
-            )}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+        </Button>
+      </form>
+    </div>
   );
 }

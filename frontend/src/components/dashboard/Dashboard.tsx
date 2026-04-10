@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import {
+  type LucideIcon,
   Package,
   Truck,
   ClipboardList,
@@ -9,7 +10,6 @@ import {
   AlertTriangle,
   ShoppingCart,
 } from "lucide-react";
-import { type LucideIcon } from "lucide-react";
 
 import { useAuth } from "@/src/contexts/AuthContext";
 import { apiClient } from "@/src/lib/api-client";

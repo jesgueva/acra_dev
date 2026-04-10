@@ -1,26 +1,29 @@
+"use client";
+
 import Link from "next/link";
+import { useLocale } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { ROLES } from "@/src/lib/privileges";
 
 interface QuickAction {
-  href: string;
+  path: string;
   label: string;
 }
 
 const ROLE_ACTIONS: Record<string, QuickAction[]> = {
   [ROLES.ADMIN]: [
-    { href: "/receiving", label: "Receiving" },
-    { href: "/inventory", label: "Inventory" },
-    { href: "/work-orders", label: "Work Orders" },
-    { href: "/users", label: "Users" },
-    { href: "/audit", label: "Audit Log" },
+    { path: "receiving", label: "Receiving" },
+    { path: "inventory", label: "Inventory" },
+    { path: "work-orders", label: "Work Orders" },
+    { path: "users", label: "Users" },
+    { path: "audit", label: "Audit Log" },
   ],
   [ROLES.SUPERVISOR]: [
-    { href: "/inventory", label: "Inventory" },
-    { href: "/work-orders", label: "Work Orders" },
+    { path: "inventory", label: "Inventory" },
+    { path: "work-orders", label: "Work Orders" },
   ],
-  [ROLES.CLERK]: [{ href: "/receiving", label: "Receiving" }],
-  [ROLES.OPERATOR]: [{ href: "/work-orders", label: "Work Orders" }],
+  [ROLES.CLERK]: [{ path: "receiving", label: "Receiving" }],
+  [ROLES.OPERATOR]: [{ path: "work-orders", label: "Work Orders" }],
 };
 
 function getActionsForRoles(roles: string[]): QuickAction[] {
@@ -35,14 +38,15 @@ interface QuickActionBarProps {
 }
 
 export function QuickActionBar({ roles }: QuickActionBarProps) {
+  const locale = useLocale();
   const actions = getActionsForRoles(roles);
   if (actions.length === 0) return null;
 
   return (
     <nav aria-label="Quick actions" className="flex flex-wrap gap-2">
       {actions.map((action) => (
-        <Button key={action.href} variant="outline" asChild>
-          <Link href={action.href}>{action.label}</Link>
+        <Button key={action.path} variant="outline" asChild>
+          <Link href={`/${locale}/${action.path}`}>{action.label}</Link>
         </Button>
       ))}
     </nav>

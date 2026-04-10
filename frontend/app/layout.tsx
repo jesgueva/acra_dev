@@ -1,12 +1,19 @@
 import type { ReactNode } from "react";
 import { getLocale } from "next-intl/server";
-import { Plus_Jakarta_Sans } from "next/font/google";
+import { Barlow, IBM_Plex_Sans } from "next/font/google";
+import { ThemeProvider } from "@/src/components/providers/ThemeProvider";
 import "./globals.css";
 
-const plusJakartaSans = Plus_Jakarta_Sans({
+const barlow = Barlow({
+  subsets: ["latin"],
+  variable: "--font-heading",
+  weight: ["400", "500", "600", "700"],
+});
+
+const ibmPlexSans = IBM_Plex_Sans({
   subsets: ["latin"],
   variable: "--font-sans",
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "600"],
 });
 
 export default async function RootLayout({
@@ -17,8 +24,21 @@ export default async function RootLayout({
   const locale = await getLocale();
 
   return (
-    <html lang={locale} className={plusJakartaSans.variable}>
-      <body>{children}</body>
+    <html
+      lang={locale}
+      className={`${barlow.variable} ${ibmPlexSans.variable}`}
+      suppressHydrationWarning
+    >
+      <body>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          {children}
+        </ThemeProvider>
+      </body>
     </html>
   );
 }
