@@ -66,7 +66,7 @@ def _make_inv_item(
 ) -> InventoryItem:
     item = InventoryItem()
     item.id = id
-    item.material_type = material_type
+    item.item_name = material_type
     item.category = "raw"
     item.quantity_on_hand = qty
     item.lot_batch_number = lot

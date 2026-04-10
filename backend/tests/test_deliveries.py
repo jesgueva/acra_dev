@@ -1,10 +1,10 @@
 """
 Tests for T07 — Receiving API.
-Expected: 8 passed, 0 failed (includes force=True scenario).
+Expected: 9 passed, 0 failed (includes force=True scenario and transfer-carrier coercion).
 All tests run without a live database connection.
 """
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,15 +21,16 @@ from app.schemas.delivery import (
     DeliveryResponse,
 )
 from app.schemas.auth import TokenUser
-from tests.conftest import _make_user, _make_rbac_session, _override
+from tests.conftest import _make_rbac_session, _override
 
 BASE_URL = "http://test"
 
 _VALID_ITEM = {
-    "material_type": "Steel Rod",
+    "item_name": "Steel Rod",
+    "description": "Grade A steel",
     "quantity": 50.0,
-    "lot_batch_number": "LOT-001",
-    "storage_location": "A-1",
+    "pallets": 2,
+    "units_per_pallet": 25,
 }
 
 _VALID_BODY = {
@@ -71,17 +72,19 @@ def _make_mock_delivery_response():
         id=1,
         supplier="Acme Metals",
         carrier="Fast Freight",
-        delivery_date=date(2026, 1, 15),
+        delivery_date="2026-01-15",
         bol_reference="BOL-2026-001",
         created_by=1,
         created_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         items=[
             DeliveryItemResponse(
                 id=10,
-                material_type="Steel Rod",
+                item_name="Steel Rod",
+                description="Grade A steel",
                 quantity=50.0,
-                lot_batch_number="LOT-001",
-                storage_location="A-1",
+                pallets=2,
+                units_per_pallet=25,
+                leftover=None,
                 inventory_item_id=100,
             )
         ],
@@ -193,14 +196,15 @@ async def test_service_create_delivery_atomic():
     body = DeliveryCreate(
         supplier="Acme Metals",
         carrier="Fast Freight",
-        delivery_date=date(2026, 1, 15),
+        delivery_date="2026-01-15",
         bol_reference="BOL-2026-001",
         items=[
             DeliveryItemCreate(
-                material_type="Steel Rod",
+                item_name="Steel Rod",
+                description="Grade A steel",
                 quantity=50.0,
-                lot_batch_number="LOT-001",
-                storage_location="A-1",
+                pallets=2,
+                units_per_pallet=25,
             )
         ],
     )
@@ -246,9 +250,9 @@ async def test_service_duplicate_bol_raises_409():
     body = DeliveryCreate(
         supplier="Acme",
         carrier="Freight Co",
-        delivery_date=date(2026, 1, 15),
+        delivery_date="2026-01-15",
         bol_reference="BOL-2026-001",
-        items=[DeliveryItemCreate(material_type="Steel", quantity=1.0, lot_batch_number="L1", storage_location="A1")],
+        items=[DeliveryItemCreate(item_name="Steel", quantity=1.0)],
         force=False,
     )
     user = TokenUser(
@@ -291,9 +295,9 @@ async def test_service_force_true_overrides_duplicate():
     body = DeliveryCreate(
         supplier="Acme",
         carrier="Freight Co",
-        delivery_date=date(2026, 1, 20),
+        delivery_date="2026-01-20",
         bol_reference="BOL-DUP",
-        items=[DeliveryItemCreate(material_type="Steel", quantity=10.0, lot_batch_number="L2", storage_location="B1")],
+        items=[DeliveryItemCreate(item_name="Steel", quantity=10.0)],
         force=True,
     )
     user = TokenUser(
@@ -320,18 +324,21 @@ async def test_service_list_deliveries_returns_paginated():
     mock_delivery.id = 1
     mock_delivery.supplier = "Acme Metals"
     mock_delivery.carrier = "Fast Freight"
-    mock_delivery.delivery_date = date(2026, 1, 15)
+    mock_delivery.delivery_date = "2026-01-15"
     mock_delivery.bol_reference = "BOL-2026-001"
+    mock_delivery.notes = None
     mock_delivery.created_by = 1
     mock_delivery.created_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
 
     mock_item = DeliveryItemModel()
     mock_item.id = 10
     mock_item.delivery_id = 1
-    mock_item.material_type = "Steel Rod"
+    mock_item.item_name = "Steel Rod"
+    mock_item.description = "Grade A steel"
     mock_item.quantity = 50.0
-    mock_item.lot_batch_number = "LOT-001"
-    mock_item.storage_location = "A-1"
+    mock_item.pallets = 2
+    mock_item.units_per_pallet = 25
+    mock_item.leftover = None
     mock_item.inventory_item_id = 100
 
     session = AsyncMock()
@@ -363,3 +370,39 @@ async def test_service_list_deliveries_returns_paginated():
     assert result.results[0].bol_reference == "BOL-2026-001"
     assert len(result.results[0].items) == 1
     assert result.results[0].items[0].inventory_item_id == 100
+
+
+# ---------------------------------------------------------------------------
+# Service Test 9 — transfer carrier auto-coerces supplier to "Internal"
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_service_transfer_carrier_sets_internal_supplier():
+    from app.services.delivery_service import create_delivery
+
+    session = AsyncMock()
+    bol_result = MagicMock()
+    bol_result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=bol_result)
+
+    added = defaultdict(list)
+    session.add = MagicMock(side_effect=lambda obj: added[obj.__class__.__tablename__].append(obj))
+    session.flush = _make_flush(added, delivery_id=5, item_base=50, inv_base=500)
+    session.commit = AsyncMock()
+
+    body = DeliveryCreate(
+        supplier="EACRAPACK",
+        carrier="TRANSFERENCIA",
+        delivery_date="2026-01-15",
+        bol_reference="TRANSFER-001",
+        items=[DeliveryItemCreate(item_name="BOX-A", quantity=10.0)],
+    )
+    user = TokenUser(
+        user_id=1, full_name="Clerk", roles=[], preferred_language="en",
+        effective_privileges=["deliveries.create"],
+    )
+
+    result = await create_delivery(body, user, session)
+
+    assert result.supplier == "Internal"
+    assert result.carrier == "TRANSFERENCIA"
+    assert result.id == 5

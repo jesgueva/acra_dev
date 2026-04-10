@@ -405,13 +405,13 @@ async def ensure_low_stock_alert(
     db: AsyncSession, material_type: str, threshold: Decimal, created_by: int
 ) -> bool:
     result = await db.execute(
-        select(LowStockAlert).where(LowStockAlert.material_type == material_type)
+        select(LowStockAlert).where(LowStockAlert.item_name == material_type)
     )
     alert = result.scalar_one_or_none()
     if alert is None:
         db.add(
             LowStockAlert(
-                material_type=material_type,
+                item_name=material_type,
                 threshold=threshold,
                 created_by=created_by,
             )
@@ -442,7 +442,7 @@ async def create_demo_deliveries(
         delivery = Delivery(
             supplier=SUPPLIERS[(index - 1) % len(SUPPLIERS)],
             carrier=CARRIERS[(index - 1) % len(CARRIERS)],
-            delivery_date=delivery_date,
+            delivery_date=delivery_date.strftime("%d/%m/%y"),
             bol_reference=bol_reference,
             created_by=created_by,
         )
@@ -454,19 +454,17 @@ async def create_demo_deliveries(
         delivery_items: list[DeliveryItem] = []
         for offset in range(item_count):
             material = RAW_MATERIALS[(index + offset - 1) % len(RAW_MATERIALS)]
-            quantity = dec(30 + ((index * 11 + offset * 7) % 90))
-            storage_location = material["locations"][
-                (index + offset - 1) % len(material["locations"])
-            ]
-            lot_batch = (
-                f"DEMO-LOT-{material['lot_prefix']}-{delivery_date.strftime('%y%m%d')}-{offset + 1}"
-            )
+            pallets = 2 + ((index + offset) % 8)
+            units_per_pallet = 100 + (((index * 3 + offset) % 10) * 50)
+            total_units = pallets * units_per_pallet
+            quantity = dec(total_units)
             item = DeliveryItem(
                 delivery_id=delivery.id,
-                material_type=str(material["material_type"]),
+                item_name=str(material["material_type"]),
+                description=f"Demo batch — {material['lot_prefix']}-{delivery_date.strftime('%y%m%d')}-{offset + 1}",
                 quantity=quantity,
-                lot_batch_number=lot_batch,
-                storage_location=storage_location,
+                pallets=pallets,
+                units_per_pallet=units_per_pallet,
             )
             db.add(item)
             delivery_items.append(item)
@@ -476,11 +474,9 @@ async def create_demo_deliveries(
 
         for item in delivery_items:
             inventory_item = InventoryItem(
-                material_type=item.material_type,
+                item_name=item.item_name,
                 category="raw",
                 quantity_on_hand=item.quantity,
-                lot_batch_number=item.lot_batch_number,
-                storage_location=item.storage_location,
                 source_delivery_item_id=item.id,
             )
             db.add(inventory_item)
@@ -497,11 +493,11 @@ async def build_inventory_index(
     result = await db.execute(
         select(InventoryItem)
         .where(InventoryItem.category == "raw")
-        .order_by(InventoryItem.material_type, InventoryItem.last_updated.asc(), InventoryItem.id.asc())
+        .order_by(InventoryItem.item_name, InventoryItem.last_updated.asc(), InventoryItem.id.asc())
     )
     items_by_type: dict[str, list[InventoryItem]] = defaultdict(list)
     for item in result.scalars().all():
-        items_by_type[item.material_type].append(item)
+        items_by_type[item.item_name].append(item)
     return items_by_type
 
 
@@ -553,7 +549,7 @@ async def allocate_inventory(
 async def ensure_finished_inventory(
     db: AsyncSession,
     *,
-    material_type: str,
+    item_name: str,
     quantity_on_hand: Decimal,
     lot_batch_number: str,
     storage_location: str,
@@ -569,7 +565,7 @@ async def ensure_finished_inventory(
 
     db.add(
         InventoryItem(
-            material_type=material_type,
+            item_name=item_name,
             category="finished",
             quantity_on_hand=quantity_on_hand,
             lot_batch_number=lot_batch_number,
@@ -643,7 +639,7 @@ async def create_demo_work_orders(
             lot_batch_number = f"DEMO-FG-{work_order.id:04d}"
             created = await ensure_finished_inventory(
                 db,
-                material_type=spec.product,
+                item_name=spec.product,
                 quantity_on_hand=spec.quantity_produced,
                 lot_batch_number=lot_batch_number,
                 storage_location="FG-01",

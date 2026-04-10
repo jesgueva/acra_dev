@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { getLocale } from "next-intl/server";
 import { Barlow, IBM_Plex_Sans } from "next/font/google";
 import { ThemeProvider } from "@/src/components/providers/ThemeProvider";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const barlow = Barlow({
@@ -37,6 +38,7 @@ export default async function RootLayout({
           disableTransitionOnChange
         >
           {children}
+          <Toaster />
         </ThemeProvider>
       </body>
     </html>

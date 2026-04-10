@@ -23,7 +23,7 @@ async def list_inventory(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=250),
     category: str | None = Query(None),
-    material_type: str | None = Query(None),
+    item_name: str | None = Query(None),
     storage_location: str | None = Query(None),
     current_user: TokenUser = Depends(require_privilege("inventory.view")),
     db: AsyncSession = Depends(get_db),
@@ -33,7 +33,7 @@ async def list_inventory(
         page=page,
         page_size=page_size,
         category=category,
-        material_type=material_type,
+        item_name=item_name,
         storage_location=storage_location,
     )
 
@@ -41,7 +41,7 @@ async def list_inventory(
 @router.get("/export")
 async def export_csv(
     category: str | None = Query(None),
-    material_type: str | None = Query(None),
+    item_name: str | None = Query(None),
     storage_location: str | None = Query(None),
     current_user: TokenUser = Depends(require_privilege("inventory.view")),
     db: AsyncSession = Depends(get_db),
@@ -49,7 +49,7 @@ async def export_csv(
     content = await inventory_service.export_csv(
         db=db,
         category=category,
-        material_type=material_type,
+        item_name=item_name,
         storage_location=storage_location,
     )
     return Response(

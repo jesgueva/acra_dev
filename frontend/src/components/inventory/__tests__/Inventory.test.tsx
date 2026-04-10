@@ -69,7 +69,7 @@ function makeAuth(roles: string[]): AuthContextValue {
 const SAMPLE_ITEMS = [
   {
     id: 1,
-    material_type: "Steel Rod",
+    item_name: "Steel Rod",
     category: "raw",
     lot_batch_number: "LOT-001",
     quantity_on_hand: 150,
@@ -79,7 +79,7 @@ const SAMPLE_ITEMS = [
   },
   {
     id: 2,
-    material_type: "Copper Wire",
+    item_name: "Copper Wire",
     category: "finished",
     lot_batch_number: "LOT-002",
     quantity_on_hand: 5,

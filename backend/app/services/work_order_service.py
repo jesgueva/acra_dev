@@ -90,11 +90,11 @@ async def create_work_order(
     material_types = [m.material_type for m in data.materials]
     qty_res = await db.execute(
         select(
-            InventoryItem.material_type,
+            InventoryItem.item_name,
             func.sum(InventoryItem.quantity_on_hand).label("total"),
         )
-        .where(InventoryItem.material_type.in_(material_types))
-        .group_by(InventoryItem.material_type)
+        .where(InventoryItem.item_name.in_(material_types))
+        .group_by(InventoryItem.item_name)
     )
     qty_map = {row[0]: float(row[1]) for row in qty_res.all()}
 
@@ -281,7 +281,7 @@ async def update_status(
             else float(wo.quantity_produced)
         )
         db.add(InventoryItem(
-            material_type=wo.product,
+            item_name=wo.product,
             category="finished",
             quantity_on_hand=qty_produced,
             lot_batch_number=f"WO-{(wo.id or 0):04d}",

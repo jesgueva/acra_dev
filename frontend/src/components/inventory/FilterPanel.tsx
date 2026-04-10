@@ -14,17 +14,15 @@ const CATEGORIES = ["", "raw", "finished"];
 
 export function FilterPanel({ filters, onChange }: FilterPanelProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [materialType, setMaterialType] = useState(filters.materialType);
+  const [itemName, setItemName] = useState(filters.itemName);
   const [storageLocation, setStorageLocation] = useState(filters.storageLocation);
 
-  // Track the last prop values we acknowledged so we can sync during render
-  // instead of inside an effect (getDerivedStateFromProps pattern).
-  const [prevMaterialType, setPrevMaterialType] = useState(filters.materialType);
+  const [prevItemName, setPrevItemName] = useState(filters.itemName);
   const [prevStorageLocation, setPrevStorageLocation] = useState(filters.storageLocation);
 
-  if (prevMaterialType !== filters.materialType) {
-    setPrevMaterialType(filters.materialType);
-    setMaterialType(filters.materialType);
+  if (prevItemName !== filters.itemName) {
+    setPrevItemName(filters.itemName);
+    setItemName(filters.itemName);
   }
   if (prevStorageLocation !== filters.storageLocation) {
     setPrevStorageLocation(filters.storageLocation);
@@ -38,7 +36,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
   }, []);
 
   const handleSearchChange = useCallback(
-    (field: "materialType" | "storageLocation", value: string) => {
+    (field: "itemName" | "storageLocation", value: string) => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
         onChange({ ...filters, [field]: value });
@@ -69,11 +67,11 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
       </div>
 
       <Input
-        placeholder="Search material..."
-        value={materialType}
+        placeholder="Search item..."
+        value={itemName}
         onChange={(e) => {
-          setMaterialType(e.target.value);
-          handleSearchChange("materialType", e.target.value);
+          setItemName(e.target.value);
+          handleSearchChange("itemName", e.target.value);
         }}
         className="w-56"
         data-testid="material-search-input"

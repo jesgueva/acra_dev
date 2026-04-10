@@ -45,7 +45,7 @@ function makeQueryWrapper() {
 }
 
 const emptyPagedResponse = {
-  data: { items: [], total: 0, page: 1, page_size: 20 },
+  data: { results: [], total: 0, page: 1, page_size: 20 },
 };
 
 // ── OCRUploader tests ─────────────────────────────────────────────────────────
@@ -61,8 +61,18 @@ describe("OCRUploader", () => {
   test("2: calls onOCRResult with API data on successful upload", async () => {
     const mockResult = {
       supplier: "ACME Corp",
-      bol_number: "BOL-999",
-      items: [{ item_name: "Steel", lot_batch_number: "L01", quantity: 10, unit: "kg" }],
+      carrier: "Fast Freight",
+      bol_reference: "BOL-999",
+      delivery_date: "2026-01-15",
+      items: [
+        {
+          item_name: "Steel",
+          description: "Steel rods",
+          quantity: 10,
+          pallets: 2,
+          units_per_pallet: 500,
+        },
+      ],
       confidence: 0.95,
     };
     (apiClient.post as jest.Mock).mockResolvedValue({ data: mockResult });
@@ -115,12 +125,12 @@ describe("NewDeliveryForm", () => {
 
     render(<NewDeliveryForm onSuccess={jest.fn()} />);
 
+    await userEvent.type(screen.getByLabelText("receiving.carrier"), "Fast Freight");
     await userEvent.type(screen.getByLabelText("receiving.supplier"), "ACME");
     await userEvent.type(screen.getByLabelText("receiving.bolNumber"), "DUP-001");
+    await userEvent.type(screen.getByLabelText("receiving.deliveryDate"), "2026-01-15");
     await userEvent.type(screen.getByLabelText("receiving.itemName"), "Steel");
-    await userEvent.type(screen.getByLabelText("receiving.lotBatch"), "L01");
     await userEvent.type(screen.getByLabelText("receiving.quantity"), "5");
-    await userEvent.type(screen.getByLabelText("receiving.unit"), "kg");
 
     await userEvent.click(screen.getByRole("button", { name: "receiving.submit" }));
 
@@ -133,26 +143,44 @@ describe("NewDeliveryForm", () => {
   });
 
   test("7: successful submission calls onSuccess", async () => {
-    (apiClient.post as jest.Mock).mockResolvedValue({ data: { delivery_id: 1 } });
+    (apiClient.post as jest.Mock).mockResolvedValue({ data: { id: 1 } });
     const onSuccess = jest.fn();
 
     render(<NewDeliveryForm onSuccess={onSuccess} />);
 
+    await userEvent.type(screen.getByLabelText("receiving.carrier"), "Fast Freight");
     await userEvent.type(screen.getByLabelText("receiving.supplier"), "ACME");
     await userEvent.type(screen.getByLabelText("receiving.bolNumber"), "BOL-001");
+    await userEvent.type(screen.getByLabelText("receiving.deliveryDate"), "2026-01-15");
     await userEvent.type(screen.getByLabelText("receiving.itemName"), "Steel");
-    await userEvent.type(screen.getByLabelText("receiving.lotBatch"), "L01");
     await userEvent.type(screen.getByLabelText("receiving.quantity"), "5");
-    await userEvent.type(screen.getByLabelText("receiving.unit"), "kg");
 
     await userEvent.click(screen.getByRole("button", { name: "receiving.submit" }));
 
     await waitFor(() => {
       expect(apiClient.post).toHaveBeenCalledWith(
         "/deliveries",
-        expect.objectContaining({ supplier: "ACME", bol_number: "BOL-001", force: false })
+        expect.objectContaining({
+          supplier: "ACME",
+          carrier: "Fast Freight",
+          bol_reference: "BOL-001",
+          force: false,
+        })
       );
       expect(onSuccess).toHaveBeenCalled();
+    });
+  });
+
+  test("8: carrier matching /transfer/i locks supplier to Internal", async () => {
+    render(<NewDeliveryForm onSuccess={jest.fn()} />);
+
+    const carrierInput = screen.getByLabelText("receiving.carrier");
+    await userEvent.type(carrierInput, "TRANSFERENCIA");
+
+    await waitFor(() => {
+      const supplierInput = screen.getByLabelText("receiving.supplier") as HTMLInputElement;
+      expect(supplierInput.value).toBe("Internal");
+      expect(supplierInput.readOnly).toBe(true);
     });
   });
 });
@@ -162,16 +190,16 @@ describe("NewDeliveryForm", () => {
 describe("DeliveryList", () => {
   afterEach(() => jest.clearAllMocks());
 
-  test("8: renders fetched deliveries in the table", async () => {
+  test("9: renders fetched deliveries in the table", async () => {
     (apiClient.get as jest.Mock).mockResolvedValue({
       data: {
-        items: [
+        results: [
           {
-            delivery_id: 1,
+            id: 1,
             supplier: "ACME Corp",
-            bol_number: "BOL-001",
-            delivery_date: "2026-04-08T10:00:00Z",
-            status: "confirmed",
+            carrier: "Fast Freight",
+            bol_reference: "BOL-001",
+            delivery_date: "2026-01-15",
           },
         ],
         total: 1,
@@ -188,7 +216,7 @@ describe("DeliveryList", () => {
     });
   });
 
-  test("9: re-fetches when refetch prop increments", async () => {
+  test("10: re-fetches when refetch prop increments", async () => {
     (apiClient.get as jest.Mock).mockResolvedValue(emptyPagedResponse);
 
     const wrapper = makeQueryWrapper();

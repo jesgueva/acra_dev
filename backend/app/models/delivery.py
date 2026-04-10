@@ -1,4 +1,4 @@
-from sqlalchemy import CheckConstraint, Column, Date, ForeignKey, Integer, Numeric, String, TIMESTAMP
+from sqlalchemy import Column, ForeignKey, Integer, Numeric, String, Text, TIMESTAMP
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -10,8 +10,9 @@ class Delivery(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     supplier = Column(String(200), nullable=False)
     carrier = Column(String(200), nullable=False)
-    delivery_date = Column(Date, nullable=False)
-    bol_reference = Column(String(100), nullable=False, unique=True)
+    delivery_date = Column(String(20), nullable=False)
+    bol_reference = Column(String(100), nullable=False)
+    notes = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
@@ -21,12 +22,10 @@ class DeliveryItem(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     delivery_id = Column(Integer, ForeignKey("deliveries.id", ondelete="CASCADE"), nullable=False)
-    material_type = Column(String(200), nullable=False)
+    item_name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
     quantity = Column(Numeric(12, 3), nullable=False)
-    lot_batch_number = Column(String(100), nullable=False)
-    storage_location = Column(String(100), nullable=False)
+    pallets = Column(Integer, nullable=True)
+    units_per_pallet = Column(Integer, nullable=True)
+    leftover = Column(Numeric(12, 3), nullable=True)
     inventory_item_id = Column(Integer, ForeignKey("inventory_items.id"), nullable=True)
-
-    __table_args__ = (
-        CheckConstraint("quantity > 0", name="ck_delivery_items_quantity"),
-    )

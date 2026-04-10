@@ -6,28 +6,23 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableCell, TableRow } from "@/components/ui/table";
+import { DataTable } from "@/src/components/layout/DataTable";
 import { apiClient } from "@/src/lib/api-client";
 
 const PAGE_SIZE = 20;
 
 interface Delivery {
-  delivery_id: number;
+  id: number;
   supplier: string;
-  bol_number: string;
+  carrier: string;
+  bol_reference: string;
   delivery_date: string;
-  status: string;
+  notes?: string | null;
 }
 
 interface PaginatedDeliveries {
-  items: Delivery[];
+  results: Delivery[];
   total: number;
   page: number;
   page_size: number;
@@ -40,7 +35,6 @@ interface DeliveryListProps {
 
 export default function DeliveryList({ refetch }: DeliveryListProps) {
   const t = useTranslations("receiving");
-  const tc = useTranslations("common");
 
   const [page, setPage] = useState(1);
   const [supplierFilter, setSupplierFilter] = useState("");
@@ -55,15 +49,11 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
     },
   });
 
-  const deliveries = data?.items ?? [];
+  const deliveries = data?.results ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
-    if (status === "confirmed") return "default";
-    if (status === "pending") return "secondary";
-    return "outline";
-  }
+  const columns = [t("supplier"), t("carrier"), t("bolNumber"), t("deliveryDate")];
 
   return (
     <div className="space-y-4">
@@ -79,44 +69,23 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
         />
       </div>
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t("supplier")}</TableHead>
-              <TableHead>{t("bolNumber")}</TableHead>
-              <TableHead>{t("deliveryDate")}</TableHead>
-              <TableHead>{t("status")}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center py-8">
-                  {tc("loading")}
-                </TableCell>
-              </TableRow>
-            ) : deliveries.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                  {t("noDeliveries")}
-                </TableCell>
-              </TableRow>
-            ) : (
-              deliveries.map((d) => (
-                <TableRow key={d.delivery_id}>
-                  <TableCell>{d.supplier}</TableCell>
-                  <TableCell>{d.bol_number}</TableCell>
-                  <TableCell>{new Date(d.delivery_date).toLocaleDateString()}</TableCell>
-                  <TableCell>
-                    <Badge variant={statusVariant(d.status)}>{d.status}</Badge>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      <DataTable
+        columns={columns}
+        loading={isLoading}
+        isEmpty={!isLoading && deliveries.length === 0}
+        emptyMessage={t("noDeliveries")}
+      >
+        {deliveries.map((d) => (
+          <TableRow key={d.id}>
+            <TableCell>{d.supplier}</TableCell>
+            <TableCell>
+              <Badge variant="outline">{d.carrier}</Badge>
+            </TableCell>
+            <TableCell className="font-mono text-xs">{d.bol_reference}</TableCell>
+            <TableCell>{d.delivery_date}</TableCell>
+          </TableRow>
+        ))}
+      </DataTable>
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">

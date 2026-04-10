@@ -37,16 +37,16 @@ def _make_user() -> User:
 
 def _make_item(
     id: int = 1,
-    material_type: str = "Steel",
+    item_name: str = "Steel",
     category: str = "raw",
     quantity_on_hand: float = 100.0,
-    lot_batch_number: str = "LOT-001",
-    storage_location: str = "A1",
+    lot_batch_number: str | None = "LOT-001",
+    storage_location: str | None = "A1",
     source_delivery_item_id=None,
 ) -> InventoryItem:
     item = InventoryItem()
     item.id = id
-    item.material_type = material_type
+    item.item_name = item_name
     item.category = category
     item.quantity_on_hand = quantity_on_hand
     item.lot_batch_number = lot_batch_number
@@ -58,12 +58,12 @@ def _make_item(
 
 def _make_alert(
     id: int = 1,
-    material_type: str = "Steel",
+    item_name: str = "Steel",
     threshold: float = 50.0,
 ) -> LowStockAlert:
     a = LowStockAlert()
     a.id = id
-    a.material_type = material_type
+    a.item_name = item_name
     a.threshold = threshold
     a.created_by = 1
     return a
@@ -133,7 +133,7 @@ async def test_list_inventory_returns_200():
         body = resp.json()
         assert body["total"] == 1
         assert len(body["results"]) == 1
-        assert body["results"][0]["material_type"] == "Steel"
+        assert body["results"][0]["item_name"] == "Steel"
     finally:
         app.dependency_overrides.pop(get_db, None)
 
@@ -220,6 +220,7 @@ async def test_trace_lot_returns_200():
         body = resp.json()
         assert body["lot_batch_number"] == "LOT-001"
         assert len(body["inventory_items"]) == 1
+        assert body["inventory_items"][0]["item_name"] == "Steel"
         assert body["work_orders"] == []
         assert body["source_delivery"] is None
     finally:
@@ -231,7 +232,7 @@ async def test_trace_lot_returns_200():
 # ---------------------------------------------------------------------------
 async def test_list_alerts_returns_200():
     user = _make_user()
-    alert = _make_alert(material_type="Steel", threshold=50.0)
+    alert = _make_alert(item_name="Steel", threshold=50.0)
 
     def h_alerts(r): r.scalars.return_value.all.return_value = [alert]
     def h_qty(r): r.all.return_value = [("Steel", 30.0)]  # 30 <= 50 → triggered
@@ -249,7 +250,7 @@ async def test_list_alerts_returns_200():
         body = resp.json()
         assert len(body["alerts"]) == 1
         a = body["alerts"][0]
-        assert a["material_type"] == "Steel"
+        assert a["item_name"] == "Steel"
         assert a["current_quantity"] == 30.0
         assert a["is_triggered"] is True
     finally:
@@ -272,11 +273,11 @@ async def test_create_alert_success():
             resp = await client.post(
                 "/api/v1/inventory/alerts",
                 headers={"Authorization": f"Bearer {token}"},
-                json={"material_type": "Copper", "threshold": 25.0},
+                json={"item_name": "Copper", "threshold": 25.0},
             )
         assert resp.status_code == 201
         body = resp.json()
-        assert body["material_type"] == "Copper"
+        assert body["item_name"] == "Copper"
         assert body["threshold"] == 25.0
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -287,7 +288,7 @@ async def test_create_alert_success():
 # ---------------------------------------------------------------------------
 async def test_create_alert_upsert():
     user = _make_user()
-    existing = _make_alert(id=1, material_type="Steel", threshold=50.0)
+    existing = _make_alert(id=1, item_name="Steel", threshold=50.0)
 
     def h_existing(r): r.scalar_one_or_none.return_value = existing
 
@@ -299,11 +300,11 @@ async def test_create_alert_upsert():
             resp = await client.post(
                 "/api/v1/inventory/alerts",
                 headers={"Authorization": f"Bearer {token}"},
-                json={"material_type": "Steel", "threshold": 100.0},
+                json={"item_name": "Steel", "threshold": 100.0},
             )
         assert resp.status_code == 201
         body = resp.json()
-        assert body["material_type"] == "Steel"
+        assert body["item_name"] == "Steel"
         assert body["threshold"] == 100.0
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -376,6 +377,6 @@ async def test_export_csv_returns_csv():
         assert resp.status_code == 200
         assert "text/csv" in resp.headers["content-type"]
         assert "Steel" in resp.text
-        assert "material_type" in resp.text  # header row present
+        assert "item_name" in resp.text  # header row present
     finally:
         app.dependency_overrides.pop(get_db, None)

@@ -61,7 +61,7 @@ export function TraceabilityView({ lotBatchNumber, onClose }: TraceabilityViewPr
                 <ul className="space-y-1">
                   {data.inventory_items.map((item) => (
                     <li key={item.id}>
-                      {item.material_type}: {item.quantity_on_hand} at {item.storage_location}
+                      {item.item_name}: {item.quantity_on_hand} at {item.storage_location}
                     </li>
                   ))}
                 </ul>

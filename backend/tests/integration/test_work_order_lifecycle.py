@@ -93,7 +93,7 @@ def _make_inv_item(
 ) -> InventoryItem:
     item = InventoryItem()
     item.id = id
-    item.material_type = material_type
+    item.item_name = material_type
     item.category = "raw"
     item.quantity_on_hand = qty
     item.lot_batch_number = lot
@@ -284,7 +284,7 @@ async def test_wo_lifecycle_step5_complete():
         # Verify finished inventory item was written
         finished = [o for o in added_objects if isinstance(o, InventoryItem) and o.category == "finished"]
         assert len(finished) == 1
-        assert finished[0].material_type == "Widget A"
+        assert finished[0].item_name == "Widget A"
         assert float(finished[0].quantity_on_hand) == 10.0
         assert finished[0].storage_location == "FINISHED_GOODS"
     finally:

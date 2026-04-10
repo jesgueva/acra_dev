@@ -1,4 +1,3 @@
-from datetime import date
 from typing import Optional
 
 from fastapi import HTTPException, status
@@ -15,6 +14,12 @@ from app.schemas.delivery import (
     DeliveryListResponse,
     DeliveryResponse,
 )
+
+_TRANSFER_KEYWORDS = ("transfer", "transferencia")
+
+
+def _is_transfer(carrier: str) -> bool:
+    return any(kw in carrier.lower() for kw in _TRANSFER_KEYWORDS)
 
 
 def _apply_filters(query, supplier, carrier, bol_reference, date_from, date_to):
@@ -36,6 +41,9 @@ async def create_delivery(
     current_user: TokenUser,
     db: AsyncSession,
 ) -> DeliveryResponse:
+    # Transfer-carrier rule: force supplier to Internal
+    supplier = "Internal" if _is_transfer(body.carrier) else body.supplier
+
     existing = (
         await db.execute(select(Delivery).where(Delivery.bol_reference == body.bol_reference))
     ).scalar_one_or_none()
@@ -46,42 +54,61 @@ async def create_delivery(
         )
 
     delivery = Delivery(
-        supplier=body.supplier,
+        supplier=supplier,
         carrier=body.carrier,
         delivery_date=body.delivery_date,
         bol_reference=body.bol_reference,
+        notes=body.notes,
         created_by=current_user.user_id,
     )
     db.add(delivery)
-    await db.flush()  # DB assigns delivery.id before items reference it
+    await db.flush()
 
     delivery_items: list[DeliveryItem] = []
+    leftover_notes: list[str] = []
+
     for item_data in body.items:
+        leftover: Optional[float] = None
+        if item_data.pallets is not None and item_data.units_per_pallet is not None:
+            total_units = item_data.pallets * item_data.units_per_pallet
+            diff = total_units - item_data.quantity
+            if diff != 0:
+                leftover = diff
+                leftover_notes.append(
+                    f"{item_data.item_name}: leftover {diff:+.3f} "
+                    f"({item_data.pallets}p × {item_data.units_per_pallet}u/p = {total_units} vs qty {item_data.quantity})"
+                )
+
         item = DeliveryItem(
             delivery_id=delivery.id,
-            material_type=item_data.material_type,
+            item_name=item_data.item_name,
+            description=item_data.description,
             quantity=item_data.quantity,
-            lot_batch_number=item_data.lot_batch_number,
-            storage_location=item_data.storage_location,
+            pallets=item_data.pallets,
+            units_per_pallet=item_data.units_per_pallet,
+            leftover=leftover,
         )
         db.add(item)
         delivery_items.append(item)
-    await db.flush()  # DB assigns item IDs before inventory rows reference them
 
-    # Build (item, inv) pairs so the link-back loop is explicit and order-safe
+    await db.flush()
+
+    # Append computed leftover notes to delivery notes
+    if leftover_notes:
+        combined = "\n".join(leftover_notes)
+        delivery.notes = f"{delivery.notes}\n{combined}" if delivery.notes else combined
+
     pairs: list[tuple[DeliveryItem, InventoryItem]] = []
     for item in delivery_items:
         inv = InventoryItem(
-            material_type=item.material_type,
+            item_name=item.item_name,
             category="raw",
             quantity_on_hand=item.quantity,
-            lot_batch_number=item.lot_batch_number,
-            storage_location=item.storage_location,
             source_delivery_item_id=item.id,
         )
         db.add(inv)
         pairs.append((item, inv))
-    await db.flush()  # DB assigns inventory IDs before we write them back
+    await db.flush()
 
     for item, inv in pairs:
         item.inventory_item_id = inv.id
@@ -102,15 +129,18 @@ async def create_delivery(
         carrier=delivery.carrier,
         delivery_date=delivery.delivery_date,
         bol_reference=delivery.bol_reference,
+        notes=delivery.notes,
         created_by=delivery.created_by,
         created_at=delivery.created_at,
         items=[
             DeliveryItemResponse(
                 id=item.id,
-                material_type=item.material_type,
-                quantity=item.quantity,
-                lot_batch_number=item.lot_batch_number,
-                storage_location=item.storage_location,
+                item_name=item.item_name,
+                description=item.description,
+                quantity=float(item.quantity),
+                pallets=item.pallets,
+                units_per_pallet=item.units_per_pallet,
+                leftover=float(item.leftover) if item.leftover is not None else None,
                 inventory_item_id=item.inventory_item_id,
             )
             for item, _ in pairs
@@ -123,8 +153,8 @@ async def list_deliveries(
     supplier: Optional[str] = None,
     carrier: Optional[str] = None,
     bol_reference: Optional[str] = None,
-    date_from: Optional[date] = None,
-    date_to: Optional[date] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
 ) -> DeliveryListResponse:
@@ -160,6 +190,7 @@ async def list_deliveries(
                     carrier=d.carrier,
                     delivery_date=d.delivery_date,
                     bol_reference=d.bol_reference,
+                    notes=d.notes,
                     created_by=d.created_by,
                     created_at=d.created_at,
                     items=[

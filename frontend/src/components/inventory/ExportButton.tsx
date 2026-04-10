@@ -21,7 +21,7 @@ export function ExportButton({ items }: ExportButtonProps) {
     setError(null);
     try {
       const header = [
-        "material_type",
+        "item_name",
         "category",
         "lot_batch_number",
         "quantity_on_hand",
@@ -31,7 +31,7 @@ export function ExportButton({ items }: ExportButtonProps) {
       ];
       const rows = items.map((item) =>
         [
-          item.material_type,
+          item.item_name,
           item.category,
           item.lot_batch_number,
           item.quantity_on_hand,

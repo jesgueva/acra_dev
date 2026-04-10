@@ -91,7 +91,7 @@ def _make_mock_delivery_item(item_id: int = 10, delivery_id: int = 1, inv_id: in
 def _make_mock_inventory_item(item_id: int = 100) -> InventoryItem:
     inv = InventoryItem()
     inv.id = item_id
-    inv.material_type = "Steel Rod"
+    inv.item_name = "Steel Rod"
     inv.category = "raw"
     inv.quantity_on_hand = 50.0
     inv.lot_batch_number = "LOT-STEEL-001"

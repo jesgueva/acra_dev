@@ -1,44 +1,50 @@
-from datetime import date, datetime
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class DeliveryItemCreate(BaseModel):
-    material_type: str = Field(..., max_length=200)
+# ── Item schemas ──────────────────────────────────────────────────────────────
+
+class DeliveryItemBase(BaseModel):
+    item_name: str = Field(..., max_length=200)
+    description: Optional[str] = None
     quantity: float = Field(..., gt=0)
-    lot_batch_number: str = Field(..., max_length=100)
-    storage_location: str = Field(..., max_length=100)
+    pallets: Optional[int] = None
+    units_per_pallet: Optional[int] = None
 
 
-class DeliveryCreate(BaseModel):
-    supplier: str = Field(..., max_length=200)
-    carrier: str = Field(..., max_length=200)
-    delivery_date: date
-    bol_reference: str = Field(..., max_length=100)
-    items: List[DeliveryItemCreate] = Field(..., min_length=1)
-    force: bool = False
+class DeliveryItemCreate(DeliveryItemBase):
+    pass
 
 
-class DeliveryItemResponse(BaseModel):
+class DeliveryItemResponse(DeliveryItemBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    material_type: str
-    quantity: float
-    lot_batch_number: str
-    storage_location: str
+    leftover: Optional[float] = None
     inventory_item_id: Optional[int] = None
 
 
-class DeliveryResponse(BaseModel):
+# ── Delivery schemas ──────────────────────────────────────────────────────────
+
+class DeliveryBase(BaseModel):
+    supplier: str = Field(..., max_length=200)
+    carrier: str = Field(..., max_length=200)
+    bol_reference: str = Field(..., max_length=100)
+    delivery_date: str = Field(..., max_length=20)
+    notes: Optional[str] = None
+
+
+class DeliveryCreate(DeliveryBase):
+    force: bool = False
+    items: List[DeliveryItemCreate] = Field(..., min_length=1)
+
+
+class DeliveryResponse(DeliveryBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    supplier: str
-    carrier: str
-    delivery_date: date
-    bol_reference: str
     created_by: int
     created_at: datetime
     items: List[DeliveryItemResponse] = []
@@ -51,10 +57,14 @@ class DeliveryListResponse(BaseModel):
     results: List[DeliveryResponse]
 
 
+# ── OCR schemas ───────────────────────────────────────────────────────────────
+
 class OCRItemResult(BaseModel):
-    material_type: Optional[str] = None
+    item_name: Optional[str] = None
+    description: Optional[str] = None
     quantity: Optional[float] = None
-    lot_batch_number: Optional[str] = None
+    pallets: Optional[int] = None
+    units_per_pallet: Optional[int] = None
 
 
 class OCRResponse(BaseModel):

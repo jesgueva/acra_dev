@@ -9,12 +9,15 @@ import { apiClient } from "@/src/lib/api-client";
 
 export interface OCRResult {
   supplier?: string;
-  bol_number?: string;
+  carrier?: string;
+  bol_reference?: string;
+  delivery_date?: string;
   items?: Array<{
     item_name: string;
-    lot_batch_number: string;
+    description?: string;
     quantity: number;
-    unit: string;
+    pallets?: number;
+    units_per_pallet?: number;
   }>;
   confidence: number;
 }
@@ -49,7 +52,6 @@ export default function OCRUploader({ onOCRResult }: OCRUploaderProps) {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) processFile(file);
-    // reset so same file can re-trigger
     e.target.value = "";
   }
 

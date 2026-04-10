@@ -23,9 +23,9 @@ export function InventoryTrendLine({ items }: InventoryTrendLineProps) {
     () =>
       items.slice(0, 10).map((item) => ({
         name:
-          item.material_type.length > 12
-            ? item.material_type.slice(0, 12) + "…"
-            : item.material_type,
+          item.item_name.length > 12
+            ? item.item_name.slice(0, 12) + "…"
+            : item.item_name,
         quantity: item.quantity_on_hand,
       })),
     [items]

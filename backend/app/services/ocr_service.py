@@ -44,7 +44,7 @@ def _get_anthropic_client() -> anthropic.Anthropic:
         _anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     return _anthropic_client
 
-# Gemini receives a text prompt because it uses free-form JSON mode.
+
 _GEMINI_PROMPT = (
     "Extract all Bill of Lading fields from this document. "
     "Return a JSON object with exactly these keys: "
@@ -52,7 +52,10 @@ _GEMINI_PROMPT = (
     "carrier (string or null), "
     "bol_reference (string or null), "
     "delivery_date (string or null, any format you find), "
-    "items (array — each element has material_type, quantity as number, lot_batch_number). "
+    "items (array — each element has: item_name, description, quantity as number, "
+    "pallets as integer, units_per_pallet as integer). "
+    "IMPORTANT: if the carrier value contains 'TRANSFER' or 'TRANSFERENCIA' "
+    "(case-insensitive), set supplier to the string 'Internal'. "
     "If a field is not present, use null."
 )
 
@@ -66,9 +69,11 @@ def _parse_items(raw: list[dict[str, Any]]) -> list[OCRItemResult]:
         try:
             items.append(
                 OCRItemResult(
-                    material_type=entry.get("material_type"),
+                    item_name=entry.get("item_name"),
+                    description=entry.get("description"),
                     quantity=float(entry["quantity"]) if entry.get("quantity") is not None else None,
-                    lot_batch_number=entry.get("lot_batch_number"),
+                    pallets=int(entry["pallets"]) if entry.get("pallets") is not None else None,
+                    units_per_pallet=int(entry["units_per_pallet"]) if entry.get("units_per_pallet") is not None else None,
                 )
             )
         except (TypeError, ValueError):
@@ -116,7 +121,11 @@ def _extract_with_gemini(file_bytes: bytes, content_type: str) -> OCRResponse:
 
 _CLAUDE_TOOL = {
     "name": "extract_bol_fields",
-    "description": "Extract structured Bill of Lading fields from a document.",
+    "description": (
+        "Extract structured Bill of Lading fields from a document. "
+        "If the carrier value contains 'TRANSFER' or 'TRANSFERENCIA' (case-insensitive), "
+        "set supplier to 'Internal'."
+    ),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -129,9 +138,11 @@ _CLAUDE_TOOL = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "material_type": {"type": ["string", "null"]},
+                        "item_name": {"type": ["string", "null"]},
+                        "description": {"type": ["string", "null"]},
                         "quantity": {"type": ["number", "null"]},
-                        "lot_batch_number": {"type": ["string", "null"]},
+                        "pallets": {"type": ["integer", "null"]},
+                        "units_per_pallet": {"type": ["integer", "null"]},
                     },
                 },
             },

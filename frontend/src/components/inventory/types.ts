@@ -1,10 +1,10 @@
 export interface InventoryItem {
   id: number;
-  material_type: string;
+  item_name: string;
   category: string;
-  lot_batch_number: string;
+  lot_batch_number: string | null;
   quantity_on_hand: number;
-  storage_location: string;
+  storage_location: string | null;
   last_updated: string;
   is_triggered: boolean;
 }
@@ -18,7 +18,7 @@ export interface InventoryListResponse {
 
 export interface FilterState {
   category: string;
-  materialType: string;
+  itemName: string;
   storageLocation: string;
   dateFrom: string;
   dateTo: string;
@@ -26,7 +26,7 @@ export interface FilterState {
 
 export const DEFAULT_FILTERS: FilterState = {
   category: "",
-  materialType: "",
+  itemName: "",
   storageLocation: "",
   dateFrom: "",
   dateTo: "",
@@ -35,7 +35,7 @@ export const DEFAULT_FILTERS: FilterState = {
 export function filtersToParams(filters: FilterState): URLSearchParams {
   const p = new URLSearchParams();
   if (filters.category) p.set("category", filters.category);
-  if (filters.materialType) p.set("material_type", filters.materialType);
+  if (filters.itemName) p.set("item_name", filters.itemName);
   if (filters.storageLocation) p.set("storage_location", filters.storageLocation);
   return p;
 }
@@ -75,10 +75,10 @@ export interface TraceabilityData {
   } | null;
   inventory_items: Array<{
     id: number;
-    material_type: string;
+    item_name: string;
     category: string;
     quantity_on_hand: number;
-    storage_location: string;
+    storage_location: string | null;
   }>;
   work_orders: Array<{
     work_order_id: number;

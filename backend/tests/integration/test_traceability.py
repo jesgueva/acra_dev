@@ -42,7 +42,7 @@ def _make_user() -> User:
 def _make_inventory_item(source_delivery_item_id: int | None = 10) -> InventoryItem:
     inv = InventoryItem()
     inv.id = 100
-    inv.material_type = "Steel Rod"
+    inv.item_name = "Steel Rod"
     inv.category = "raw"
     inv.quantity_on_hand = 30.0
     inv.lot_batch_number = LOT

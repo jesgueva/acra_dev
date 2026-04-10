@@ -8,11 +8,11 @@ class InventoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    material_type: str
+    item_name: str
     category: str
     quantity_on_hand: float
-    lot_batch_number: str
-    storage_location: str
+    lot_batch_number: Optional[str] = None
+    storage_location: Optional[str] = None
     source_delivery_item_id: Optional[int] = None
     last_updated: datetime
     is_triggered: bool = False
@@ -37,7 +37,7 @@ class InventoryAdjustResponse(BaseModel):
 
 
 class LowStockAlertCreate(BaseModel):
-    material_type: str = Field(..., max_length=200)
+    item_name: str = Field(..., max_length=200)
     threshold: float = Field(..., ge=0)
 
 
@@ -45,7 +45,7 @@ class LowStockAlertResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    material_type: str
+    item_name: str
     threshold: float
     current_quantity: float = 0.0
     is_triggered: bool = False

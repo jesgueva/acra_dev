@@ -23,14 +23,14 @@ from app.schemas.inventory import (
 
 def _build_item_query(
     category: str | None = None,
-    material_type: str | None = None,
+    item_name: str | None = None,
     storage_location: str | None = None,
 ):
     q = select(InventoryItem)
     if category:
         q = q.where(InventoryItem.category == category)
-    if material_type:
-        q = q.where(InventoryItem.material_type.ilike(f"%{material_type}%"))
+    if item_name:
+        q = q.where(InventoryItem.item_name.ilike(f"%{item_name}%"))
     if storage_location:
         q = q.where(InventoryItem.storage_location.ilike(f"%{storage_location}%"))
     return q
@@ -38,7 +38,7 @@ def _build_item_query(
 
 async def _fetch_thresholds(db: AsyncSession) -> dict[str, float]:
     alerts_res = await db.execute(select(LowStockAlert))
-    return {a.material_type: float(a.threshold) for a in alerts_res.scalars().all()}
+    return {a.item_name: float(a.threshold) for a in alerts_res.scalars().all()}
 
 
 async def list_inventory(
@@ -46,10 +46,10 @@ async def list_inventory(
     page: int = 1,
     page_size: int = 50,
     category: str | None = None,
-    material_type: str | None = None,
+    item_name: str | None = None,
     storage_location: str | None = None,
 ) -> InventoryListResponse:
-    base_q = _build_item_query(category, material_type, storage_location)
+    base_q = _build_item_query(category, item_name, storage_location)
 
     count_res = await db.execute(select(func.count()).select_from(base_q.subquery()))
     total = count_res.scalar() or 0
@@ -63,11 +63,11 @@ async def list_inventory(
     results = []
     for item in items:
         qty = float(item.quantity_on_hand)
-        thr = thresholds.get(item.material_type)
+        thr = thresholds.get(item.item_name)
         results.append(
             InventoryResponse(
                 id=item.id,
-                material_type=item.material_type,
+                item_name=item.item_name,
                 category=item.category,
                 quantity_on_hand=qty,
                 lot_batch_number=item.lot_batch_number,
@@ -122,7 +122,7 @@ async def trace_lot(db: AsyncSession, lot_batch_number: str) -> TraceabilityResp
     inventory_items_data = [
         {
             "id": i.id,
-            "material_type": i.material_type,
+            "item_name": i.item_name,
             "category": i.category,
             "quantity_on_hand": float(i.quantity_on_hand),
             "storage_location": i.storage_location,
@@ -185,19 +185,19 @@ async def list_alerts(db: AsyncSession) -> LowStockAlertListResponse:
     alerts = alerts_res.scalars().all()
 
     qty_res = await db.execute(
-        select(InventoryItem.material_type, func.sum(InventoryItem.quantity_on_hand).label("total"))
-        .group_by(InventoryItem.material_type)
+        select(InventoryItem.item_name, func.sum(InventoryItem.quantity_on_hand).label("total"))
+        .group_by(InventoryItem.item_name)
     )
     qty_map = {row[0]: float(row[1]) for row in qty_res.all()}
 
     alert_responses = []
     for alert in alerts:
-        current_qty = qty_map.get(alert.material_type, 0.0)
+        current_qty = qty_map.get(alert.item_name, 0.0)
         thr = float(alert.threshold)
         alert_responses.append(
             LowStockAlertResponse(
                 id=alert.id,
-                material_type=alert.material_type,
+                item_name=alert.item_name,
                 threshold=thr,
                 current_quantity=current_qty,
                 is_triggered=current_qty <= thr,
@@ -213,7 +213,7 @@ async def create_alert(
     user_id: int,
 ) -> LowStockAlertResponse:
     res = await db.execute(
-        select(LowStockAlert).where(LowStockAlert.material_type == data.material_type)
+        select(LowStockAlert).where(LowStockAlert.item_name == data.item_name)
     )
     existing = res.scalar_one_or_none()
 
@@ -222,7 +222,7 @@ async def create_alert(
         alert = existing
     else:
         alert = LowStockAlert(
-            material_type=data.material_type,
+            item_name=data.item_name,
             threshold=data.threshold,
             created_by=user_id,
         )
@@ -232,7 +232,7 @@ async def create_alert(
 
     return LowStockAlertResponse(
         id=alert.id or 0,
-        material_type=alert.material_type,
+        item_name=alert.item_name,
         threshold=float(alert.threshold),
         current_quantity=0.0,
         is_triggered=False,
@@ -252,10 +252,10 @@ async def delete_alert(db: AsyncSession, alert_id: int) -> None:
 async def export_csv(
     db: AsyncSession,
     category: str | None = None,
-    material_type: str | None = None,
+    item_name: str | None = None,
     storage_location: str | None = None,
 ) -> str:
-    base_q = _build_item_query(category, material_type, storage_location)
+    base_q = _build_item_query(category, item_name, storage_location)
 
     items_res = await db.execute(base_q)
     items = items_res.scalars().all()
@@ -265,15 +265,15 @@ async def export_csv(
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "id", "material_type", "category", "quantity_on_hand",
+        "id", "item_name", "category", "quantity_on_hand",
         "lot_batch_number", "storage_location", "last_updated", "is_triggered",
     ])
     for item in items:
         qty = float(item.quantity_on_hand)
-        thr = thresholds.get(item.material_type)
+        thr = thresholds.get(item.item_name)
         writer.writerow([
             item.id,
-            item.material_type,
+            item.item_name,
             item.category,
             qty,
             item.lot_batch_number,

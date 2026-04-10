@@ -60,15 +60,15 @@ async def allocate_materials(
         inv_res = await db.execute(
             select(InventoryItem)
             .where(
-                InventoryItem.material_type.in_(needed_types),
+                InventoryItem.item_name.in_(needed_types),
                 InventoryItem.category == "raw",
                 InventoryItem.quantity_on_hand > 0,
             )
-            .order_by(InventoryItem.material_type, InventoryItem.last_updated.asc())
+            .order_by(InventoryItem.item_name, InventoryItem.last_updated.asc())
             .with_for_update()
         )
         for item in inv_res.scalars().all():
-            inv_by_type[item.material_type].append(item)
+            inv_by_type[item.item_name].append(item)
 
     now = datetime.now(timezone.utc)
 
