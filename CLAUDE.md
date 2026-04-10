@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-ACRA Integrated Manufacturing Execution System (MES) — a monorepo with a FastAPI backend and Next.js 14 frontend.
+ACRA Integrated Manufacturing Execution System (MES) — a monorepo with a FastAPI backend and Next.js 16 frontend.
 
 ## Repository Structure
 
@@ -11,7 +11,7 @@ acra_dev/
 ├── backend/          # FastAPI + SQLAlchemy + PostgreSQL
 │   ├── app/
 │   │   ├── main.py
-│   │   ├── core/
+│   │   ├── core/     # config, database, security (JWT/bcrypt), rbac, audit
 │   │   ├── models/
 │   │   ├── routers/
 │   │   ├── schemas/
@@ -19,11 +19,16 @@ acra_dev/
 │   ├── alembic/
 │   ├── tests/
 │   └── requirements.txt
-├── frontend/         # Next.js 14 App Router + shadcn/ui
-│   ├── app/
-│   ├── components/
-│   ├── lib/
+├── frontend/         # Next.js 16 App Router + shadcn/ui
+│   ├── app/          # routes, layouts, globals; app/api/auth/* proxies session to backend
+│   ├── components/ui/  # shadcn primitives
+│   ├── src/
+│   │   ├── components/  # feature + layout components
+│   │   ├── contexts/
+│   │   └── lib/
+│   ├── messages/     # next-intl (en.json, es.json)
 │   └── package.json
+├── docker-compose.yml  # Postgres on host port 5433 → container 5432
 └── CLAUDE.md
 ```
 
@@ -61,9 +66,13 @@ cd frontend && npm run build
 ### Database
 
 ```bash
-# Requires PostgreSQL running locally
+# Option A — local Postgres on default port
 # Create database: createdb acra_db
 # Connection: postgresql://postgres:postgres@localhost:5432/acra_db
+
+# Option B — Docker Compose (repo root): Postgres is exposed on host port 5433
+# Set DATABASE_URL / NEXT_PUBLIC_API_URL accordingly, e.g.:
+# postgresql+asyncpg://postgres:postgres@localhost:5433/acra_db
 ```
 
 ## Environment Variables
@@ -79,6 +88,8 @@ GEMINI_API_KEY=your-gemini-api-key-here
 ANTHROPIC_API_KEY=your-anthropic-api-key-here
 ```
 
+Use port **5433** for `DATABASE_URL` when connecting to Postgres started via `docker compose up` in this repo.
+
 ### Frontend (`frontend/.env.local`)
 
 ```
@@ -88,8 +99,16 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 ## Tech Stack
 
 - **Backend:** FastAPI, SQLAlchemy (async), Alembic, PostgreSQL, bcrypt, python-jose
-- **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS v4, shadcn/ui (Nova preset, Radix), next-intl, Recharts
-- **Testing:** pytest (backend), Playwright (E2E)
+- **Frontend:** Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, shadcn/ui (Nova preset, Radix), next-intl, TanStack React Query, Axios, Recharts
+- **Testing:** pytest (backend, coverage floor 85% in CI), Jest + Testing Library (frontend; CI runs a subset plus full lint/build)
+
+## Backend Core Modules (`app/core/`)
+
+- **`config.py`** — `pydantic-settings` (`database_url`, JWT, API keys).
+- **`database.py`** — async engine, `get_db`, `Base`.
+- **`security.py`** — JWT create/verify, bcrypt hash/verify (not named `auth.py`).
+- **`rbac.py`** — `HTTPBearer`; **`require_privilege(name)`** loads user, roles, privileges from DB (privilege `"authenticated"` skips the privilege check). **`require_any_privilege(*names)`** — caller has at least one of the listed privileges.
+- **`audit.py`** — `write_audit` (caller commits).
 
 ## Frontend Design System
 
@@ -104,9 +123,12 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 - All `h1`–`h6` elements automatically receive `font-heading` via `@layer base` in `globals.css`.
 
 ### Installed shadcn/ui components
-`alert` · `badge` · `button` · `card` · `dialog` · `input` · `label` · `select` · `separator` · `skeleton`
+`alert` · `badge` · `button` · `card` · `combobox` · `command` · `dialog` · `input` · `input-group` · `label` · `popover` · `select` · `separator` · `skeleton` · `sonner` · `table` · `textarea`
 
 Add more with: `npx shadcn@latest add <component> -y` from `frontend/` (requires network access in sandbox).
+
+### App-specific UI
+- **`CreatableCombobox`** — `src/components/ui/creatable-combobox.tsx` (searchable select with inline create for receiving/master data).
 
 ## Frontend UI Conventions
 
@@ -130,6 +152,10 @@ const locale = useLocale();
 ```
 Bare paths like `href="/inventory"` will miss the locale segment and cause a redirect flash or 404.
 
+### Auth and API
+- Browser calls FastAPI at `NEXT_PUBLIC_API_URL` with Bearer tokens set on the shared Axios client (`src/lib/api-client.ts`).
+- Session bootstrap uses Next.js route handlers under `app/api/auth/` (login/me/logout) to align cookies with the backend.
+
 ### Shared layout components
 - **`PageHeader`** (`src/components/layout/PageHeader.tsx`) — use on every page for the title/description/actions row. Accepts `title`, `description?`, and `children` (action buttons slot).
 - **`ModulePlaceholder`** (`src/components/layout/ModulePlaceholder.tsx`) — shared components for placeholder/coming-soon pages: `ComingSoonBadge`, `ModuleBanner`, `FeatureGrid`, `RequirementsBar`, `SectionLabel`.
@@ -152,6 +178,8 @@ from tests.conftest import _make_session, _make_user, _override
 - `_make_session(user, roles, privileges, service_handlers=[])` — wires the 3-query RBAC sequence; service queries start at index 3.
 - `_make_user(password, status, production_line)` — returns an active `User` ORM stub.
 - `_override(session)` — async generator for `app.dependency_overrides[get_db]`.
+
+**Note:** `_make_rbac_session` in the same file uses **1-based** `execute` counting (`n == 1, 2, 3` for the same three RBAC steps). Use `_make_session` when you need 0-based indexing aligned with the doc above.
 
 ### Coverage
 Use **dot notation** for `--cov` paths:

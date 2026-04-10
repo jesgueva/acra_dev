@@ -1,8 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { DEFAULT_FILTERS, FilterState } from "./types";
 
 interface FilterPanelProps {
@@ -10,25 +18,28 @@ interface FilterPanelProps {
   onChange: (filters: FilterState) => void;
 }
 
-const CATEGORIES = ["", "raw", "finished"];
+const ALL_SENTINEL = "__all__";
 
 export function FilterPanel({ filters, onChange }: FilterPanelProps) {
+  const t = useTranslations("inventory");
+
+  const statuses = useMemo(
+    () => [
+      { value: ALL_SENTINEL, label: t("statusAll") },
+      { value: "in_storage", label: t("status.in_storage") },
+      { value: "in_production", label: t("status.in_production") },
+      { value: "shipped", label: t("status.shipped") },
+      { value: "consumed", label: t("status.consumed") },
+    ],
+    [t]
+  );
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [materialType, setMaterialType] = useState(filters.materialType);
-  const [storageLocation, setStorageLocation] = useState(filters.storageLocation);
+  const [search, setSearch] = useState(filters.search);
+  const [prevSearch, setPrevSearch] = useState(filters.search);
 
-  // Track the last prop values we acknowledged so we can sync during render
-  // instead of inside an effect (getDerivedStateFromProps pattern).
-  const [prevMaterialType, setPrevMaterialType] = useState(filters.materialType);
-  const [prevStorageLocation, setPrevStorageLocation] = useState(filters.storageLocation);
-
-  if (prevMaterialType !== filters.materialType) {
-    setPrevMaterialType(filters.materialType);
-    setMaterialType(filters.materialType);
-  }
-  if (prevStorageLocation !== filters.storageLocation) {
-    setPrevStorageLocation(filters.storageLocation);
-    setStorageLocation(filters.storageLocation);
+  if (prevSearch !== filters.search) {
+    setPrevSearch(filters.search);
+    setSearch(filters.search);
   }
 
   useEffect(() => {
@@ -38,10 +49,11 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
   }, []);
 
   const handleSearchChange = useCallback(
-    (field: "materialType" | "storageLocation", value: string) => {
+    (value: string) => {
+      setSearch(value);
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
-        onChange({ ...filters, [field]: value });
+        onChange({ ...filters, search: value });
       }, 300);
     },
     [filters, onChange]
@@ -54,60 +66,34 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
 
   return (
     <div className="flex flex-wrap gap-3 items-end">
-      <div className="flex gap-1">
-        {CATEGORIES.map((cat) => (
-          <Button
-            key={cat || "all"}
-            variant={filters.category === cat ? "default" : "outline"}
-            size="sm"
-            onClick={() => onChange({ ...filters, category: cat })}
-            data-testid={`category-${cat || "all"}`}
-          >
-            {cat || "All"}
-          </Button>
-        ))}
-      </div>
+      <Select
+        value={filters.status === "" ? ALL_SENTINEL : filters.status}
+        onValueChange={(value) =>
+          onChange({ ...filters, status: value === ALL_SENTINEL ? "" : value })
+        }
+      >
+        <SelectTrigger className="w-44" data-testid="status-select">
+          <SelectValue placeholder={t("allStatuses")} />
+        </SelectTrigger>
+        <SelectContent>
+          {statuses.map(({ value, label }) => (
+            <SelectItem key={value} value={value}>
+              {label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       <Input
-        placeholder="Search material..."
-        value={materialType}
-        onChange={(e) => {
-          setMaterialType(e.target.value);
-          handleSearchChange("materialType", e.target.value);
-        }}
-        className="w-56"
-        data-testid="material-search-input"
-      />
-
-      <Input
-        placeholder="Search location..."
-        value={storageLocation}
-        onChange={(e) => {
-          setStorageLocation(e.target.value);
-          handleSearchChange("storageLocation", e.target.value);
-        }}
-        className="w-48"
-        data-testid="location-search-input"
-      />
-
-      <Input
-        type="date"
-        value={filters.dateFrom}
-        onChange={(e) => onChange({ ...filters, dateFrom: e.target.value })}
-        className="w-40"
-        data-testid="date-from"
-      />
-      <span className="text-sm text-muted-foreground self-center">to</span>
-      <Input
-        type="date"
-        value={filters.dateTo}
-        onChange={(e) => onChange({ ...filters, dateTo: e.target.value })}
-        className="w-40"
-        data-testid="date-to"
+        placeholder={t("searchPlaceholder")}
+        value={search}
+        onChange={(e) => handleSearchChange(e.target.value)}
+        className="w-72"
+        data-testid="search-input"
       />
 
       <Button variant="ghost" size="sm" onClick={handleClear} data-testid="clear-filters">
-        Clear Filters
+        {t("clearFilters")}
       </Button>
     </div>
   );

@@ -12,6 +12,8 @@ import {
   LogOut,
   Languages,
   Cpu,
+  Database,
+  PackageCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -26,6 +28,8 @@ const NAV_ITEMS = [
   { key: "receiving" as const, path: "receiving", icon: Truck, privilege: PRIVILEGES.RECEIVING_VIEW },
   { key: "inventory" as const, path: "inventory", icon: Boxes, privilege: PRIVILEGES.INVENTORY_VIEW },
   { key: "workOrders" as const, path: "work-orders", icon: ClipboardList, privilege: PRIVILEGES.WORK_ORDERS_VIEW },
+  { key: "shippingNav" as const, path: "shipping", icon: PackageCheck, privilege: PRIVILEGES.SHIPPING_VIEW },
+  { key: "masterData" as const, path: "master-data/contacts", icon: Database, privilege: PRIVILEGES.MASTER_DATA_VIEW },
   { key: "users" as const, path: "users", icon: Users, privilege: PRIVILEGES.USERS_MANAGE },
   { key: "audit" as const, path: "audit", icon: ScrollText, privilege: PRIVILEGES.AUDIT_VIEW },
 ];

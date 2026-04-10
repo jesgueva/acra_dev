@@ -42,6 +42,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.user && data?.access_token) {
+          // Set the Axios header immediately so it is ready before any
+          // child component effects fire in the same React commit.
+          setAuthToken(data.access_token);
           setUser(data.user);
           setToken(data.access_token);
         }
@@ -89,6 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw error;
       }
       const data = await res.json();
+      setAuthToken(data.access_token);
       setUser(data.user);
       setToken(data.access_token);
       setAuthResolved(true);

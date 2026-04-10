@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryLot, InventoryLot as InventoryItem
 from app.models.user import User
 from app.models.work_order import WorkOrder, WorkOrderMaterial
 from tests.conftest import _make_session, _override
@@ -93,12 +93,13 @@ def _make_inv_item(
 ) -> InventoryItem:
     item = InventoryItem()
     item.id = id
-    item.material_type = material_type
-    item.category = "raw"
+    # Keep item_name for the inv_by_type dict key in allocation service
+    item.item_name = material_type
+    item.product_id = None
+    item.status = "in_storage"
     item.quantity_on_hand = qty
-    item.lot_batch_number = lot
+    item.lot_number = lot
     item.storage_location = "RACK-A"
-    item.last_updated = datetime.now(timezone.utc)
     return item
 
 
@@ -169,7 +170,7 @@ async def test_wo_lifecycle_step2_allocate():
 
     def h_wo(r): r.scalar_one_or_none.return_value = wo
     def h_mats(r): r.scalars.return_value.all.return_value = [mat]
-    def h_inv(r): r.scalars.return_value.all.return_value = [inv]
+    def h_inv(r): r.all.return_value = [(inv, "Steel")]
     def h_final(r): r.scalars.return_value.all.return_value = [mat_after]
 
     session = _make_session(
@@ -281,11 +282,12 @@ async def test_wo_lifecycle_step5_complete():
         body = resp.json()
         assert body["status"] == "completed"
 
-        # Verify finished inventory item was written
-        finished = [o for o in added_objects if isinstance(o, InventoryItem) and o.category == "finished"]
+        # Verify finished inventory lot was written
+        finished = [o for o in added_objects if isinstance(o, InventoryLot)]
         assert len(finished) == 1
-        assert finished[0].material_type == "Widget A"
-        assert float(finished[0].quantity_on_hand) == 10.0
+        assert finished[0].lot_number == "WO-0001"
+        assert finished[0].status == "in_storage"
+        assert finished[0].quantity_on_hand == 1000   # 10.0 units × 100
         assert finished[0].storage_location == "FINISHED_GOODS"
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -332,7 +334,7 @@ async def test_wo_lifecycle_allocate_insufficient_stock_returns_409():
 
     def h_wo(r): r.scalar_one_or_none.return_value = wo
     def h_mats(r): r.scalars.return_value.all.return_value = [mat]
-    def h_inv(r): r.scalars.return_value.all.return_value = [inv]
+    def h_inv(r): r.all.return_value = [(inv, "Steel")]
 
     session = _make_session(
         user, ["production_supervisor"], SUPERVISOR_PRIVS,

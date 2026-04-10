@@ -66,12 +66,13 @@ def _make_inv_item(
 ) -> InventoryItem:
     item = InventoryItem()
     item.id = id
-    item.material_type = material_type
-    item.category = "raw"
+    item.product_id = id  # arbitrary; key lookup uses material_type from tuple
     item.quantity_on_hand = qty
-    item.lot_batch_number = lot
+    item.lot_number = lot
+    item.status = "in_storage"
     item.storage_location = "RACK-A"
-    item.last_updated = datetime.now(timezone.utc)
+    # material_type is returned as the second element of the DB tuple
+    item._material_type = material_type
     return item
 
 
@@ -102,7 +103,7 @@ async def test_allocate_success():
 
     def h_wo(r): r.scalar_one_or_none.return_value = wo
     def h_mats(r): r.scalars.return_value.all.return_value = [mat]
-    def h_inv(r): r.scalars.return_value.all.return_value = [inv]
+    def h_inv(r): r.all.return_value = [(inv, "Steel")]
     def h_final(r): r.scalars.return_value.all.return_value = [mat_after]
 
     session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv, h_final])
@@ -150,7 +151,7 @@ async def test_allocate_insufficient_stock_returns_409():
 
     def h_wo(r): r.scalar_one_or_none.return_value = wo
     def h_mats(r): r.scalars.return_value.all.return_value = [mat]
-    def h_inv(r): r.scalars.return_value.all.return_value = [inv]
+    def h_inv(r): r.all.return_value = [(inv, "Steel")]
 
     session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv])
     resp = await _patch_allocate(session)
@@ -170,7 +171,7 @@ async def test_allocate_fifo_consumes_oldest_first():
 
     def h_wo(r): r.scalar_one_or_none.return_value = wo
     def h_mats(r): r.scalars.return_value.all.return_value = [mat]
-    def h_inv(r): r.scalars.return_value.all.return_value = [older, newer]
+    def h_inv(r): r.all.return_value = [(older, "Steel"), (newer, "Steel")]
     def h_final(r): r.scalars.return_value.all.return_value = [mat_after]
 
     session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv, h_final])
@@ -192,7 +193,7 @@ async def test_allocate_spans_multiple_inventory_items():
 
     def h_wo(r): r.scalar_one_or_none.return_value = wo
     def h_mats(r): r.scalars.return_value.all.return_value = [mat]
-    def h_inv(r): r.scalars.return_value.all.return_value = [inv1, inv2]
+    def h_inv(r): r.all.return_value = [(inv1, "Steel"), (inv2, "Steel")]
     def h_final(r): r.scalars.return_value.all.return_value = [mat_after]
 
     session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv, h_final])
@@ -224,7 +225,7 @@ async def test_allocate_multiple_materials_success():
 
     def h_wo(r): r.scalar_one_or_none.return_value = wo
     def h_mats(r): r.scalars.return_value.all.return_value = [mat1, mat2]
-    def h_inv(r): r.scalars.return_value.all.return_value = [inv_steel, inv_rubber]
+    def h_inv(r): r.all.return_value = [(inv_steel, "Steel"), (inv_rubber, "Rubber")]
     def h_final(r): r.scalars.return_value.all.return_value = [mat1_after, mat2_after]
 
     session = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv, h_final])
@@ -277,7 +278,7 @@ async def test_allocation_concurrent_requests_no_double_deduction():
 
     def h_wo(r): r.scalar_one_or_none.return_value = wo_created
     def h_mats(r): r.scalars.return_value.all.return_value = [mat]
-    def h_inv(r): r.scalars.return_value.all.return_value = [inv]
+    def h_inv(r): r.all.return_value = [(inv, "Steel")]
     def h_final(r): r.scalars.return_value.all.return_value = [mat_after]
 
     session1 = _make_session(user, ["company_admin"], PRIVS_ALLOC, [_noop, h_wo, h_mats, h_inv, h_final])

@@ -7,18 +7,12 @@ from jose import JWTError
 
 from app.core.config import settings  # noqa: F401 — ensures .env is loaded early
 
-# ---------------------------------------------------------------------------
-# Structured logging
-# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("acra")
 
-# ---------------------------------------------------------------------------
-# Application
-# ---------------------------------------------------------------------------
 app = FastAPI(
     title="ACRA MES API",
     description="ACRA Integrated Manufacturing Execution System",
@@ -32,10 +26,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ---------------------------------------------------------------------------
-# Global error handlers
-# ---------------------------------------------------------------------------
 
 
 @app.exception_handler(JWTError)
@@ -57,21 +47,23 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
 from app.routers.audit import router as audit_router  # noqa: E402
 from app.routers.auth import router as auth_router  # noqa: E402
+from app.routers.contacts import router as contacts_router  # noqa: E402
 from app.routers.deliveries import router as deliveries_router  # noqa: E402
 from app.routers.inventory import router as inventory_router  # noqa: E402
+from app.routers.products import router as products_router  # noqa: E402
+from app.routers.shipments import router as shipments_router  # noqa: E402
 from app.routers.users import router as users_router  # noqa: E402
 from app.routers.work_orders import router as work_orders_router  # noqa: E402
 
 app.include_router(audit_router)
 app.include_router(auth_router)
+app.include_router(contacts_router)
 app.include_router(deliveries_router)
 app.include_router(inventory_router)
+app.include_router(products_router)
+app.include_router(shipments_router)
 app.include_router(users_router)
 app.include_router(work_orders_router)
 

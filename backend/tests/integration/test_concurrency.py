@@ -14,7 +14,8 @@ from httpx import ASGITransport, AsyncClient
 from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryLot as InventoryItem
+from app.models.product import Product
 from app.models.user import User
 
 BASE_URL = "http://test"
@@ -37,16 +38,23 @@ def _make_user() -> User:
     return u
 
 
+def _make_product() -> Product:
+    p = Product()
+    p.id = 1
+    p.name = "Steel Rod"
+    return p
+
+
 def _make_inventory_item() -> InventoryItem:
     inv = InventoryItem()
     inv.id = 1
-    inv.material_type = "Steel Rod"
-    inv.category = "raw"
-    inv.quantity_on_hand = 100.0
-    inv.lot_batch_number = "LOT-001"
+    inv.product_id = 1
+    inv.lot_number = "LOT-001"
+    inv.status = "in_storage"
+    inv.quantity_on_hand = 10000       # 100.00 units × 100
     inv.storage_location = "RACK-A"
     inv.source_delivery_item_id = None
-    inv.last_updated = datetime(2026, 1, 15, tzinfo=timezone.utc)
+    inv.pallet_number = None
     return inv
 
 
@@ -58,6 +66,7 @@ def _make_per_request_db_override():
     def _fresh_session() -> AsyncMock:
         user = _make_user()
         inv = _make_inventory_item()
+        product = _make_product()
         session = AsyncMock()
         call_no = {"n": 0}
 
@@ -73,10 +82,12 @@ def _make_per_request_db_override():
                 result.fetchall.return_value = [("inventory.view",)]
             elif n == 3:  # service: count
                 result.scalar.return_value = 1
-            elif n == 4:  # service: items
+            elif n == 4:  # service: lots
                 result.scalars.return_value.all.return_value = [inv]
-            else:  # service: alerts
+            elif n == 5:  # service: alerts
                 result.scalars.return_value.all.return_value = []
+            else:  # service: product names
+                result.scalars.return_value.all.return_value = [product]
             return result
 
         session.execute = _execute
@@ -158,7 +169,7 @@ async def test_concurrent_requests_return_valid_bodies():
             assert "results" in body
             assert body["total"] == 1
             assert len(body["results"]) == 1
-            assert body["results"][0]["material_type"] == "Steel Rod"
+            assert body["results"][0]["product_name"] == "Steel Rod"
     finally:
         app.dependency_overrides.pop(get_db, None)
 
