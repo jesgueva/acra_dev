@@ -18,9 +18,12 @@ jest.mock("@/src/contexts/AuthContext", () => ({
   useAuth: jest.fn(),
 }));
 
-jest.mock("@/src/components/brand/AcraLogo", () => () => (
-  <div data-testid="acra-logo">ACRA Logo</div>
-));
+jest.mock("@/src/components/brand/AcraLogo", () => {
+  function AcraLogoMock() {
+    return <div data-testid="acra-logo">ACRA Logo</div>;
+  }
+  return AcraLogoMock;
+});
 
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/src/contexts/AuthContext";
