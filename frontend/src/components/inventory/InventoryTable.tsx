@@ -42,18 +42,15 @@ export function InventoryTable({
   onSplit,
   onViewLog,
 }: InventoryTableProps) {
-  if (items.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground py-4" data-testid="empty-state">
-        No inventory lots found.
-      </p>
-    );
-  }
-
   const columns = isAdmin ? [...BASE_COLUMNS, "Actions"] : BASE_COLUMNS;
 
   return (
-    <DataTable columns={columns} data-testid="inventory-table">
+    <DataTable
+      columns={columns}
+      isEmpty={items.length === 0}
+      emptyMessage="No inventory lots found."
+      data-testid="inventory-table"
+    >
       {items.map((item) => (
         <TableRow
           key={item.id}

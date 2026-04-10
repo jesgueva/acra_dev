@@ -114,7 +114,7 @@ def upgrade():
     op.add_column("low_stock_alerts", sa.Column("product_id", sa.Integer(), nullable=True))
 
     # Drop unique constraint on item_name
-    op.drop_constraint("low_stock_alerts_item_name_key", "low_stock_alerts", type_="unique")
+    op.drop_constraint("low_stock_alerts_material_type_key", "low_stock_alerts", type_="unique")
 
     # Backfill product_id from product name match
     conn.execute(sa.text("""

@@ -2,18 +2,18 @@ import asyncio
 import os
 from logging.config import fileConfig
 
+from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
+
+load_dotenv()
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/acra_db",
-)
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 
 def run_migrations_offline() -> None:
