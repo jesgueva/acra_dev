@@ -1,6 +1,6 @@
 """
-Schema tests for T02 — verifies all 11 tables, seed data, constraints, and indices
-exist after running `alembic upgrade head`.
+Schema tests — verifies core tables, seed data, constraints, and indices exist
+after running `alembic upgrade head`.
 
 Requires a running PostgreSQL database with acra_db created and migrations applied.
 """
@@ -23,7 +23,7 @@ async def conn():
     await connection.close()
 
 
-async def test_all_11_tables_exist(conn):
+async def test_core_tables_exist(conn):
     rows = await conn.fetch(
         """
         SELECT table_name
@@ -36,14 +36,20 @@ async def test_all_11_tables_exist(conn):
         "users",
         "roles",
         "user_role_assignments",
+        "role_privilege_assignments",
+        "contacts",
+        "products",
         "deliveries",
         "delivery_items",
-        "inventory_items",
+        "inventory_lots",
+        "inventory_transactions",
         "work_orders",
         "work_order_materials",
         "material_allocations",
         "audit_logs",
         "low_stock_alerts",
+        "shipments",
+        "shipment_items",
     }
     assert expected.issubset(table_names), (
         f"Missing tables: {expected - table_names}"
@@ -72,14 +78,14 @@ async def test_users_status_check_constraint(conn):
         )
 
 
-async def test_inventory_items_category_check_constraint(conn):
-    """category must be 'raw' or 'finished'."""
+async def test_inventory_lots_status_check_constraint(conn):
+    """status must be one of the allowed inventory_lots values."""
     with pytest.raises(asyncpg.CheckViolationError):
         await conn.execute(
             """
-            INSERT INTO inventory_items
-                (material_type, category, quantity_on_hand, lot_batch_number, storage_location)
-            VALUES ('TestMat', 'bad_category', 0, 'LOT-001', 'A-01')
+            INSERT INTO inventory_lots
+                (lot_number, storage_location, status, quantity_on_hand)
+            VALUES ('LOT-001', 'A-01', 'bad_status', 0)
             """
         )
 

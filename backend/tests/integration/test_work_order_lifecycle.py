@@ -170,7 +170,7 @@ async def test_wo_lifecycle_step2_allocate():
 
     def h_wo(r): r.scalar_one_or_none.return_value = wo
     def h_mats(r): r.scalars.return_value.all.return_value = [mat]
-    def h_inv(r): r.scalars.return_value.all.return_value = [inv]
+    def h_inv(r): r.all.return_value = [(inv, "Steel")]
     def h_final(r): r.scalars.return_value.all.return_value = [mat_after]
 
     session = _make_session(
@@ -334,7 +334,7 @@ async def test_wo_lifecycle_allocate_insufficient_stock_returns_409():
 
     def h_wo(r): r.scalar_one_or_none.return_value = wo
     def h_mats(r): r.scalars.return_value.all.return_value = [mat]
-    def h_inv(r): r.scalars.return_value.all.return_value = [inv]
+    def h_inv(r): r.all.return_value = [(inv, "Steel")]
 
     session = _make_session(
         user, ["production_supervisor"], SUPERVISOR_PRIVS,
