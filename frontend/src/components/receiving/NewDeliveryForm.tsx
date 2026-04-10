@@ -2,45 +2,58 @@
 
 import React, { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { apiClient, getResponseStatus } from "@/src/lib/api-client";
+import { toStore } from "@/src/lib/qty";
 import type { OCRResult } from "./OCRUploader";
 
+interface ContactOption {
+  id: number;
+  name: string;
+  type: string;
+}
+
+interface ProductOption {
+  id: number;
+  name: string;
+  category: string;
+}
+
 interface ItemRow {
-  item_name: string;
+  product_id: number | null;
   description: string;
-  quantity: string;
+  quantity: string;        // display units, e.g. "50.25"
   pallets: string;
   units_per_pallet: string;
 }
 
 const emptyRow = (): ItemRow => ({
-  item_name: "",
+  product_id: null,
   description: "",
   quantity: "",
   pallets: "",
   units_per_pallet: "",
 });
 
-function ocrItemsToRows(items: NonNullable<OCRResult["items"]>): ItemRow[] {
-  return items.map((it) => ({
-    item_name: it.item_name,
-    description: it.description ?? "",
-    quantity: String(it.quantity),
-    pallets: it.pallets != null ? String(it.pallets) : "",
-    units_per_pallet: it.units_per_pallet != null ? String(it.units_per_pallet) : "",
-  }));
-}
-
 function computeLeftover(row: ItemRow): number | null {
   const qty = parseFloat(row.quantity);
   const pallets = parseInt(row.pallets, 10);
   const upm = parseInt(row.units_per_pallet, 10);
   if (isNaN(qty) || isNaN(pallets) || isNaN(upm)) return null;
-  const diff = pallets * upm - qty;
+  const diff = pallets * upm - qty;  // display units
   return diff !== 0 ? diff : null;
 }
 
@@ -59,42 +72,100 @@ export default function NewDeliveryForm({
 }: NewDeliveryFormProps) {
   const t = useTranslations("receiving");
 
-  const [supplier, setSupplier] = useState(initialValues?.supplier ?? "");
-  const [carrier, setCarrier] = useState(initialValues?.carrier ?? "");
+  const [contactId, setContactId] = useState<number | null>(null);
+  const [carrierId, setCarrierId] = useState<number | null>(null);
+  const [supplierLocked, setSupplierLocked] = useState(false);
   const [bolReference, setBolReference] = useState(initialValues?.bol_reference ?? "");
   const [deliveryDate, setDeliveryDate] = useState(initialValues?.delivery_date ?? "");
-  const [items, setItems] = useState<ItemRow[]>(
-    initialValues?.items?.length ? ocrItemsToRows(initialValues.items) : [emptyRow()]
-  );
   const [notes, setNotes] = useState("");
-  const [supplierLocked, setSupplierLocked] = useState(false);
+  const [items, setItems] = useState<ItemRow[]>([emptyRow()]);
   const [showProceedAnyway, setShowProceedAnyway] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
+  const { data: contactsData } = useQuery({
+    queryKey: ["contacts-for-delivery"],
+    queryFn: () =>
+      apiClient
+        .get<{ results: ContactOption[] }>("/contacts?page_size=200")
+        .then((r) => r.data.results),
+  });
+
+  const { data: productsData } = useQuery({
+    queryKey: ["products-for-delivery"],
+    queryFn: () =>
+      apiClient
+        .get<{ results: ProductOption[] }>("/products?page_size=200")
+        .then((r) => r.data.results),
+  });
+
+  const contacts = contactsData ?? [];
+  const products = productsData ?? [];
+  const providers = contacts.filter((c) => c.type === "provider");
+  const carriers = contacts.filter((c) => c.type === "carrier");
+
+  // OCR pre-fill by name matching
   useEffect(() => {
     if (!initialValues) return;
-    if (initialValues.supplier) setSupplier(initialValues.supplier);
-    if (initialValues.carrier) setCarrier(initialValues.carrier);
     if (initialValues.bol_reference) setBolReference(initialValues.bol_reference);
     if (initialValues.delivery_date) setDeliveryDate(initialValues.delivery_date);
-    if (initialValues.items?.length) setItems(ocrItemsToRows(initialValues.items));
-  }, [initialValues]);
 
-  // Auto-detect transfer carrier
+    if (contacts.length > 0) {
+      if (initialValues.supplier) {
+        const match = contacts.find(
+          (c) => c.name.toLowerCase() === initialValues.supplier?.toLowerCase()
+        );
+        if (match) setContactId(match.id);
+      }
+      if (initialValues.carrier) {
+        const match = contacts.find(
+          (c) => c.name.toLowerCase() === initialValues.carrier?.toLowerCase()
+        );
+        if (match) setCarrierId(match.id);
+      }
+    }
+
+    if (initialValues.items?.length && products.length > 0) {
+      setItems(
+        initialValues.items.map((it) => {
+          const match = products.find(
+            (p) => p.name.toLowerCase() === it.item_name?.toLowerCase()
+          );
+          return {
+            product_id: match?.id ?? null,
+            description: it.description ?? "",
+            quantity: it.quantity != null ? String(it.quantity) : "",
+            pallets: it.pallets != null ? String(it.pallets) : "",
+            units_per_pallet: it.units_per_pallet != null ? String(it.units_per_pallet) : "",
+          };
+        })
+      );
+    }
+  }, [initialValues, contacts, products]);
+
+  // Transfer detection: carrier name matches /transfer/i → lock to "Internal" provider
   useEffect(() => {
-    if (TRANSFER_RE.test(carrier)) {
-      setSupplier("Internal");
+    if (carrierId == null) {
+      setSupplierLocked(false);
+      return;
+    }
+    const carrierContact = contacts.find((c) => c.id === carrierId);
+    if (carrierContact && TRANSFER_RE.test(carrierContact.name)) {
+      const internal = contacts.find(
+        (c) => c.name.toLowerCase() === "internal" && c.type === "provider"
+      );
+      if (internal) setContactId(internal.id);
       setSupplierLocked(true);
     } else {
       setSupplierLocked(false);
     }
-  }, [carrier]);
+  }, [carrierId, contacts]);
 
   function isHighlighted(field: string) {
     return ocrHighlightedFields.includes(field);
   }
 
-  function updateItem(index: number, field: keyof ItemRow, value: string) {
+  function updateItem(index: number, field: keyof ItemRow, value: string | number | null) {
     setItems((prev) =>
       prev.map((row, i) => (i === index ? { ...row, [field]: value } : row))
     );
@@ -109,20 +180,26 @@ export default function NewDeliveryForm({
   }
 
   async function submitDelivery(force = false) {
+    const missingProduct = items.some((row) => row.product_id == null);
+    if (missingProduct) {
+      setValidationError(t("productRequired"));
+      return;
+    }
+    setValidationError(null);
     setLoading(true);
     setShowProceedAnyway(false);
     try {
       await apiClient.post("/deliveries", {
-        supplier,
-        carrier,
+        contact_id: contactId,
+        carrier_id: carrierId,
         bol_reference: bolReference,
         delivery_date: deliveryDate,
         notes: notes || undefined,
         force,
         items: items.map((row) => ({
-          item_name: row.item_name,
+          product_id: row.product_id,
           description: row.description || undefined,
-          quantity: Number(row.quantity),
+          quantity: toStore(parseFloat(row.quantity)),
           pallets: row.pallets ? Number(row.pallets) : undefined,
           units_per_pallet: row.units_per_pallet ? Number(row.units_per_pallet) : undefined,
         })),
@@ -130,10 +207,11 @@ export default function NewDeliveryForm({
       onSuccess();
       setNotes("");
       setItems([emptyRow()]);
-      setCarrier("");
-      setSupplier("");
+      setCarrierId(null);
+      setContactId(null);
       setBolReference("");
       setDeliveryDate("");
+      setSupplierLocked(false);
     } catch (err: unknown) {
       if (getResponseStatus(err) === 409) {
         setShowProceedAnyway(true);
@@ -152,35 +230,62 @@ export default function NewDeliveryForm({
     <form onSubmit={handleSubmit} className="space-y-5">
       {/* Header fields */}
       <div className="grid grid-cols-2 gap-3">
+        {/* Carrier select */}
         <div className="space-y-1.5">
-          <Label htmlFor="carrier">{t("carrier")}</Label>
-          <Input
-            id="carrier"
-            value={carrier}
-            onChange={(e) => setCarrier(e.target.value)}
-            className={isHighlighted("carrier") ? "border-yellow-400 bg-yellow-50/10" : ""}
-            required
-          />
+          <Label>{t("carrier")}</Label>
+          <Select
+            value={carrierId?.toString() ?? ""}
+            onValueChange={(v) => setCarrierId(v ? Number(v) : null)}
+          >
+            <SelectTrigger
+              className={isHighlighted("carrier") ? "border-yellow-400 bg-yellow-50/10" : ""}
+            >
+              <SelectValue placeholder={t("selectCarrier")} />
+            </SelectTrigger>
+            <SelectContent>
+              {carriers.map((c) => (
+                <SelectItem key={c.id} value={c.id.toString()}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
+
+        {/* Supplier / provider select */}
         <div className="space-y-1.5">
-          <Label htmlFor="supplier">
+          <Label>
             {t("supplier")}
             {supplierLocked && (
-              <span className="ml-2 text-xs text-muted-foreground">({t("internalSupplier")})</span>
+              <span className="ml-2 text-xs text-muted-foreground">
+                ({t("internalSupplier")})
+              </span>
             )}
           </Label>
-          <Input
-            id="supplier"
-            value={supplier}
-            onChange={(e) => !supplierLocked && setSupplier(e.target.value)}
-            readOnly={supplierLocked}
-            className={[
-              isHighlighted("supplier") ? "border-yellow-400 bg-yellow-50/10" : "",
-              supplierLocked ? "opacity-60 cursor-not-allowed" : "",
-            ].join(" ")}
-            required
-          />
+          <Select
+            value={contactId?.toString() ?? ""}
+            onValueChange={(v) => !supplierLocked && setContactId(v ? Number(v) : null)}
+            disabled={supplierLocked}
+          >
+            <SelectTrigger
+              className={[
+                isHighlighted("supplier") ? "border-yellow-400 bg-yellow-50/10" : "",
+                supplierLocked ? "opacity-60" : "",
+              ].join(" ")}
+            >
+              <SelectValue placeholder={t("selectProvider")} />
+            </SelectTrigger>
+            <SelectContent>
+              {providers.map((c) => (
+                <SelectItem key={c.id} value={c.id.toString()}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
+
+        {/* BOL reference */}
         <div className="space-y-1.5">
           <Label htmlFor="bol_reference">{t("bolNumber")}</Label>
           <Input
@@ -193,12 +298,9 @@ export default function NewDeliveryForm({
             className={isHighlighted("bol_reference") ? "border-yellow-400 bg-yellow-50/10" : ""}
             required
           />
-          {showProceedAnyway && (
-            <p className="text-sm text-destructive" role="alert">
-              {t("bolDuplicate")}
-            </p>
-          )}
         </div>
+
+        {/* Delivery date */}
         <div className="space-y-1.5">
           <Label htmlFor="delivery_date">{t("deliveryDate")}</Label>
           <Input
@@ -233,18 +335,33 @@ export default function NewDeliveryForm({
           const leftover = computeLeftover(row);
           return (
             <div key={index} className="rounded-md border p-3 space-y-2">
+              {/* Product select + description */}
               <div className="grid grid-cols-[1fr_1fr] gap-2">
                 <div className="space-y-1">
-                  <Label htmlFor={`item_name_${index}`}>{t("itemName")}</Label>
-                  <Input
-                    id={`item_name_${index}`}
-                    value={row.item_name}
-                    onChange={(e) => updateItem(index, "item_name", e.target.value)}
-                    className={
-                      isHighlighted(`items.${index}.item_name`) ? "border-yellow-400 bg-yellow-50/10" : ""
+                  <Label>{t("product")}</Label>
+                  <Select
+                    value={row.product_id?.toString() ?? ""}
+                    onValueChange={(v) =>
+                      updateItem(index, "product_id", v ? Number(v) : null)
                     }
-                    required
-                  />
+                  >
+                    <SelectTrigger
+                      className={
+                        isHighlighted(`items.${index}.product_id`)
+                          ? "border-yellow-400 bg-yellow-50/10"
+                          : ""
+                      }
+                    >
+                      <SelectValue placeholder={t("selectProduct")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {products.map((p) => (
+                        <SelectItem key={p.id} value={p.id.toString()}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor={`description_${index}`}>{t("description")}</Label>
@@ -253,11 +370,15 @@ export default function NewDeliveryForm({
                     value={row.description}
                     onChange={(e) => updateItem(index, "description", e.target.value)}
                     className={
-                      isHighlighted(`items.${index}.description`) ? "border-yellow-400 bg-yellow-50/10" : ""
+                      isHighlighted(`items.${index}.description`)
+                        ? "border-yellow-400 bg-yellow-50/10"
+                        : ""
                     }
                   />
                 </div>
               </div>
+
+              {/* Quantity, pallets, u/pallet, leftover, remove */}
               <div className="grid grid-cols-[100px_80px_80px_1fr_auto] gap-2 items-end">
                 <div className="space-y-1">
                   <Label htmlFor={`quantity_${index}`}>{t("quantity")}</Label>
@@ -265,7 +386,7 @@ export default function NewDeliveryForm({
                     id={`quantity_${index}`}
                     type="number"
                     min="0"
-                    step="any"
+                    step="0.01"
                     value={row.quantity}
                     onChange={(e) => updateItem(index, "quantity", e.target.value)}
                     required
@@ -300,7 +421,9 @@ export default function NewDeliveryForm({
                         : "border-border text-muted-foreground"
                     }`}
                   >
-                    {leftover != null ? `${leftover > 0 ? "+" : ""}${leftover.toFixed(3)}` : "—"}
+                    {leftover != null
+                      ? `${leftover > 0 ? "+" : ""}${leftover.toFixed(2)}`
+                      : "—"}
                   </div>
                 </div>
                 {items.length > 1 && (
@@ -324,15 +447,20 @@ export default function NewDeliveryForm({
       {/* Notes */}
       <div className="space-y-1.5">
         <Label htmlFor="notes">{t("notes")}</Label>
-        <textarea
+        <Textarea
           id="notes"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           rows={3}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
           placeholder={t("notesPlaceholder")}
         />
       </div>
+
+      {validationError && (
+        <Alert variant="destructive">
+          <AlertDescription>{validationError}</AlertDescription>
+        </Alert>
+      )}
 
       <div className="flex items-center gap-3">
         <Button type="button" variant="outline" onClick={addItem}>

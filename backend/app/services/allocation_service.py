@@ -6,7 +6,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryLot
+from app.models.product import Product
 from app.models.work_order import MaterialAllocation, WorkOrder, WorkOrderMaterial
 from app.schemas.work_order import WorkOrderResponse
 from app.services.work_order_service import _fetch_materials, _wo_response
@@ -17,16 +18,7 @@ async def allocate_materials(
     wo_id: int,
     user_id: int,
 ) -> WorkOrderResponse:
-    """
-    FIFO pessimistic-locking allocation algorithm (LLD Section 4.1).
-
-    1. SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
-    2. Lock work order FOR UPDATE
-    3. Batch-fetch all raw inventory FOR UPDATE, grouped by material_type, FIFO ordered
-    4. Deduct FIFO per material, INSERT material_allocations
-    5. SET work_order.status = 'materials_allocated'
-    6. COMMIT
-    """
+    """FIFO pessimistic-locking allocation under SERIALIZABLE isolation."""
     await db.execute(text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
 
     res = await db.execute(
@@ -58,17 +50,18 @@ async def allocate_materials(
     inv_by_type: dict[str, list] = defaultdict(list)
     if needed_types:
         inv_res = await db.execute(
-            select(InventoryItem)
+            select(InventoryLot, Product.name)
+            .join(Product, InventoryLot.product_id == Product.id)
             .where(
-                InventoryItem.item_name.in_(needed_types),
-                InventoryItem.category == "raw",
-                InventoryItem.quantity_on_hand > 0,
+                Product.name.in_(needed_types),
+                InventoryLot.status == "in_storage",
+                InventoryLot.quantity_on_hand > 0,
             )
-            .order_by(InventoryItem.item_name, InventoryItem.last_updated.asc())
+            .order_by(Product.name, InventoryLot.id.asc())
             .with_for_update()
         )
-        for item in inv_res.scalars().all():
-            inv_by_type[item.item_name].append(item)
+        for lot, product_name in inv_res.all():
+            inv_by_type[product_name].append(lot)
 
     now = datetime.now(timezone.utc)
 
@@ -94,12 +87,12 @@ async def allocate_materials(
                 break
             qty_taken = min(remaining, float(inv_item.quantity_on_hand))
             inv_item.quantity_on_hand = float(inv_item.quantity_on_hand) - qty_taken
-            inv_item.last_updated = now
+            lot_number = getattr(inv_item, "lot_number", None) or getattr(inv_item, "lot_batch_number", None) or ""
             db.add(
                 MaterialAllocation(
                     work_order_material_id=mat.id,
                     inventory_id=inv_item.id,
-                    lot_batch_number=inv_item.lot_batch_number,
+                    lot_batch_number=lot_number,
                     quantity_allocated=qty_taken,
                     allocated_at=now,
                 )

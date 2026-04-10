@@ -1,82 +1,71 @@
-export interface InventoryItem {
+export interface InventoryLot {
   id: number;
-  item_name: string;
-  category: string;
-  lot_batch_number: string | null;
-  quantity_on_hand: number;
+  product_id: number | null;
+  product_name: string | null;
+  lot_number: string | null;
   storage_location: string | null;
-  last_updated: string;
+  status: string;
+  quantity_on_hand: number;   // integer ×100
+  source_delivery_item_id: number | null;
+  pallet_number: number | null;
   is_triggered: boolean;
 }
 
+/** @deprecated Use InventoryLot */
+export type InventoryItem = InventoryLot;
+
 export interface InventoryListResponse {
-  results: InventoryItem[];
+  results: InventoryLot[];
   total: number;
   page: number;
   page_size: number;
 }
 
+export interface InventoryTransaction {
+  id: number;
+  lot_id: number;
+  transaction_type: string;
+  quantity: number;           // integer ×100
+  reference_type: string | null;
+  reference_id: number | null;
+  reason: string | null;
+  created_by: number | null;
+  created_at: string;
+}
+
 export interface FilterState {
-  category: string;
-  itemName: string;
-  storageLocation: string;
-  dateFrom: string;
-  dateTo: string;
+  status: string;
+  search: string;
 }
 
 export const DEFAULT_FILTERS: FilterState = {
-  category: "",
-  itemName: "",
-  storageLocation: "",
-  dateFrom: "",
-  dateTo: "",
+  status: "",
+  search: "",
 };
 
-export function filtersToParams(filters: FilterState): URLSearchParams {
+export function filtersToParams(filters: FilterState, page?: number, pageSize?: number): URLSearchParams {
   const p = new URLSearchParams();
-  if (filters.category) p.set("category", filters.category);
-  if (filters.itemName) p.set("item_name", filters.itemName);
-  if (filters.storageLocation) p.set("storage_location", filters.storageLocation);
+  if (filters.status) p.set("status", filters.status);
+  if (filters.search) p.set("search", filters.search);
+  if (page != null) p.set("page", String(page));
+  if (pageSize != null) p.set("page_size", String(pageSize));
   return p;
 }
 
-function toComparableDate(value: string) {
-  return new Date(value).toISOString().slice(0, 10);
-}
-
-export function filterItemsByDateRange(
-  items: InventoryItem[],
-  dateFrom: string,
-  dateTo: string
-) {
-  return items.filter((item) => {
-    const itemDate = toComparableDate(item.last_updated);
-
-    if (dateFrom && itemDate < dateFrom) {
-      return false;
-    }
-
-    if (dateTo && itemDate > dateTo) {
-      return false;
-    }
-
-    return true;
-  });
-}
-
 export interface TraceabilityData {
-  lot_batch_number: string;
+  lot_number: string;
   source_delivery: {
     delivery_id: number;
-    supplier: string;
-    carrier: string;
+    contact_id: number | null;
+    carrier_id: number | null;
     delivery_date: string;
     bol_reference: string;
   } | null;
-  inventory_items: Array<{
+  lots: Array<{
     id: number;
-    item_name: string;
-    category: string;
+    product_id: number | null;
+    product_name: string | null;
+    status: string;
     quantity_on_hand: number;
     storage_location: string | null;
   }>;

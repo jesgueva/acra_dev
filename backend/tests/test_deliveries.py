@@ -1,6 +1,6 @@
 """
-Tests for T07 — Receiving API.
-Expected: 9 passed, 0 failed (includes force=True scenario and transfer-carrier coercion).
+Tests for T07 — Receiving API (Phase 2: FK refactor).
+Expected: 9 passed, 0 failed.
 All tests run without a live database connection.
 """
 from collections import defaultdict
@@ -26,16 +26,16 @@ from tests.conftest import _make_rbac_session, _override
 BASE_URL = "http://test"
 
 _VALID_ITEM = {
-    "item_name": "Steel Rod",
+    "product_id": 1,
     "description": "Grade A steel",
-    "quantity": 50.0,
+    "quantity": 5000,   # 50.00 units ×100
     "pallets": 2,
     "units_per_pallet": 25,
 }
 
 _VALID_BODY = {
-    "supplier": "Acme Metals",
-    "carrier": "Fast Freight",
+    "contact_id": 1,
+    "carrier_id": 2,
     "delivery_date": "2026-01-15",
     "bol_reference": "BOL-2026-001",
     "items": [_VALID_ITEM],
@@ -47,12 +47,43 @@ _VALID_BODY = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _make_carrier_contact(name="Fast Freight", contact_id=2):
+    from app.models.contact import Contact
+    c = Contact()
+    c.id = contact_id
+    c.name = name
+    c.type = "carrier"
+    return c
 
-def _make_flush(added, delivery_id=1, item_base=10, inv_base=100, created_at=None):
+
+def _make_provider_contact(name="Acme Metals", contact_id=1):
+    from app.models.contact import Contact
+    c = Contact()
+    c.id = contact_id
+    c.name = name
+    c.type = "provider"
+    return c
+
+
+def _make_product(name="Steel Rod", product_id=1, category="raw"):
+    from app.models.product import Product
+    p = Product()
+    p.id = product_id
+    p.name = name
+    p.category = category
+    return p
+
+
+def _make_flush(added, delivery_id=1, item_base=10, inv_base=100, contact_id_base=50, created_at=None):
     """Return a flush coroutine that assigns DB-generated IDs to added objects."""
     _dt = created_at or datetime(2026, 1, 15, tzinfo=timezone.utc)
+    _contact_counter = [contact_id_base]
 
     async def _flush():
+        for contact in added.get("contacts", []):
+            if contact.id is None:
+                contact.id = _contact_counter[0]
+                _contact_counter[0] += 1
         for d in added.get("deliveries", []):
             if d.id is None:
                 d.id = delivery_id
@@ -60,32 +91,59 @@ def _make_flush(added, delivery_id=1, item_base=10, inv_base=100, created_at=Non
         for idx, item in enumerate(added.get("delivery_items", [])):
             if item.id is None:
                 item.id = item_base + idx
-        for idx, inv in enumerate(added.get("inventory_items", [])):
-            if inv.id is None:
-                inv.id = inv_base + idx
+        for key in ("inventory_lots", "inventory_items"):
+            for idx, inv in enumerate(added.get(key, [])):
+                if inv.id is None:
+                    inv.id = inv_base + idx
 
     return _flush
+
+
+def _make_seq_session(handlers, added, flush_fn=None):
+    """Build a mock session with sequential execute handlers."""
+    session = AsyncMock()
+    call_no = {"n": 0}
+
+    async def _execute(query, *args, **kwargs):
+        result = MagicMock()
+        n = call_no["n"]
+        call_no["n"] += 1
+        if n < len(handlers):
+            handlers[n](result)
+        return result
+
+    session.execute = _execute
+    session.add = MagicMock(
+        side_effect=lambda obj: added[obj.__class__.__tablename__].append(obj)
+    )
+    session.flush = flush_fn or AsyncMock()
+    session.commit = AsyncMock()
+    return session
 
 
 def _make_mock_delivery_response():
     return DeliveryResponse(
         id=1,
-        supplier="Acme Metals",
-        carrier="Fast Freight",
+        contact_id=1,
+        contact_name="Acme Metals",
+        carrier_id=2,
+        carrier_name="Fast Freight",
         delivery_date="2026-01-15",
         bol_reference="BOL-2026-001",
+        notes=None,
         created_by=1,
         created_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         items=[
             DeliveryItemResponse(
                 id=10,
-                item_name="Steel Rod",
+                product_id=1,
+                product_name="Steel Rod",
                 description="Grade A steel",
-                quantity=50.0,
+                quantity=5000,
                 pallets=2,
                 units_per_pallet=25,
                 leftover=None,
-                inventory_item_id=100,
+                inventory_lot_id=100,
             )
         ],
     )
@@ -117,7 +175,7 @@ async def test_create_delivery_returns_201():
             assert body["id"] == 1
             assert body["bol_reference"] == "BOL-2026-001"
             assert len(body["items"]) == 1
-            assert body["items"][0]["inventory_item_id"] == 100
+            assert body["items"][0]["inventory_lot_id"] == 100
         finally:
             app.dependency_overrides.pop(get_db, None)
 
@@ -183,26 +241,53 @@ async def test_list_deliveries_no_auth_returns_401():
 async def test_service_create_delivery_atomic():
     from app.services.delivery_service import create_delivery
 
-    session = AsyncMock()
-    bol_result = MagicMock()
-    bol_result.scalar_one_or_none.return_value = None
-    session.execute = AsyncMock(return_value=bol_result)
-
     added = defaultdict(list)
-    session.add = MagicMock(side_effect=lambda obj: added[obj.__class__.__tablename__].append(obj))
+    product = _make_product()
+    provider = _make_provider_contact()
+    carrier = _make_carrier_contact()
+
+    def _fix_handlers(n, result):
+        if n == 0:
+            result.scalar_one_or_none.return_value = None
+        elif n == 1:
+            result.scalar_one_or_none.return_value = carrier
+        elif n == 2:
+            scalars_mock = MagicMock()
+            scalars_mock.all.return_value = [product]
+            result.scalars.return_value = scalars_mock
+        elif n == 3:
+            # batch contact lookup after commit (provider + carrier)
+            scalars_mock = MagicMock()
+            scalars_mock.all.return_value = [provider, carrier]
+            result.scalars.return_value = scalars_mock
+
+    session = AsyncMock()
+    call_no = {"n": 0}
+
+    async def _execute(query, *a, **kw):
+        result = MagicMock()
+        n = call_no["n"]
+        call_no["n"] += 1
+        _fix_handlers(n, result)
+        return result
+
+    session.execute = _execute
+    session.add = MagicMock(
+        side_effect=lambda obj: added[obj.__class__.__tablename__].append(obj)
+    )
     session.flush = _make_flush(added, delivery_id=1, item_base=10, inv_base=100)
     session.commit = AsyncMock()
 
     body = DeliveryCreate(
-        supplier="Acme Metals",
-        carrier="Fast Freight",
+        contact_id=1,
+        carrier_id=2,
         delivery_date="2026-01-15",
         bol_reference="BOL-2026-001",
         items=[
             DeliveryItemCreate(
-                item_name="Steel Rod",
+                product_id=1,
                 description="Grade A steel",
-                quantity=50.0,
+                quantity=5000,
                 pallets=2,
                 units_per_pallet=25,
             )
@@ -220,13 +305,19 @@ async def test_service_create_delivery_atomic():
 
     assert result.id == 1
     assert result.bol_reference == "BOL-2026-001"
+    assert result.contact_id == 1
+    assert result.carrier_id == 2
+    assert result.contact_name == "Acme Metals"
+    assert result.carrier_name == "Fast Freight"
     assert len(result.items) == 1
     assert result.items[0].id == 10
-    assert result.items[0].inventory_item_id == 100
+    assert result.items[0].product_id == 1
+    assert result.items[0].quantity == 5000
+    assert result.items[0].inventory_lot_id == 100
     assert session.commit.called
     assert len(added["deliveries"]) == 1
     assert len(added["delivery_items"]) == 1
-    assert len(added["inventory_items"]) == 1
+    assert len(added["inventory_lots"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -248,11 +339,11 @@ async def test_service_duplicate_bol_raises_409():
     session.execute = AsyncMock(return_value=bol_result)
 
     body = DeliveryCreate(
-        supplier="Acme",
-        carrier="Freight Co",
+        contact_id=1,
+        carrier_id=2,
         delivery_date="2026-01-15",
         bol_reference="BOL-2026-001",
-        items=[DeliveryItemCreate(item_name="Steel", quantity=1.0)],
+        items=[DeliveryItemCreate(product_id=1, quantity=1000)],
         force=False,
     )
     user = TokenUser(
@@ -275,17 +366,43 @@ async def test_service_force_true_overrides_duplicate():
     from app.services.delivery_service import create_delivery
     from app.models.delivery import Delivery
 
-    existing = Delivery()
-    existing.id = 99
-    existing.bol_reference = "BOL-DUP"
-
-    session = AsyncMock()
-    bol_result = MagicMock()
-    bol_result.scalar_one_or_none.return_value = existing
-    session.execute = AsyncMock(return_value=bol_result)
+    existing_delivery = Delivery()
+    existing_delivery.id = 99
+    existing_delivery.bol_reference = "BOL-DUP"
 
     added = defaultdict(list)
-    session.add = MagicMock(side_effect=lambda obj: added[obj.__class__.__tablename__].append(obj))
+    product = _make_product()
+    provider = _make_provider_contact(name="Acme", contact_id=1)
+    carrier = _make_carrier_contact(name="Freight Co", contact_id=2)
+
+    def _fix_handlers(n, result):
+        if n == 0:
+            result.scalar_one_or_none.return_value = existing_delivery  # exists but force=True
+        elif n == 1:
+            result.scalar_one_or_none.return_value = carrier
+        elif n == 2:
+            scalars_mock = MagicMock()
+            scalars_mock.all.return_value = [product]
+            result.scalars.return_value = scalars_mock
+        elif n == 3:
+            result.scalar_one_or_none.return_value = provider
+        elif n == 4:
+            result.scalar_one_or_none.return_value = carrier
+
+    session = AsyncMock()
+    call_no = {"n": 0}
+
+    async def _execute(query, *a, **kw):
+        result = MagicMock()
+        n = call_no["n"]
+        call_no["n"] += 1
+        _fix_handlers(n, result)
+        return result
+
+    session.execute = _execute
+    session.add = MagicMock(
+        side_effect=lambda obj: added[obj.__class__.__tablename__].append(obj)
+    )
     session.flush = _make_flush(
         added, delivery_id=2, item_base=20, inv_base=200,
         created_at=datetime(2026, 1, 20, tzinfo=timezone.utc),
@@ -293,11 +410,11 @@ async def test_service_force_true_overrides_duplicate():
     session.commit = AsyncMock()
 
     body = DeliveryCreate(
-        supplier="Acme",
-        carrier="Freight Co",
+        contact_id=1,
+        carrier_id=2,
         delivery_date="2026-01-20",
         bol_reference="BOL-DUP",
-        items=[DeliveryItemCreate(item_name="Steel", quantity=10.0)],
+        items=[DeliveryItemCreate(product_id=1, quantity=1000)],
         force=True,
     )
     user = TokenUser(
@@ -322,8 +439,8 @@ async def test_service_list_deliveries_returns_paginated():
 
     mock_delivery = Delivery()
     mock_delivery.id = 1
-    mock_delivery.supplier = "Acme Metals"
-    mock_delivery.carrier = "Fast Freight"
+    mock_delivery.contact_id = None
+    mock_delivery.carrier_id = None
     mock_delivery.delivery_date = "2026-01-15"
     mock_delivery.bol_reference = "BOL-2026-001"
     mock_delivery.notes = None
@@ -333,13 +450,13 @@ async def test_service_list_deliveries_returns_paginated():
     mock_item = DeliveryItemModel()
     mock_item.id = 10
     mock_item.delivery_id = 1
-    mock_item.item_name = "Steel Rod"
+    mock_item.product_id = None
     mock_item.description = "Grade A steel"
-    mock_item.quantity = 50.0
+    mock_item.quantity = 5000
     mock_item.pallets = 2
     mock_item.units_per_pallet = 25
     mock_item.leftover = None
-    mock_item.inventory_item_id = 100
+    mock_item.inventory_lot_id = 100
 
     session = AsyncMock()
     call_no = {"n": 0}
@@ -368,33 +485,72 @@ async def test_service_list_deliveries_returns_paginated():
     assert result.page == 1
     assert len(result.results) == 1
     assert result.results[0].bol_reference == "BOL-2026-001"
+    assert result.results[0].contact_name is None
+    assert result.results[0].carrier_name is None
     assert len(result.results[0].items) == 1
-    assert result.results[0].items[0].inventory_item_id == 100
+    assert result.results[0].items[0].inventory_lot_id == 100
 
 
 # ---------------------------------------------------------------------------
-# Service Test 9 — transfer carrier auto-coerces supplier to "Internal"
+# Service Test 9 — transfer carrier auto-creates Internal provider contact
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_service_transfer_carrier_sets_internal_supplier():
     from app.services.delivery_service import create_delivery
 
-    session = AsyncMock()
-    bol_result = MagicMock()
-    bol_result.scalar_one_or_none.return_value = None
-    session.execute = AsyncMock(return_value=bol_result)
-
     added = defaultdict(list)
-    session.add = MagicMock(side_effect=lambda obj: added[obj.__class__.__tablename__].append(obj))
-    session.flush = _make_flush(added, delivery_id=5, item_base=50, inv_base=500)
+    transfer_carrier = _make_carrier_contact(name="TRANSFERENCIA", contact_id=2)
+    product = _make_product(name="BOX-A")
+
+    def _fix_handlers(n, result):
+        if n == 0:
+            # BOL check → no duplicate
+            result.scalar_one_or_none.return_value = None
+        elif n == 1:
+            # carrier Contact lookup → transfer carrier
+            result.scalar_one_or_none.return_value = transfer_carrier
+        elif n == 2:
+            # Internal contact lookup → not found → will be created
+            result.scalar_one_or_none.return_value = None
+        elif n == 3:
+            # products batch query
+            scalars_mock = MagicMock()
+            scalars_mock.all.return_value = [product]
+            result.scalars.return_value = scalars_mock
+        elif n == 4:
+            # batch contact lookup after commit (internal contact + transfer carrier)
+            from app.models.contact import Contact
+            internal_contact = Contact()
+            internal_contact.id = 50
+            internal_contact.name = "Internal"
+            internal_contact.type = "provider"
+            scalars_mock = MagicMock()
+            scalars_mock.all.return_value = [internal_contact, transfer_carrier]
+            result.scalars.return_value = scalars_mock
+
+    session = AsyncMock()
+    call_no = {"n": 0}
+
+    async def _execute(query, *a, **kw):
+        result = MagicMock()
+        n = call_no["n"]
+        call_no["n"] += 1
+        _fix_handlers(n, result)
+        return result
+
+    session.execute = _execute
+    session.add = MagicMock(
+        side_effect=lambda obj: added[obj.__class__.__tablename__].append(obj)
+    )
+    session.flush = _make_flush(added, delivery_id=5, item_base=50, inv_base=500, contact_id_base=50)
     session.commit = AsyncMock()
 
     body = DeliveryCreate(
-        supplier="EACRAPACK",
-        carrier="TRANSFERENCIA",
+        contact_id=1,
+        carrier_id=2,
         delivery_date="2026-01-15",
         bol_reference="TRANSFER-001",
-        items=[DeliveryItemCreate(item_name="BOX-A", quantity=10.0)],
+        items=[DeliveryItemCreate(product_id=1, quantity=1000)],
     )
     user = TokenUser(
         user_id=1, full_name="Clerk", roles=[], preferred_language="en",
@@ -403,6 +559,9 @@ async def test_service_transfer_carrier_sets_internal_supplier():
 
     result = await create_delivery(body, user, session)
 
-    assert result.supplier == "Internal"
-    assert result.carrier == "TRANSFERENCIA"
+    assert result.contact_name == "Internal"
+    assert result.carrier_name == "TRANSFERENCIA"
     assert result.id == 5
+    # Internal contact should have been created and added
+    assert len(added["contacts"]) == 1
+    assert added["contacts"][0].name == "Internal"

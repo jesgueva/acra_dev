@@ -3,6 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { DEFAULT_FILTERS, FilterState } from "./types";
 
 interface FilterPanelProps {
@@ -10,23 +17,24 @@ interface FilterPanelProps {
   onChange: (filters: FilterState) => void;
 }
 
-const CATEGORIES = ["", "raw", "finished"];
+const ALL_SENTINEL = "__all__";
+
+const STATUSES = [
+  { value: ALL_SENTINEL, label: "All" },
+  { value: "in_storage", label: "In Storage" },
+  { value: "in_production", label: "In Production" },
+  { value: "shipped", label: "Shipped" },
+  { value: "consumed", label: "Consumed" },
+];
 
 export function FilterPanel({ filters, onChange }: FilterPanelProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [itemName, setItemName] = useState(filters.itemName);
-  const [storageLocation, setStorageLocation] = useState(filters.storageLocation);
+  const [search, setSearch] = useState(filters.search);
+  const [prevSearch, setPrevSearch] = useState(filters.search);
 
-  const [prevItemName, setPrevItemName] = useState(filters.itemName);
-  const [prevStorageLocation, setPrevStorageLocation] = useState(filters.storageLocation);
-
-  if (prevItemName !== filters.itemName) {
-    setPrevItemName(filters.itemName);
-    setItemName(filters.itemName);
-  }
-  if (prevStorageLocation !== filters.storageLocation) {
-    setPrevStorageLocation(filters.storageLocation);
-    setStorageLocation(filters.storageLocation);
+  if (prevSearch !== filters.search) {
+    setPrevSearch(filters.search);
+    setSearch(filters.search);
   }
 
   useEffect(() => {
@@ -36,10 +44,11 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
   }, []);
 
   const handleSearchChange = useCallback(
-    (field: "itemName" | "storageLocation", value: string) => {
+    (value: string) => {
+      setSearch(value);
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
-        onChange({ ...filters, [field]: value });
+        onChange({ ...filters, search: value });
       }, 300);
     },
     [filters, onChange]
@@ -52,56 +61,30 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
 
   return (
     <div className="flex flex-wrap gap-3 items-end">
-      <div className="flex gap-1">
-        {CATEGORIES.map((cat) => (
-          <Button
-            key={cat || "all"}
-            variant={filters.category === cat ? "default" : "outline"}
-            size="sm"
-            onClick={() => onChange({ ...filters, category: cat })}
-            data-testid={`category-${cat || "all"}`}
-          >
-            {cat || "All"}
-          </Button>
-        ))}
-      </div>
+      <Select
+        value={filters.status === "" ? ALL_SENTINEL : filters.status}
+        onValueChange={(value) =>
+          onChange({ ...filters, status: value === ALL_SENTINEL ? "" : value })
+        }
+      >
+        <SelectTrigger className="w-44" data-testid="status-select">
+          <SelectValue placeholder="All statuses" />
+        </SelectTrigger>
+        <SelectContent>
+          {STATUSES.map(({ value, label }) => (
+            <SelectItem key={value} value={value}>
+              {label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       <Input
-        placeholder="Search item..."
-        value={itemName}
-        onChange={(e) => {
-          setItemName(e.target.value);
-          handleSearchChange("itemName", e.target.value);
-        }}
-        className="w-56"
-        data-testid="material-search-input"
-      />
-
-      <Input
-        placeholder="Search location..."
-        value={storageLocation}
-        onChange={(e) => {
-          setStorageLocation(e.target.value);
-          handleSearchChange("storageLocation", e.target.value);
-        }}
-        className="w-48"
-        data-testid="location-search-input"
-      />
-
-      <Input
-        type="date"
-        value={filters.dateFrom}
-        onChange={(e) => onChange({ ...filters, dateFrom: e.target.value })}
-        className="w-40"
-        data-testid="date-from"
-      />
-      <span className="text-sm text-muted-foreground self-center">to</span>
-      <Input
-        type="date"
-        value={filters.dateTo}
-        onChange={(e) => onChange({ ...filters, dateTo: e.target.value })}
-        className="w-40"
-        data-testid="date-to"
+        placeholder="Search product or location…"
+        value={search}
+        onChange={(e) => handleSearchChange(e.target.value)}
+        className="w-72"
+        data-testid="search-input"
       />
 
       <Button variant="ghost" size="sm" onClick={handleClear} data-testid="clear-filters">

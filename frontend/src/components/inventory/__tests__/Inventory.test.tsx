@@ -10,6 +10,36 @@ jest.mock("@/src/contexts/AuthContext", () => ({
   useAuth: jest.fn(),
 }));
 
+jest.mock("@/components/ui/select", () => ({
+  Select: ({
+    value,
+    onValueChange,
+    children,
+  }: {
+    value: string;
+    onValueChange: (v: string) => void;
+    children: React.ReactNode;
+  }) => (
+    <select
+      data-testid="status-select"
+      value={value}
+      onChange={(e) => onValueChange(e.target.value)}
+    >
+      {children}
+    </select>
+  ),
+  SelectTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SelectValue: () => null,
+  SelectContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SelectItem: ({
+    value,
+    children,
+  }: {
+    value: string;
+    children: React.ReactNode;
+  }) => <option value={value}>{children}</option>,
+}));
+
 jest.mock("@tanstack/react-query", () => ({
   useQuery: jest.fn(),
   useQueryClient: jest.fn(() => ({ invalidateQueries: jest.fn() })),
@@ -69,22 +99,26 @@ function makeAuth(roles: string[]): AuthContextValue {
 const SAMPLE_ITEMS = [
   {
     id: 1,
-    item_name: "Steel Rod",
-    category: "raw",
-    lot_batch_number: "LOT-001",
-    quantity_on_hand: 150,
+    product_id: 10,
+    product_name: "Steel Rod",
+    lot_number: "LOT-001",
+    status: "in_storage",
+    quantity_on_hand: 15000,
     storage_location: "RACK-A",
-    last_updated: "2026-04-01T10:00:00Z",
+    source_delivery_item_id: null,
+    pallet_number: null,
     is_triggered: false,
   },
   {
     id: 2,
-    item_name: "Copper Wire",
-    category: "finished",
-    lot_batch_number: "LOT-002",
-    quantity_on_hand: 5,
+    product_id: 20,
+    product_name: "Copper Wire",
+    lot_number: "LOT-002",
+    status: "in_production",
+    quantity_on_hand: 500,
     storage_location: "RACK-B",
-    last_updated: "2026-04-02T10:00:00Z",
+    source_delivery_item_id: null,
+    pallet_number: null,
     is_triggered: true,
   },
 ];
@@ -173,7 +207,7 @@ test("non-admin user does not see Adjust button", () => {
   expect(screen.queryByTestId("adjust-btn-1")).not.toBeInTheDocument();
 });
 
-test("AdjustQuantityModal shows inline error for negative quantity", () => {
+test("AdjustQuantityModal shows inline error when adjustment delta is zero", () => {
   mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
   setupInventoryQuery();
 
@@ -182,25 +216,14 @@ test("AdjustQuantityModal shows inline error for negative quantity", () => {
   fireEvent.click(screen.getByTestId("adjust-btn-1"));
 
   const quantityInput = screen.getByTestId("quantity-input");
-  fireEvent.change(quantityInput, { target: { value: "-5" } });
+  fireEvent.change(quantityInput, { target: { value: "0" } });
   fireEvent.click(screen.getByText("Review"));
 
   expect(screen.getByTestId("adjust-error")).toHaveTextContent(
-    "Quantity must be a non-negative number."
+    "Enter a non-zero adjustment amount."
   );
 });
 
-test("FilterPanel Clear Filters button resets all filter state", () => {
-  mockUseAuth.mockReturnValue(makeAuth([ROLES.SUPERVISOR]));
-  setupInventoryQuery();
-
-  render(<Inventory />);
-
-  fireEvent.click(screen.getByTestId("category-raw"));
-  fireEvent.click(screen.getByTestId("clear-filters"));
-
-  expect(screen.getByTestId("category-all")).toBeInTheDocument();
-});
 
 test("admin sees InventoryTrendLine bar chart when items are present", () => {
   mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));

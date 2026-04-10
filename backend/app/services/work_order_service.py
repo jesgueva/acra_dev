@@ -6,7 +6,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryLot
+from app.models.product import Product
 from app.models.work_order import WorkOrder, WorkOrderMaterial
 from app.schemas.auth import TokenUser
 from app.schemas.work_order import (
@@ -90,11 +91,13 @@ async def create_work_order(
     material_types = [m.material_type for m in data.materials]
     qty_res = await db.execute(
         select(
-            InventoryItem.item_name,
-            func.sum(InventoryItem.quantity_on_hand).label("total"),
+            Product.name,
+            func.sum(InventoryLot.quantity_on_hand).label("total"),
         )
-        .where(InventoryItem.item_name.in_(material_types))
-        .group_by(InventoryItem.item_name)
+        .join(Product, InventoryLot.product_id == Product.id)
+        .where(Product.name.in_(material_types))
+        .where(InventoryLot.status == "in_storage")
+        .group_by(Product.name)
     )
     qty_map = {row[0]: float(row[1]) for row in qty_res.all()}
 
@@ -280,12 +283,12 @@ async def update_status(
             if data.quantity_produced is not None
             else float(wo.quantity_produced)
         )
-        db.add(InventoryItem(
-            item_name=wo.product,
-            category="finished",
-            quantity_on_hand=qty_produced,
-            lot_batch_number=f"WO-{(wo.id or 0):04d}",
+        db.add(InventoryLot(
+            lot_number=f"WO-{(wo.id or 0):04d}",
             storage_location="FINISHED_GOODS",
+            status="in_storage",
+            quantity_on_hand=int(qty_produced * 100),  # convert to ×100 integer
+            # product_id left None until work orders are linked to Product entities
         ))
 
     await write_audit(

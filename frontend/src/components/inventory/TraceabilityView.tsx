@@ -8,23 +8,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { apiClient } from "@/src/lib/api-client";
+import { toDisplay } from "@/src/lib/qty";
 import { TraceabilityData } from "./types";
 
 interface TraceabilityViewProps {
-  lotBatchNumber: string | null;
+  lotNumber: string | null;
   onClose: () => void;
 }
 
-export function TraceabilityView({ lotBatchNumber, onClose }: TraceabilityViewProps) {
-  const open = lotBatchNumber !== null;
+export function TraceabilityView({ lotNumber, onClose }: TraceabilityViewProps) {
+  const open = lotNumber !== null;
 
   const { data, isLoading } = useQuery<TraceabilityData>({
-    queryKey: ["traceability", lotBatchNumber],
+    queryKey: ["traceability", lotNumber],
     queryFn: async () => {
-      if (!lotBatchNumber) throw new Error("No lot selected");
+      if (!lotNumber) throw new Error("No lot selected");
       const res = await apiClient.get<TraceabilityData>(
-        `/inventory/trace/${lotBatchNumber}`
+        `/inventory/trace/${lotNumber}`
       );
       return res.data;
     },
@@ -35,33 +37,39 @@ export function TraceabilityView({ lotBatchNumber, onClose }: TraceabilityViewPr
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
       <DialogContent data-testid="traceability-dialog">
         <DialogHeader>
-          <DialogTitle>Traceability — {lotBatchNumber}</DialogTitle>
+          <DialogTitle>Traceability — {lotNumber}</DialogTitle>
           <DialogDescription>
             Source delivery, current stock, and work order consumption for this lot.
           </DialogDescription>
         </DialogHeader>
 
-        {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+        {isLoading && (
+          <div className="space-y-2">
+            <Skeleton className="h-5 w-full" />
+            <Skeleton className="h-5 w-3/4" />
+          </div>
+        )}
 
         {data && (
           <div className="space-y-4 text-sm">
             {data.source_delivery && (
               <section>
                 <h3 className="font-semibold mb-1">Source Delivery</h3>
-                <p>Supplier: {data.source_delivery.supplier}</p>
-                <p>Carrier: {data.source_delivery.carrier}</p>
+                <p>Delivery ID: {data.source_delivery.delivery_id}</p>
                 <p>Delivered: {data.source_delivery.delivery_date}</p>
                 <p>BOL: {data.source_delivery.bol_reference}</p>
               </section>
             )}
 
-            {data.inventory_items.length > 0 && (
+            {data.lots.length > 0 && (
               <section>
                 <h3 className="font-semibold mb-1">Current Stock</h3>
                 <ul className="space-y-1">
-                  {data.inventory_items.map((item) => (
-                    <li key={item.id}>
-                      {item.item_name}: {item.quantity_on_hand} at {item.storage_location}
+                  {data.lots.map((lot) => (
+                    <li key={lot.id}>
+                      {lot.product_name ?? `Product #${lot.product_id}`}:{" "}
+                      {toDisplay(lot.quantity_on_hand)} at {lot.storage_location ?? "—"}{" "}
+                      <span className="text-muted-foreground">({lot.status})</span>
                     </li>
                   ))}
                 </ul>

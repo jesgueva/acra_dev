@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryLot, InventoryLot as InventoryItem
 from app.models.user import User
 from app.models.work_order import WorkOrder, WorkOrderMaterial
 from tests.conftest import _make_session, _override
@@ -93,12 +93,13 @@ def _make_inv_item(
 ) -> InventoryItem:
     item = InventoryItem()
     item.id = id
+    # Keep item_name for the inv_by_type dict key in allocation service
     item.item_name = material_type
-    item.category = "raw"
+    item.product_id = None
+    item.status = "in_storage"
     item.quantity_on_hand = qty
-    item.lot_batch_number = lot
+    item.lot_number = lot
     item.storage_location = "RACK-A"
-    item.last_updated = datetime.now(timezone.utc)
     return item
 
 
@@ -281,11 +282,12 @@ async def test_wo_lifecycle_step5_complete():
         body = resp.json()
         assert body["status"] == "completed"
 
-        # Verify finished inventory item was written
-        finished = [o for o in added_objects if isinstance(o, InventoryItem) and o.category == "finished"]
+        # Verify finished inventory lot was written
+        finished = [o for o in added_objects if isinstance(o, InventoryLot)]
         assert len(finished) == 1
-        assert finished[0].item_name == "Widget A"
-        assert float(finished[0].quantity_on_hand) == 10.0
+        assert finished[0].lot_number == "WO-0001"
+        assert finished[0].status == "in_storage"
+        assert finished[0].quantity_on_hand == 1000   # 10.0 units × 100
         assert finished[0].storage_location == "FINISHED_GOODS"
     finally:
         app.dependency_overrides.pop(get_db, None)

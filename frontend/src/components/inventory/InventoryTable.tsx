@@ -4,27 +4,48 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { DataTable } from "@/src/components/layout/DataTable";
-import { InventoryItem } from "./types";
+import { toDisplay } from "@/src/lib/qty";
+import { InventoryLot } from "./types";
 
 interface InventoryTableProps {
-  items: InventoryItem[];
+  items: InventoryLot[];
   isAdmin: boolean;
-  onRowClick: (item: InventoryItem) => void;
-  onAdjust: (item: InventoryItem) => void;
+  onRowClick: (item: InventoryLot) => void;
+  onAdjust: (item: InventoryLot) => void;
+  onEditLocation: (item: InventoryLot) => void;
+  onSplit: (item: InventoryLot) => void;
+  onViewLog: (item: InventoryLot) => void;
 }
 
-const BASE_COLUMNS = ["Material", "Category", "Lot / Batch", "Quantity", "Location"];
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  in_storage: "default",
+  in_production: "secondary",
+  shipped: "outline",
+  consumed: "outline",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  in_storage: "In Storage",
+  in_production: "In Production",
+  shipped: "Shipped",
+  consumed: "Consumed",
+};
+
+const BASE_COLUMNS = ["Product", "Lot #", "Status", "Quantity", "Location"];
 
 export function InventoryTable({
   items,
   isAdmin,
   onRowClick,
   onAdjust,
+  onEditLocation,
+  onSplit,
+  onViewLog,
 }: InventoryTableProps) {
   if (items.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-4" data-testid="empty-state">
-        No inventory items found.
+        No inventory lots found.
       </p>
     );
   }
@@ -40,12 +61,23 @@ export function InventoryTable({
           onClick={() => onRowClick(item)}
           data-testid={`row-${item.id}`}
         >
-          <TableCell className="px-4 py-3 font-medium">{item.item_name}</TableCell>
-          <TableCell className="px-4 py-3 capitalize">{item.category}</TableCell>
-          <TableCell className="px-4 py-3 font-mono text-xs">{item.lot_batch_number}</TableCell>
+          <TableCell className="px-4 py-3 font-medium">
+            {item.product_name ?? `Product #${item.product_id}`}
+          </TableCell>
+          <TableCell className="px-4 py-3 font-mono text-xs">
+            {item.lot_number ?? "—"}
+          </TableCell>
+          <TableCell className="px-4 py-3">
+            <Badge
+              variant={STATUS_VARIANT[item.status] ?? "outline"}
+              data-testid={`status-badge-${item.id}`}
+            >
+              {STATUS_LABEL[item.status] ?? item.status}
+            </Badge>
+          </TableCell>
           <TableCell className="px-4 py-3">
             <span className="inline-flex items-center gap-2">
-              {item.quantity_on_hand}
+              {toDisplay(item.quantity_on_hand)}
               {item.is_triggered && (
                 <Badge
                   variant="destructive"
@@ -57,20 +89,48 @@ export function InventoryTable({
               )}
             </span>
           </TableCell>
-          <TableCell className="px-4 py-3">{item.storage_location}</TableCell>
+          <TableCell className="px-4 py-3">
+            {item.storage_location ?? <span className="text-muted-foreground">—</span>}
+          </TableCell>
           {isAdmin && (
             <TableCell
               className="px-4 py-3"
               onClick={(e) => e.stopPropagation()}
             >
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onAdjust(item)}
-                data-testid={`adjust-btn-${item.id}`}
-              >
-                Adjust
-              </Button>
+              <div className="flex gap-1 flex-wrap">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onAdjust(item)}
+                  data-testid={`adjust-btn-${item.id}`}
+                >
+                  Adjust
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onEditLocation(item)}
+                  data-testid={`location-btn-${item.id}`}
+                >
+                  Location
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onSplit(item)}
+                  data-testid={`split-btn-${item.id}`}
+                >
+                  Split
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onViewLog(item)}
+                  data-testid={`log-btn-${item.id}`}
+                >
+                  Log
+                </Button>
+              </div>
             </TableCell>
           )}
         </TableRow>

@@ -14,8 +14,10 @@ const PAGE_SIZE = 20;
 
 interface Delivery {
   id: number;
-  supplier: string;
-  carrier: string;
+  contact_id: number | null;
+  contact_name: string | null;
+  carrier_id: number | null;
+  carrier_name: string | null;
   bol_reference: string;
   delivery_date: string;
   notes?: string | null;
@@ -77,9 +79,9 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
       >
         {deliveries.map((d) => (
           <TableRow key={d.id}>
-            <TableCell>{d.supplier}</TableCell>
+            <TableCell>{d.contact_name ?? "—"}</TableCell>
             <TableCell>
-              <Badge variant="outline">{d.carrier}</Badge>
+              <Badge variant="outline">{d.carrier_name ?? "—"}</Badge>
             </TableCell>
             <TableCell className="font-mono text-xs">{d.bol_reference}</TableCell>
             <TableCell>{d.delivery_date}</TableCell>

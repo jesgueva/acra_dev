@@ -11,23 +11,24 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { InventoryItem } from "./types";
+import { toDisplay } from "@/src/lib/qty";
+import { InventoryLot } from "./types";
 
 interface InventoryTrendLineProps {
-  items: InventoryItem[];
+  items: InventoryLot[];
 }
 
 // TODO: Replace with time-series data in v2 when backend supports historical snapshots.
 export function InventoryTrendLine({ items }: InventoryTrendLineProps) {
   const chartData = useMemo(
     () =>
-      items.slice(0, 10).map((item) => ({
-        name:
-          item.item_name.length > 12
-            ? item.item_name.slice(0, 12) + "…"
-            : item.item_name,
-        quantity: item.quantity_on_hand,
-      })),
+      items.slice(0, 10).map((item) => {
+        const name = item.product_name ?? `#${item.id}`;
+        return {
+          name: name.length > 12 ? name.slice(0, 12) + "…" : name,
+          quantity: Number(toDisplay(item.quantity_on_hand)),
+        };
+      }),
     [items]
   );
 

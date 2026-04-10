@@ -9,17 +9,22 @@ import { InventoryTable } from "./InventoryTable";
 import { FilterPanel } from "./FilterPanel";
 import { TraceabilityView } from "./TraceabilityView";
 import { AdjustQuantityModal } from "./AdjustQuantityModal";
+import { LocationEditModal } from "./LocationEditModal";
+import { SplitLotModal } from "./SplitLotModal";
+import { TransactionLogModal } from "./TransactionLogModal";
 import { ExportButton } from "./ExportButton";
 import { InventoryTrendLine } from "./InventoryTrendLine";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   DEFAULT_FILTERS,
-  filterItemsByDateRange,
   filtersToParams,
   FilterState,
-  InventoryItem,
+  InventoryLot,
   InventoryListResponse,
 } from "./types";
+
+const PAGE_SIZE = 50;
 
 export function Inventory() {
   const { user } = useAuth();
@@ -29,13 +34,22 @@ export function Inventory() {
   const isAdmin = roles.includes(ROLES.ADMIN);
 
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
-  const [selectedLot, setSelectedLot] = useState<string | null>(null);
-  const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null);
+  const [page, setPage] = useState(1);
+  const [selectedLotNumber, setSelectedLotNumber] = useState<string | null>(null);
+  const [adjustItem, setAdjustItem] = useState<InventoryLot | null>(null);
+  const [locationItem, setLocationItem] = useState<InventoryLot | null>(null);
+  const [splitItem, setSplitItem] = useState<InventoryLot | null>(null);
+  const [logLotId, setLogLotId] = useState<number | null>(null);
+
+  const handleFiltersChange = useCallback((next: FilterState) => {
+    setFilters(next);
+    setPage(1);
+  }, []);
 
   const { data, isLoading } = useQuery<InventoryListResponse>({
-    queryKey: ["inventory", filters],
+    queryKey: ["inventory", filters, page],
     queryFn: async () => {
-      const params = filtersToParams(filters);
+      const params = filtersToParams(filters, page, PAGE_SIZE);
       const res = await apiClient.get<InventoryListResponse>(
         `/inventory${params.toString() ? `?${params}` : ""}`
       );
@@ -43,25 +57,19 @@ export function Inventory() {
     },
   });
 
-  const items = useMemo(
-    () => filterItemsByDateRange(data?.results ?? [], filters.dateFrom, filters.dateTo),
-    [data, filters.dateFrom, filters.dateTo]
-  );
+  const items = useMemo(() => data?.results ?? [], [data]);
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const handleRowClick = useCallback(
-    (item: InventoryItem) => setSelectedLot(item.lot_batch_number),
-    []
-  );
-  const handleAdjust = useCallback(
-    (item: InventoryItem) => setAdjustItem(item),
-    []
-  );
-  const handleAdjustSuccess = useCallback(
+  const invalidate = useCallback(
     () => queryClient.invalidateQueries({ queryKey: ["inventory"] }),
     [queryClient]
   );
-  const handleCloseLot = useCallback(() => setSelectedLot(null), []);
-  const handleCloseAdjust = useCallback(() => setAdjustItem(null), []);
+
+  const handleRowClick = useCallback(
+    (item: InventoryLot) => setSelectedLotNumber(item.lot_number),
+    []
+  );
 
   return (
     <div className="space-y-6 p-6">
@@ -70,7 +78,7 @@ export function Inventory() {
         <ExportButton items={items} />
       </div>
 
-      <FilterPanel filters={filters} onChange={setFilters} />
+      <FilterPanel filters={filters} onChange={handleFiltersChange} />
 
       {isAdmin && items.length > 0 && (
         <InventoryTrendLine items={items} />
@@ -88,19 +96,66 @@ export function Inventory() {
           items={items}
           isAdmin={isAdmin}
           onRowClick={handleRowClick}
-          onAdjust={handleAdjust}
+          onAdjust={setAdjustItem}
+          onEditLocation={setLocationItem}
+          onSplit={setSplitItem}
+          onViewLog={(item) => setLogLotId(item.id)}
         />
       )}
 
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          {total} {total === 1 ? "result" : "results"}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1 || isLoading}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-sm">
+            {page} / {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages || isLoading}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
+
       <TraceabilityView
-        lotBatchNumber={selectedLot}
-        onClose={handleCloseLot}
+        lotNumber={selectedLotNumber}
+        onClose={() => setSelectedLotNumber(null)}
       />
 
       <AdjustQuantityModal
         item={adjustItem}
-        onClose={handleCloseAdjust}
-        onSuccess={handleAdjustSuccess}
+        onClose={() => setAdjustItem(null)}
+        onSuccess={invalidate}
+      />
+
+      <LocationEditModal
+        lot={locationItem}
+        onClose={() => setLocationItem(null)}
+        onSuccess={invalidate}
+      />
+
+      <SplitLotModal
+        lot={splitItem}
+        onClose={() => setSplitItem(null)}
+        onSuccess={invalidate}
+      />
+
+      <TransactionLogModal
+        lotId={logLotId}
+        onClose={() => setLogLotId(null)}
       />
     </div>
   );

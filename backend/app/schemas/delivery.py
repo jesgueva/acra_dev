@@ -6,45 +6,51 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # ── Item schemas ──────────────────────────────────────────────────────────────
 
-class DeliveryItemBase(BaseModel):
-    item_name: str = Field(..., max_length=200)
+class DeliveryItemCreate(BaseModel):
+    product_id: int
     description: Optional[str] = None
-    quantity: float = Field(..., gt=0)
+    quantity: int = Field(..., gt=0)      # integer ×100 (5000 = 50.00 units)
     pallets: Optional[int] = None
     units_per_pallet: Optional[int] = None
 
 
-class DeliveryItemCreate(DeliveryItemBase):
-    pass
-
-
-class DeliveryItemResponse(DeliveryItemBase):
+class DeliveryItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    leftover: Optional[float] = None
-    inventory_item_id: Optional[int] = None
+    product_id: Optional[int] = None
+    product_name: Optional[str] = None   # denormalized for display
+    description: Optional[str] = None
+    quantity: int                         # integer ×100
+    pallets: Optional[int] = None
+    units_per_pallet: Optional[int] = None
+    leftover: Optional[int] = None       # integer ×100
+    inventory_lot_id: Optional[int] = None
 
 
 # ── Delivery schemas ──────────────────────────────────────────────────────────
 
-class DeliveryBase(BaseModel):
-    supplier: str = Field(..., max_length=200)
-    carrier: str = Field(..., max_length=200)
+class DeliveryCreate(BaseModel):
+    contact_id: Optional[int] = None     # provider contact
+    carrier_id: Optional[int] = None     # carrier contact
     bol_reference: str = Field(..., max_length=100)
     delivery_date: str = Field(..., max_length=20)
     notes: Optional[str] = None
-
-
-class DeliveryCreate(DeliveryBase):
     force: bool = False
     items: List[DeliveryItemCreate] = Field(..., min_length=1)
 
 
-class DeliveryResponse(DeliveryBase):
+class DeliveryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    contact_id: Optional[int] = None
+    contact_name: Optional[str] = None   # denormalized
+    carrier_id: Optional[int] = None
+    carrier_name: Optional[str] = None   # denormalized
+    delivery_date: str
+    bol_reference: str
+    notes: Optional[str] = None
     created_by: int
     created_at: datetime
     items: List[DeliveryItemResponse] = []
