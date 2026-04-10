@@ -41,6 +41,13 @@ async def create_user(
     return await user_service.create_user(db, body, current_user.user_id)
 
 
+@router.get("/me", response_model=TokenUser)
+async def get_me(
+    current_user: TokenUser = Depends(require_privilege("authenticated")),
+) -> TokenUser:
+    return current_user
+
+
 @router.patch("/me", response_model=UserResponse)
 async def update_me(
     body: SelfLanguageUpdate,

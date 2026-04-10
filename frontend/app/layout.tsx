@@ -1,10 +1,44 @@
+import type { ReactNode } from "react";
+import { getLocale } from "next-intl/server";
+import { Barlow, IBM_Plex_Sans } from "next/font/google";
+import { ThemeProvider } from "@/src/components/providers/ThemeProvider";
 import "./globals.css";
 
-export default function RootLayout({
+const barlow = Barlow({
+  subsets: ["latin"],
+  variable: "--font-heading",
+  weight: ["400", "500", "600", "700"],
+});
+
+const ibmPlexSans = IBM_Plex_Sans({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  weight: ["400", "500", "600"],
+});
+
+export default async function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
-  // [locale]/layout.tsx handles the HTML shell including font and lang.
-  return children as React.ReactElement;
+  const locale = await getLocale();
+
+  return (
+    <html
+      lang={locale}
+      className={`${barlow.variable} ${ibmPlexSans.variable}`}
+      suppressHydrationWarning
+    >
+      <body>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          {children}
+        </ThemeProvider>
+      </body>
+    </html>
+  );
 }

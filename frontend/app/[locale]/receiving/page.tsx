@@ -1,72 +1,65 @@
-"use client";
+import { getTranslations } from "next-intl/server";
+import { PageHeader } from "@/src/components/layout/PageHeader";
+import { Separator } from "@/components/ui/separator";
+import { Truck, ScanLine, FileText, Search, PackageCheck } from "lucide-react";
+import {
+  ComingSoonBadge,
+  ModuleBanner,
+  FeatureGrid,
+  RequirementsBar,
+  type PlaceholderFeature,
+} from "@/src/components/layout/ModulePlaceholder";
 
-import React, { useState } from "react";
-import { useTranslations } from "next-intl";
-import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import OCRUploader, { type OCRResult } from "@/src/components/receiving/OCRUploader";
-import NewDeliveryForm from "@/src/components/receiving/NewDeliveryForm";
-import DeliveryList from "@/src/components/receiving/DeliveryList";
+const FEATURES: PlaceholderFeature[] = [
+  {
+    icon: ScanLine,
+    title: "OCR Document Scanning",
+    description: "Photograph or upload bills of lading for automatic data extraction.",
+  },
+  {
+    icon: FileText,
+    title: "Manual Entry",
+    description: "Enter delivery information manually when documents are unavailable.",
+  },
+  {
+    icon: PackageCheck,
+    title: "Automatic Inventory Creation",
+    description: "Confirmed deliveries instantly generate inventory records with lot traceability.",
+  },
+  {
+    icon: Search,
+    title: "Delivery History",
+    description: "Searchable log of all receiving records with supplier and BOL reference.",
+  },
+];
 
-export default function ReceivingPage() {
-  const t = useTranslations("receiving");
+const REQUIREMENTS = ["FR-001", "FR-002", "FR-003", "FR-004", "FR-005"];
 
-  const [ocrValues, setOcrValues] = useState<Partial<OCRResult> | undefined>();
-  const [ocrHighlightedFields, setOcrHighlightedFields] = useState<string[]>([]);
-  const [refetch, setRefetch] = useState(0);
-
-  function handleOCRResult(result: OCRResult) {
-    setOcrValues(result);
-    const highlighted: string[] = [];
-    if (result.supplier) highlighted.push("supplier");
-    if (result.bol_number) highlighted.push("bol_number");
-    result.items?.forEach((_, i) => {
-      highlighted.push(`items.${i}.item_name`);
-      highlighted.push(`items.${i}.lot_batch_number`);
-      highlighted.push(`items.${i}.quantity`);
-      highlighted.push(`items.${i}.unit`);
-    });
-    setOcrHighlightedFields(highlighted);
-  }
-
-  function handleDeliverySuccess() {
-    toast.success(t("ocrSuccess"));
-    setOcrValues(undefined);
-    setOcrHighlightedFields([]);
-    setRefetch((n) => n + 1);
-  }
+export default async function ReceivingPage() {
+  const t = await getTranslations("receiving");
+  const tCommon = await getTranslations("common");
 
   return (
-    <div className="space-y-6 p-6">
-      <h1 className="text-2xl font-semibold">{t("title")}</h1>
+    <div className="flex flex-col flex-1">
+      <PageHeader title={t("title")} description={t("subtitle")}>
+        <ComingSoonBadge label={tCommon("comingSoon")} />
+      </PageHeader>
 
-      <Card>
-        <CardContent className="pt-6">
-          <OCRUploader onOCRResult={handleOCRResult} />
-        </CardContent>
-      </Card>
+      <div className="flex-1 space-y-6 p-6">
+        <ModuleBanner
+          icon={Truck}
+          title="Receiving & Intake Module"
+          description={`${tCommon("underDevelopment")} This module will replace manual BOL transcription with an OCR-powered workflow, reducing data entry time by 60–70%.`}
+        />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("submit")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <NewDeliveryForm
-            onSuccess={handleDeliverySuccess}
-            initialValues={ocrValues}
-            ocrHighlightedFields={ocrHighlightedFields}
-          />
-        </CardContent>
-      </Card>
+        <Separator />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("title")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <DeliveryList refetch={refetch} />
-        </CardContent>
-      </Card>
+        <FeatureGrid features={FEATURES} />
+
+        <Separator />
+
+        <RequirementsBar requirements={REQUIREMENTS} />
+      </div>
     </div>
   );
 }
