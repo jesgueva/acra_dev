@@ -20,19 +20,28 @@
     "sessionExpired": "Su sesión ha expirado. Por favor, inicie sesión de nuevo."
   },
   "receiving": {
-    "title": "Recepción"
+    "title": "Recepción",
+    "subtitle": "Registre entregas de materiales y procese albaranes de entrega.",
+    "description": "Los flujos de recepción aparecerán aquí."
   },
   "inventory": {
-    "title": "Inventario"
+    "title": "Inventario",
+    "subtitle": "Seguimiento en tiempo real de materias primas y productos terminados."
   },
   "workOrders": {
-    "title": "Órdenes de Trabajo"
+    "title": "Órdenes de Trabajo",
+    "subtitle": "Cree, asigne y siga el ciclo de vida de las órdenes de producción.",
+    "description": "La gestión de órdenes de trabajo aparecerá aquí."
   },
   "users": {
-    "title": "Usuarios"
+    "title": "Usuarios",
+    "subtitle": "Gestione cuentas de usuario, roles y permisos de acceso.",
+    "description": "La gestión de usuarios aparecerá aquí."
   },
   "audit": {
-    "title": "Registro de Auditoría"
+    "title": "Registro de Auditoría",
+    "subtitle": "Registro completo de todas las actividades y cambios del sistema.",
+    "description": "Las entradas del registro de auditoría aparecerán aquí."
   },
   "common": {
     "save": "Guardar",
@@ -41,6 +50,8 @@
     "edit": "Editar",
     "loading": "Cargando...",
     "error": "Error",
-    "dateFormat": "DD/MM/YYYY"
+    "dateFormat": "DD/MM/YYYY",
+    "comingSoon": "Próximamente",
+    "underDevelopment": "Este módulo está en desarrollo activo."
   }
 }

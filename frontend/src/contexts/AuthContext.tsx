@@ -22,6 +22,7 @@ export interface AuthContextValue {
   user: AuthUser | null;
   token: string | null;
   isAuthenticated: boolean;
+  authResolved: boolean;
   login: (credentials: { username: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
   hasPrivilege: (privilege: string) => boolean;
@@ -32,6 +33,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [authResolved, setAuthResolved] = useState(false);
 
   // Restore session from httpOnly cookie via Route Handler
   useEffect(() => {
@@ -46,6 +48,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       })
       .catch((err) => {
         if (err.name !== "AbortError") { /* no active session */ }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setAuthResolved(true);
+        }
       });
     return () => controller.abort();
   }, []);
@@ -84,6 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const data = await res.json();
       setUser(data.user);
       setToken(data.access_token);
+      setAuthResolved(true);
     },
     []
   );
@@ -99,8 +107,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, token, isAuthenticated: user !== null, login, logout, hasPrivilege }),
-    [user, token, login, logout, hasPrivilege]
+    () => ({
+      user,
+      token,
+      isAuthenticated: user !== null,
+      authResolved,
+      login,
+      logout,
+      hasPrivilege,
+    }),
+    [user, token, authResolved, login, logout, hasPrivilege]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

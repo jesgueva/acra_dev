@@ -6,11 +6,17 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.mypy_cache/
 
 # Frontend
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+frontend/coverage/
+*.tsbuildinfo
 
 # Environment
 .env
@@ -19,3 +25,5 @@ frontend/out/
 
 # OS
 .DS_Store
+Thumbs.db
+*/worktrees/
