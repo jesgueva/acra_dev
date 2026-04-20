@@ -31,7 +31,7 @@ export default function AuthForm() {
     setLoading(true);
     try {
       await login({ username, password });
-      router.push(`/${locale}/dashboard`);
+      router.push(`/${locale}/receiving`);
     } catch (err) {
       const statusErr = err as Error & { status?: number };
       if (statusErr.status === 401) {

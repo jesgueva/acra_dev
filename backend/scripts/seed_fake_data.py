@@ -762,7 +762,7 @@ async def seed_fake_data() -> None:
 
         supplier_ids: dict[str, int] = {}
         for name in SUPPLIERS:
-            supplier_ids[name] = (await ensure_contact(db, name, "supplier")).id
+            supplier_ids[name] = (await ensure_contact(db, name, "provider")).id
 
         carrier_ids: dict[str, int] = {}
         for name in CARRIERS:
