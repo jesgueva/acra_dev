@@ -104,6 +104,36 @@ authenticated read, the backend test subset, and a frontend production build:
 It exits `0` only if every stage passes. Flags: `SMOKE_SKIP_FRONTEND=1` (backend only),
 `SMOKE_SKIP_RESET=1` (don't wipe/reseed), `SMOKE_BACKEND_PORT=8001`.
 
+For a fuller, evidence-capturing pass — environment snapshot, API route inventory, smoke test,
+full backend suite + coverage, a **data-pipeline integrity trace**, and a **real OCR round-trip** —
+run the validation harness (used for the Hard Stop 3 validation package):
+
+```bash
+./scripts/validation-run.sh            # writes artifacts to ./validation-evidence/
+```
+
+The OCR round-trip needs `GEMINI_API_KEY` (and optionally `ANTHROPIC_API_KEY`) in `backend/.env`;
+it is skipped with a clear notice if no key is present.
+
+---
+
+## Implementation status
+
+What a reader can exercise **right now** vs. what is still partial at this baseline
+(`v0.2.0-sprint1-baseline`). Re-verified end to end on 2026-06-23 via `scripts/validation-run.sh`.
+
+| Capability | State | Notes |
+|---|---|---|
+| Auth (JWT) + RBAC + EN/ES i18n | ✅ Live (UI + API) | Anonymous reads rejected (401/403); privileges resolved per request. |
+| Receiving + AI OCR (Gemini → Claude) | ✅ Live (UI + API) | BOL upload auto-fills the form; duplicate-BOL guard; pallet × units leftover reconciliation. |
+| Inventory (filter / adjust / split / move / CSV / alerts / trace) | ✅ Live (UI + API) | On-hand stored as integer ×100; per-lot transaction log. |
+| Master data (contacts, products), Dashboard | ✅ Live (UI + API) | |
+| Work Orders (incl. SERIALIZABLE FIFO allocation), Users, Audit-log read | ⚙️ Backend complete, **UI placeholder** | Endpoints + tests exist; pages render "Coming Soon"; nav links commented out. |
+| Shipments | ⚙️ Backend complete, **not reachable** | Endpoints + UI exist, but `shipping.*` privileges are unseeded → 403 for all roles (KI-08). |
+| StockMovement ledger (C-04); Production / Forklift worksheets (C-06 / C-07) | 🚧 Phase-2 stub | Ledger model/service/router are placeholders (`501` / `NotImplementedError`, KI-04); inventory still runs on the Phase-1 lot model. |
+
+Known rough edges are tracked in [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) and [`docs/RISK_LOG.md`](docs/RISK_LOG.md).
+
 ---
 
 ## Environment
@@ -141,8 +171,8 @@ cd backend && ./.venv/bin/python -m pytest tests/ -q
 # Backend tests with coverage (CI enforces an 85% floor on app.*)
 cd backend && ./.venv/bin/python -m pytest tests/ --cov=app --cov-report=term-missing
 
-# Frontend tests / lint / build
-cd frontend && npm test
+# Frontend tests / lint / build  (no "test" npm script — invoke jest directly, as CI does)
+cd frontend && npx jest
 cd frontend && npm run lint
 cd frontend && npm run build
 
@@ -165,7 +195,7 @@ acra_dev/
 │   ├── app/            #   [locale]/ routes, api/auth/ server proxies, layout
 │   ├── src/            #   components, contexts, lib, i18n
 │   └── messages/       #   next-intl catalogs (en.json, es.json)
-├── scripts/            # reset-db-and-seed.sh, smoke-test.sh
+├── scripts/            # reset-db-and-seed.sh, smoke-test.sh, validation-run.sh, validation/
 ├── docs/               # architecture.md, RISK_LOG.md
 ├── docker-compose.yml  # PostgreSQL 15 on host port 5433
 ├── CHANGELOG.md · KNOWN_ISSUES.md · CONTRIBUTING.md
