@@ -27,3 +27,6 @@ frontend/coverage/
 .DS_Store
 Thumbs.db
 */worktrees/
+
+# Validation harness output (scripts/validation-run.sh)
+validation-evidence/
