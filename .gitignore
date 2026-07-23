@@ -30,3 +30,9 @@ Thumbs.db
 
 # Validation harness output (scripts/validation-run.sh)
 validation-evidence/
+
+# Playwright (e2e specs are tracked; run output is not)
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+.playwright-mcp/
