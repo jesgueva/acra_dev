@@ -19,6 +19,9 @@ const config: Config = {
     "^next/headers$": "<rootDir>/src/__mocks__/next-headers.ts",
   },
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
+  // Playwright specs live in e2e/ and are driven by playwright.config.ts —
+  // Jest's default testMatch would otherwise pick up their .spec.ts files.
+  testPathIgnorePatterns: ["<rootDir>/node_modules/", "<rootDir>/e2e/"],
 };
 
 export default config;
