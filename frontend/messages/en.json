@@ -24,7 +24,7 @@
   "receiving": {
     "title": "Receiving",
     "subtitle": "Log incoming material deliveries and process bills of lading.",
-    "description": "Receiving workflows will appear here.",
+    "description": "Description",
     "newDelivery": "Log New Delivery",
     "ocrHint": "Upload a bill of lading to auto-fill the form, or enter details manually.",
     "deliveryHistory": "Delivery History",
@@ -43,7 +43,6 @@
     "ocrError": "Unable to extract data. Please enter manually.",
     "carrier": "Carrier",
     "itemName": "Item Name",
-    "description": "Description",
     "quantity": "Quantity",
     "pallets": "Pallets",
     "unitsPerPallet": "U/Pallet",
@@ -169,12 +168,55 @@
   "users": {
     "title": "Users",
     "subtitle": "Manage user accounts, roles, and access permissions.",
-    "description": "User management will appear here."
+    "createUser": "New User",
+    "createUserDescription": "Create an account and assign its roles.",
+    "editUser": "Edit User",
+    "editUserDescription": "Update this account's details and roles.",
+    "temporaryPassword": "Temporary Password",
+    "language": "Language",
+    "colUsername": "Username",
+    "colFullName": "Full Name",
+    "colRoles": "Roles",
+    "colProductionLine": "Production Line",
+    "colStatus": "Status",
+    "colActions": "Actions",
+    "statusActive": "Active",
+    "statusInactive": "Inactive",
+    "allStatuses": "All statuses",
+    "allRoles": "All roles",
+    "productionLinePlaceholder": "e.g. LINE-A",
+    "noUsers": "No users match these filters.",
+    "resultCount": "{count} users",
+    "previous": "Previous",
+    "next": "Next",
+    "editUserAria": "Edit {username}",
+    "deactivateUserAria": "Deactivate {username}",
+    "deactivate": "Deactivate",
+    "deactivateTitle": "Deactivate user",
+    "deactivateConfirm": "Deactivate {username}? They will no longer be able to sign in.",
+    "deactivateSuccess": "{username} has been deactivated.",
+    "deactivateFailed": "Could not deactivate this user.",
+    "lastAdminError": "Cannot deactivate the last administrator.",
+    "usernameExists": "Username already exists.",
+    "requiredFields": "Username and full name are required.",
+    "passwordRequired": "A temporary password is required.",
+    "saveFailed": "Could not save this user."
   },
   "audit": {
     "title": "Audit Log",
     "subtitle": "Complete record of all system activities, changes, and events.",
-    "description": "Audit log entries will appear here."
+    "colTimestamp": "Timestamp",
+    "colUser": "User",
+    "colAction": "Action",
+    "colEntity": "Entity",
+    "actionPlaceholder": "e.g. login",
+    "entityPlaceholder": "e.g. user",
+    "noEntries": "No audit entries match these filters.",
+    "noDetails": "No additional details recorded.",
+    "unknownUser": "User #{id}",
+    "resultCount": "{count} entries",
+    "previous": "Previous",
+    "next": "Next"
   },
   "contacts": {
     "title": "Contacts",
@@ -243,6 +285,7 @@
     "error": "Error",
     "dateFormat": "MM/DD/YYYY",
     "comingSoon": "Coming Soon",
-    "underDevelopment": "This module is under active development."
+    "underDevelopment": "This module is under active development.",
+    "accessDenied": "You do not have permission to view this page."
   }
 }
