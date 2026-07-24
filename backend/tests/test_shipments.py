@@ -230,59 +230,29 @@ async def test_get_shipment_returns_200():
 # A caller holding one shipping privilege must not inherit the other.
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_create_shipment_missing_privilege_returns_403():
-    """`shipping.view` alone does not authorize booking a shipment."""
+@pytest.mark.parametrize(
+    "held,method,path,required",
+    [
+        # Holding one shipping privilege must not confer the other.
+        (("shipping.view",), "post", "/api/v1/shipments", "shipping.create"),
+        (("shipping.create",), "get", "/api/v1/shipments/1", "shipping.view"),
+        # A caller with no shipping privilege at all reaches nothing.
+        (("work_orders.view",), "get", "/api/v1/shipments", "shipping.view"),
+    ],
+)
+async def test_shipment_endpoints_reject_missing_privilege(held, method, path, required):
     token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=("shipping.view",))
+    session = _make_rbac_session(privileges=held)
+    kwargs = {"json": _VALID_BODY} if method == "post" else {}
 
     app.dependency_overrides[get_db] = _override(session)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
-            resp = await client.post(
-                "/api/v1/shipments",
-                json=_VALID_BODY,
-                headers={"Authorization": f"Bearer {token}"},
+            resp = await getattr(client, method)(
+                path, headers={"Authorization": f"Bearer {token}"}, **kwargs
             )
         assert resp.status_code == 403
-        assert "shipping.create" in resp.json()["detail"]
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-
-
-@pytest.mark.asyncio
-async def test_list_shipments_missing_privilege_returns_403():
-    """A machine operator holding no shipping privilege cannot list shipments."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=("work_orders.view",))
-
-    app.dependency_overrides[get_db] = _override(session)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
-            resp = await client.get(
-                "/api/v1/shipments",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        assert resp.status_code == 403
-        assert "shipping.view" in resp.json()["detail"]
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-
-
-@pytest.mark.asyncio
-async def test_get_shipment_missing_privilege_returns_403():
-    """`shipping.create` alone does not authorize reading a shipment back."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=("shipping.create",))
-
-    app.dependency_overrides[get_db] = _override(session)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
-            resp = await client.get(
-                "/api/v1/shipments/1",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        assert resp.status_code == 403
-        assert "shipping.view" in resp.json()["detail"]
+        assert required in resp.json()["detail"]
     finally:
         app.dependency_overrides.pop(get_db, None)
 

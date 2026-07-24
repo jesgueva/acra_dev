@@ -19,31 +19,32 @@ down_revision = "011"
 branch_labels = None
 depends_on = None
 
-# Dispatch is a dock function; the supervisor sees outbound stock leave but does not book it.
-_PRIVILEGE_ROLES = {
-    "shipping.view": ("company_admin", "receiving_clerk", "production_supervisor"),
-    "shipping.create": ("company_admin", "receiving_clerk"),
-}
+_GRANTS = (
+    ("company_admin", "shipping.view"),
+    ("company_admin", "shipping.create"),
+    ("receiving_clerk", "shipping.view"),
+    ("receiving_clerk", "shipping.create"),
+    ("production_supervisor", "shipping.view"),
+)
 
 
 def upgrade():
-    for privilege, roles in _PRIVILEGE_ROLES.items():
-        roles_sql = ", ".join(f"('{role}')" for role in roles)
-        # ON CONFLICT keeps this safe to re-run after a partial rollback — the target is the
-        # (role_id, privilege_name) primary key from migration 002.
-        op.execute(
-            f"""
-            INSERT INTO role_privilege_assignments (role_id, privilege_name)
-            SELECT r.id, '{privilege}'
-            FROM roles r
-            JOIN (VALUES {roles_sql}) AS p(role_name) ON r.role_name = p.role_name
-            ON CONFLICT (role_id, privilege_name) DO NOTHING
-            """
-        )
+    values = ", ".join(f"('{role}', '{privilege}')" for role, privilege in _GRANTS)
+    # ON CONFLICT because scripts/seed_fake_data.py also grants these: a developer who seeded
+    # before upgrading already has the rows. 010/011 predate that overlap and omit it.
+    op.execute(
+        f"""
+        INSERT INTO role_privilege_assignments (role_id, privilege_name)
+        SELECT r.id, p.privilege_name
+        FROM roles r
+        JOIN (VALUES {values}) AS p(role_name, privilege_name) ON r.role_name = p.role_name
+        ON CONFLICT (role_id, privilege_name) DO NOTHING
+        """
+    )
 
 
 def downgrade():
-    privileges_sql = ", ".join(f"'{privilege}'" for privilege in _PRIVILEGE_ROLES)
+    privileges_sql = ", ".join(f"'{privilege}'" for privilege in sorted({p for _, p in _GRANTS}))
     op.execute(
         f"DELETE FROM role_privilege_assignments WHERE privilege_name IN ({privileges_sql})"
     )

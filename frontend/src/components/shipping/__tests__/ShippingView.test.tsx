@@ -118,6 +118,15 @@ test("renders an error alert when the list request fails", () => {
   expect(screen.queryByText("shipping.noShipments")).not.toBeInTheDocument();
 });
 
+test("renders skeletons while the list is loading", () => {
+  mockQueries({ isLoading: true });
+
+  const { container } = render(<ShippingView />);
+
+  expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
+  expect(screen.queryByText("shipping.noShipments")).not.toBeInTheDocument();
+});
+
 test("shows the New Shipment button to a user holding shipping.create", () => {
   mockQueries({ data: { total: 0, page: 1, page_size: 20, results: [] } });
 

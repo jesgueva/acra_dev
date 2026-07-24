@@ -1,4 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
+import { API_URL, USERS, apiToken, login } from "./helpers";
 
 /**
  * ACR-35 — shipping.* privilege grants + Shipping nav link, end to end.
@@ -16,21 +17,7 @@ import { test, expect, Page } from "@playwright/test";
  * production frontend build on :3000 (NOT `next dev`, see KI-02).
  */
 
-/** The backend, which is a different origin from the frontend `baseURL`. */
-const API_URL = process.env.E2E_API_URL ?? "http://localhost:8000";
-
-const ADMIN = { username: "admin", password: "admin123" };
-const CLERK = { username: "clerk1", password: "demo123" };
-const SUPERVISOR = { username: "supervisor1", password: "demo123" };
-const OPERATOR = { username: "operator1", password: "demo123" };
-
-async function login(page: Page, username: string, password: string) {
-  await page.goto("/en/login");
-  await page.locator("#username").fill(username);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: /sign in|iniciar|login/i }).click();
-  await page.waitForURL((url) => !url.pathname.endsWith("/login"));
-}
+const { admin: ADMIN, clerk: CLERK, supervisor: SUPERVISOR, operator: OPERATOR } = USERS;
 
 /** Collect the status of every GET /shipments the page issues. */
 function watchShipmentReads(page: Page): number[] {
@@ -93,11 +80,7 @@ test.describe("ACR-35 shipping privileges", () => {
   test("the API refuses the operator directly, not just the UI", async ({ request }) => {
     // The client-side gate is convenience; the privilege is enforced server-side. Without this
     // the suite would prove only that we hid a button.
-    const auth = await request.post(`${API_URL}/api/v1/auth/login`, {
-      data: { username: OPERATOR.username, password: OPERATOR.password },
-    });
-    expect(auth.ok()).toBeTruthy();
-    const { access_token: token } = await auth.json();
+    const token = await apiToken(request, OPERATOR.username, OPERATOR.password);
 
     const list = await request.get(`${API_URL}/api/v1/shipments`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -135,29 +118,8 @@ test.describe("ACR-35 shipping privileges", () => {
     await expect(page.locator("tbody tr", { hasText: bol })).toBeVisible();
   });
 
-  test("submitting an empty form never reaches the API", async ({ page }) => {
-    await login(page, CLERK.username, CLERK.password);
-    await page.goto("/en/shipping");
-
-    let posted = false;
-    page.on("request", (r) => {
-      if (r.url().includes("/api/v1/shipments") && r.method() === "POST") posted = true;
-    });
-
-    const dialog = page.getByRole("dialog");
-    await page.getByRole("button", { name: /New Shipment/i }).click();
-    await dialog.getByRole("button", { name: /Create Shipment/i }).click();
-    await expect(dialog).toBeVisible();
-
-    // A required BOL blocks submission client-side.
-    await dialog.locator("#bol_number").fill("   ");
-    await dialog.locator("#shipment_date").fill("2026-07-24");
-    await dialog.getByRole("button", { name: /Create Shipment/i }).click();
-
-    // No lot lines — rejected before any request goes out.
-    await expect(dialog.getByRole("alert")).toContainText(/lot line/i);
-    expect(posted).toBe(false);
-  });
+  // The create dialog's own field validation is pre-existing behaviour this ticket did not touch
+  // (and ACR-33 is reworking it), so it is deliberately not asserted here.
 
   test("the Spanish nav links to the localized shipping route", async ({ page }) => {
     await login(page, CLERK.username, CLERK.password);

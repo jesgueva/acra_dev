@@ -14,17 +14,7 @@ The live tests require a running PostgreSQL database with migrations applied (sa
 `test_schema.py`).
 """
 import ast
-import os
 from pathlib import Path
-
-import asyncpg
-import pytest
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/acra_db",
-)
-PG_DSN = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
 
 _BACKEND = Path(__file__).resolve().parent.parent
 ROUTERS_DIR = _BACKEND / "app" / "routers"
@@ -40,8 +30,7 @@ _SENTINEL_PRIVILEGES = {"authenticated"}
 # Tracked separately — deliberately out of ACR-35's scope rather than silently widened into it.
 _UNSEEDED_KNOWN_GAPS = {"master_data.view", "master_data.manage"}
 
-# The mapping migration 012 seeds. Mirrors the deliveries.create / deliveries.view split: the clerk
-# works the dock in both directions, the supervisor sees outbound stock leave but does not book it.
+# The mapping migration 012 seeds, restated rather than imported so a bad edit there fails here.
 EXPECTED_SHIPPING_GRANTS = {
     ("shipping.view", "company_admin"),
     ("shipping.view", "receiving_clerk"),
@@ -51,16 +40,9 @@ EXPECTED_SHIPPING_GRANTS = {
 }
 
 
-@pytest.fixture
-async def conn():
-    connection = await asyncpg.connect(PG_DSN)
-    yield connection
-    await connection.close()
-
-
-def _privileges_required_by_routers() -> set[str]:
-    """Every string literal passed to require_privilege / require_any_privilege in app/routers."""
-    required: set[str] = set()
+def _privilege_requirements() -> list[frozenset[str]]:
+    """One entry per router dependency, holding the privileges that satisfy it (any one will do)."""
+    requirements: list[frozenset[str]] = []
 
     for path in sorted(ROUTERS_DIR.glob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -71,24 +53,52 @@ def _privileges_required_by_routers() -> set[str]:
             name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
             if name not in ("require_privilege", "require_any_privilege"):
                 continue
-            for arg in node.args:
-                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                    required.add(arg.value)
+            names = {
+                arg.value
+                for arg in node.args
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+            }
+            names -= _SENTINEL_PRIVILEGES
+            if names:
+                requirements.append(frozenset(names))
 
-    return required - _SENTINEL_PRIVILEGES
+    return requirements
+
+
+def _privileges_required_by_routers() -> set[str]:
+    """Every privilege name any router mentions, regardless of how it is combined."""
+    return set().union(*_privilege_requirements())
+
+
+def _grant_side_source(path: Path) -> str:
+    """A migration's source with its `downgrade()` body removed.
+
+    Every migration names its privileges twice — granted in `upgrade()`, revoked in `downgrade()`
+    — so scanning whole files would credit a revoke-only migration as a grant. Dropping just the
+    `downgrade` body is the coarse-but-honest cut: migrations hold their names in module-level
+    constants (010/011/012), so keeping only `upgrade()` would miss the real grants.
+    """
+    lines = path.read_text().splitlines()
+    for node in ast.parse("\n".join(lines), filename=str(path)).body:
+        if isinstance(node, ast.FunctionDef) and node.name == "downgrade":
+            del lines[node.lineno - 1 : node.end_lineno]
+            break
+    return "\n".join(lines)
 
 
 def _privileges_granted_by_migrations(candidates: set[str]) -> set[str]:
     """
-    Which of `candidates` some migration grants.
+    Which of `candidates` are named on the granting side of some migration.
 
     Deliberately reads the migrations rather than the live table: `scripts/seed_fake_data.py`
     grants privileges the migrations never do, so a database built by `reset-db-and-seed.sh` would
-    otherwise look complete while a migrations-only database (CI, and any real deployment) 403s.
-    Membership is tested against known names rather than extracting unknown ones, so the varied
-    seed styles across 002/010/012 all read the same way.
+    look complete while a migrations-only database (CI, and any real deployment) 403s.
+
+    This is a name-mention check, not SQL analysis — it catches the failure that actually happens
+    (a privilege enforced by a router that no migration ever mentions), not a migration that names
+    a privilege without really granting it.
     """
-    blob = "\n".join(path.read_text() for path in MIGRATIONS_DIR.glob("*.py"))
+    blob = "\n".join(_grant_side_source(path) for path in MIGRATIONS_DIR.glob("*.py"))
     return {name for name in candidates if f"'{name}'" in blob or f'"{name}"' in blob}
 
 
@@ -102,13 +112,16 @@ def test_router_privileges_are_discoverable():
 
 
 def test_every_router_privilege_is_seeded():
-    """A privilege enforced by a router but granted by no migration is a permanent 403."""
-    required = _privileges_required_by_routers()
-    granted = _privileges_granted_by_migrations(required)
+    """An endpoint no grant can open is a permanent 403 — exactly the ACR-35 defect."""
+    requirements = _privilege_requirements()
+    granted = _privileges_granted_by_migrations(_privileges_required_by_routers())
 
-    unseeded = required - granted - _UNSEEDED_KNOWN_GAPS
-    assert not unseeded, (
-        f"Privileges enforced by a router but granted to no role: {sorted(unseeded)}. "
+    unreachable = [
+        req for req in requirements if not (req & granted) and not (req <= _UNSEEDED_KNOWN_GAPS)
+    ]
+    assert not unreachable, (
+        "Endpoints whose privileges are granted to no role: "
+        f"{sorted(sorted(req) for req in unreachable)}. "
         "Add them to the role-privilege seed in a migration."
     )
 
@@ -134,18 +147,6 @@ async def test_shipping_privileges_granted_to_expected_roles(conn):
     )
     granted = {(r["privilege_name"], r["role_name"]) for r in rows}
 
+    # Exact equality, so an extra grant fails too — notably machine_operator, who works a line
+    # rather than the dock and must reach neither privilege.
     assert granted == EXPECTED_SHIPPING_GRANTS
-
-
-async def test_machine_operator_has_no_shipping_privileges(conn):
-    """The operator works a line, not the dock — neither privilege reaches them."""
-    rows = await conn.fetch(
-        """
-        SELECT a.privilege_name
-        FROM role_privilege_assignments a
-        JOIN roles r ON r.id = a.role_id
-        WHERE r.role_name = 'machine_operator' AND a.privilege_name LIKE 'shipping.%'
-        """
-    )
-
-    assert rows == []
