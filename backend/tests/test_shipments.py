@@ -1,6 +1,6 @@
 """
 Tests for Phase 4 — Shipments API.
-Expected: 9 passed, 0 failed.
+Expected: 13 passed, 0 failed.
 All tests run without a live database connection.
 """
 from datetime import datetime, timezone
@@ -198,6 +198,93 @@ async def test_list_shipments_no_auth_returns_401():
     async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
         resp = await client.get("/api/v1/shipments")
     assert resp.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# HTTP Test 5 — GET /shipments/{id} → 200
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_get_shipment_returns_200():
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session(privileges=("shipping.view",))
+
+    with patch(
+        "app.services.shipment_service.get_shipment",
+        new=AsyncMock(return_value=_make_mock_shipment_response()),
+    ):
+        app.dependency_overrides[get_db] = _override(session)
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+                resp = await client.get(
+                    "/api/v1/shipments/1",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            assert resp.status_code == 200
+            assert resp.json()["bol_number"] == "AV26-0001"
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+
+# ---------------------------------------------------------------------------
+# RBAC Tests 6-8 — ACR-35: the privileges are seeded, so the negative paths matter.
+# A caller holding one shipping privilege must not inherit the other.
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_create_shipment_missing_privilege_returns_403():
+    """`shipping.view` alone does not authorize booking a shipment."""
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session(privileges=("shipping.view",))
+
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+            resp = await client.post(
+                "/api/v1/shipments",
+                json=_VALID_BODY,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert resp.status_code == 403
+        assert "shipping.create" in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_list_shipments_missing_privilege_returns_403():
+    """A machine operator holding no shipping privilege cannot list shipments."""
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session(privileges=("work_orders.view",))
+
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+            resp = await client.get(
+                "/api/v1/shipments",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert resp.status_code == 403
+        assert "shipping.view" in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_get_shipment_missing_privilege_returns_403():
+    """`shipping.create` alone does not authorize reading a shipment back."""
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session(privileges=("shipping.create",))
+
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+            resp = await client.get(
+                "/api/v1/shipments/1",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert resp.status_code == 403
+        assert "shipping.view" in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------
