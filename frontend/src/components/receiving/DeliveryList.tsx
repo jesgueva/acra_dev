@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { formatDateTime } from "@/src/lib/datetime";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,7 @@ interface DeliveryListProps {
 export default function DeliveryList({ refetch }: DeliveryListProps) {
   const t = useTranslations("receiving");
   const tc = useTranslations("common");
+  const locale = useLocale();
 
   const [page, setPage] = useState(1);
   const [supplierFilter, setSupplierFilter] = useState("");
@@ -199,7 +201,7 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
                 <div className="col-span-2">
                   <p className="text-muted-foreground">{t("recordedAt")}</p>
                   <p className="font-medium">
-                    {new Date(selectedDelivery.created_at).toLocaleString()}
+                    {formatDateTime(selectedDelivery.created_at, locale)}
                   </p>
                 </div>
               </div>

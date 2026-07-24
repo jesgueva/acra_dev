@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { formatDateTime } from "@/src/lib/datetime";
 import {
   Dialog,
   DialogContent,
@@ -32,6 +33,7 @@ interface TransactionLogModalProps {
 
 export function TransactionLogModal({ lotId, onClose }: TransactionLogModalProps) {
   const t = useTranslations("inventory");
+  const locale = useLocale();
   const open = lotId !== null;
 
   const txnTypeLabel = (type: string) => {
@@ -101,7 +103,7 @@ export function TransactionLogModal({ lotId, onClose }: TransactionLogModalProps
                       {toDisplay(txn.quantity)}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      {new Date(txn.created_at).toLocaleString()}
+                      {formatDateTime(txn.created_at, locale)}
                     </span>
                   </div>
                   {txn.reason && (
