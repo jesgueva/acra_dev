@@ -33,8 +33,13 @@ export default defineConfig({
     {
       // NFR-010. Split into its own project rather than `test.use(...)` inside the spec so the
       // viewport under test is declared once, visibly, and `--project=mobile` can select it.
+      //
+      // `devices["iPhone 14"]` defaults to WebKit; this pins Chromium so the suite needs only the
+      // one browser (`npx playwright install chromium`). The flow is about layout at 390px — the
+      // viewport, touch flags and user agent all still come from the device profile — not about
+      // Safari-specific rendering. Add WebKit here if that ever becomes the point.
       name: "mobile",
-      use: { ...devices["iPhone 14"] },
+      use: { ...devices["iPhone 14"], browserName: "chromium" },
       testMatch: MOBILE_SPEC,
     },
   ],
