@@ -58,7 +58,7 @@ export default function AuthForm() {
         )}
 
         {error && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" data-testid="login-error">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
