@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
@@ -37,9 +37,6 @@ export default function MobileNav() {
   const pathname = usePathname();
   const { hasPrivilege, isAuthenticated, logout, user } = useAuth();
   const [open, setOpen] = useState(false);
-
-  // Close on navigation, or the drawer covers the page it just opened.
-  useEffect(() => setOpen(false), [pathname]);
 
   if (!isAuthenticated || pathname === `/${locale}/login`) {
     return null;
@@ -93,6 +90,9 @@ export default function MobileNav() {
                   <li key={key}>
                     <Link
                       href={href}
+                      // Dismiss on the click itself rather than in an effect watching `pathname`:
+                      // the drawer must not stay open over the page it just navigated to.
+                      onClick={() => setOpen(false)}
                       className={cn(
                         "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-all",
                         isActive
