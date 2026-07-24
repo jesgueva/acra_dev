@@ -6,11 +6,12 @@ ACR-35 — the role-privilege seed must cover every privilege the routers enforc
 permanent 403 for every user, including `company_admin`. That is exactly how `shipping.view` and
 `shipping.create` shipped: enforced by `routers/shipments.py`, granted by nobody.
 
-These tests read the privileges out of the router source and compare them against what a database
-built from `alembic upgrade head` actually grants, so the next unseeded privilege fails here rather
-than in production.
+These tests read the privileges out of the router source and compare them against what the
+migrations grant, so the next unseeded privilege fails here rather than in production. The
+shipping-specific tests then assert the resulting grants in a live database.
 
-Requires a running PostgreSQL database with migrations applied (same as `test_schema.py`).
+The live tests require a running PostgreSQL database with migrations applied (same as
+`test_schema.py`).
 """
 import ast
 import os
@@ -25,7 +26,9 @@ DATABASE_URL = os.getenv(
 )
 PG_DSN = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
 
-ROUTERS_DIR = Path(__file__).resolve().parent.parent / "app" / "routers"
+_BACKEND = Path(__file__).resolve().parent.parent
+ROUTERS_DIR = _BACKEND / "app" / "routers"
+MIGRATIONS_DIR = _BACKEND / "alembic" / "versions"
 
 # `require_privilege("authenticated")` is the documented escape hatch for "any valid JWT" — it is
 # deliberately not a row in the table (see `app/core/rbac.py`).
@@ -37,7 +40,7 @@ _SENTINEL_PRIVILEGES = {"authenticated"}
 # Tracked separately — deliberately out of ACR-35's scope rather than silently widened into it.
 _UNSEEDED_KNOWN_GAPS = {"master_data.view", "master_data.manage"}
 
-# The mapping migration 011 seeds. Mirrors the deliveries.create / deliveries.view split: the clerk
+# The mapping migration 012 seeds. Mirrors the deliveries.create / deliveries.view split: the clerk
 # works the dock in both directions, the supervisor sees outbound stock leave but does not book it.
 EXPECTED_SHIPPING_GRANTS = {
     ("shipping.view", "company_admin"),
@@ -75,9 +78,18 @@ def _privileges_required_by_routers() -> set[str]:
     return required - _SENTINEL_PRIVILEGES
 
 
-async def _seeded_privileges(conn) -> set[str]:
-    rows = await conn.fetch("SELECT DISTINCT privilege_name FROM role_privilege_assignments")
-    return {r["privilege_name"] for r in rows}
+def _privileges_granted_by_migrations(candidates: set[str]) -> set[str]:
+    """
+    Which of `candidates` some migration grants.
+
+    Deliberately reads the migrations rather than the live table: `scripts/seed_fake_data.py`
+    grants privileges the migrations never do, so a database built by `reset-db-and-seed.sh` would
+    otherwise look complete while a migrations-only database (CI, and any real deployment) 403s.
+    Membership is tested against known names rather than extracting unknown ones, so the varied
+    seed styles across 002/010/012 all read the same way.
+    """
+    blob = "\n".join(path.read_text() for path in MIGRATIONS_DIR.glob("*.py"))
+    return {name for name in candidates if f"'{name}'" in blob or f'"{name}"' in blob}
 
 
 def test_router_privileges_are_discoverable():
@@ -89,30 +101,29 @@ def test_router_privileges_are_discoverable():
     assert len(required) > 10
 
 
-async def test_every_router_privilege_is_seeded(conn):
-    """A privilege enforced by a router but granted to no role is a permanent 403."""
+def test_every_router_privilege_is_seeded():
+    """A privilege enforced by a router but granted by no migration is a permanent 403."""
     required = _privileges_required_by_routers()
-    seeded = await _seeded_privileges(conn)
+    granted = _privileges_granted_by_migrations(required)
 
-    unseeded = required - seeded - _UNSEEDED_KNOWN_GAPS
+    unseeded = required - granted - _UNSEEDED_KNOWN_GAPS
     assert not unseeded, (
         f"Privileges enforced by a router but granted to no role: {sorted(unseeded)}. "
         "Add them to the role-privilege seed in a migration."
     )
 
 
-async def test_known_gaps_are_still_gaps(conn):
+def test_known_gaps_are_still_gaps():
     """Retire an allowlist entry once it is seeded, so the list cannot rot into a blind spot."""
-    seeded = await _seeded_privileges(conn)
+    granted = _privileges_granted_by_migrations(_UNSEEDED_KNOWN_GAPS)
 
-    fixed = _UNSEEDED_KNOWN_GAPS & seeded
-    assert not fixed, (
-        f"{sorted(fixed)} is seeded now — drop it from _UNSEEDED_KNOWN_GAPS so the guard covers it."
+    assert not granted, (
+        f"{sorted(granted)} is seeded now — drop it from _UNSEEDED_KNOWN_GAPS so the guard covers it."
     )
 
 
 async def test_shipping_privileges_granted_to_expected_roles(conn):
-    """The exact ACR-35 mapping, so dropping a role from migration 011 fails loudly."""
+    """The exact ACR-35 mapping, so dropping a role from migration 012 fails loudly."""
     rows = await conn.fetch(
         """
         SELECT a.privilege_name, r.role_name

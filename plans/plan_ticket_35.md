@@ -93,7 +93,7 @@ and the migrated DB disagree again.
 ### Next migration revision
 
 `origin/master` tops out at `010_stock_reservations` (`down_revision = "009"`). **The new revision is
-`011`, revising `010`.** Heads-up: the in-flight ACR-26 branch carries a *different* `010_production_worksheets`;
+`012`, revising `011`.** Heads-up: the in-flight ACR-26 branch carries a *different* `010_production_worksheets`;
 that collision is between ACR-26 and ACR-27 and is not this ticket's to resolve, but expect a merge
 conversation if ACR-26 lands first.
 
@@ -105,7 +105,7 @@ conversation if ACR-26 lands first.
 
 | File | Purpose |
 |---|---|
-| `backend/alembic/versions/011_shipping_privileges.py` | Seed `shipping.view` / `shipping.create` grants; reversible via `DELETE … WHERE privilege_name IN (…)` |
+| `backend/alembic/versions/012_shipping_privileges.py` | Seed `shipping.view` / `shipping.create` grants; reversible via `DELETE … WHERE privilege_name IN (…)` |
 | `backend/tests/test_shipping_privileges.py` | Guard test — every privilege any router requires is seeded by some migration |
 | `frontend/src/components/shipping/__tests__/ShippingView.test.tsx` | Component tests incl. the create-button privilege gate |
 | `frontend/e2e/ticket-35.spec.ts` | Committed Playwright spec for the nav → page → create flow |
@@ -114,7 +114,7 @@ conversation if ACR-26 lands first.
 
 | File | Change |
 |---|---|
-| `backend/scripts/seed_fake_data.py` | Add `shipping.*` to `ROLE_DEFINITIONS` so the demo DB matches migration 011 |
+| `backend/scripts/seed_fake_data.py` | Add `shipping.*` to `ROLE_DEFINITIONS` so the demo DB matches migration 012 |
 | `backend/tests/test_schema.py` | Live-DB assertion: `role_privilege_assignments` holds the expected `shipping.*` rows |
 | `backend/tests/test_shipments.py` | Add the missing-privilege 403 cases (currently only 401-no-auth is covered) |
 | `frontend/src/components/layout/NavSidebar.tsx` | Uncomment the shipping entry, gate it on `PRIVILEGES.SHIPPING_VIEW` |
@@ -127,11 +127,11 @@ No model, schema, service, or endpoint changes. No new tables or columns.
 
 ## 3. Data / API
 
-### Migration `011_shipping_privileges`
+### Migration `012_shipping_privileges`
 
 ```python
-revision = "011"
-down_revision = "010"
+revision = "012"
+down_revision = "011"
 
 # Dispatch is a dock function: the clerk works both inbound and outbound.
 _SHIPPING_VIEW_ROLES   = ("company_admin", "production_supervisor", "receiving_clerk")
@@ -189,7 +189,7 @@ names appearing in a `role_privilege_assignments` insert, and assert the router 
 the seeded set.
 
 4. `test_every_router_privilege_is_seeded` — the guard above.
-5. `test_shipping_privileges_are_seeded_for_expected_roles` — assert migration 011's role tuples
+5. `test_shipping_privileges_are_seeded_for_expected_roles` — assert migration 012's role tuples
    match the table in §3, so a future edit that silently drops a role fails here.
 
 > The guard test will flag `master_data.view` and `master_data.manage` — required by
@@ -251,8 +251,8 @@ Against a real `npm run build && npm run start` server (**not `next dev`** — K
 | # | Item | Call |
 |---|---|---|
 | R1 | **Which roles get which privilege** | **Decided** — mirrors the existing `deliveries.*` split (see §3). Not escalating; it follows an in-repo pattern. |
-| R2 | **`master_data.*` has the identical bug** | **Decided** — out of scope; documented allowlist in the guard test + follow-up ticket filed. Widening migration 011 would exceed the ticket. |
-| R3 | **Migration number collision** | ACR-26's branch also has an `010`. This branch cuts from `origin/master` (`010_stock_reservations`) and takes `011`. Flag at merge. |
+| R2 | **`master_data.*` has the identical bug** | **Decided** — out of scope; documented allowlist in the guard test + follow-up ticket filed. Widening migration 012 would exceed the ticket. |
+| R3 | **Migration number collision** | **Happened.** ACR-30 merged (#27) mid-build and took `011_production_worksheets`. Rebased onto the new `origin/master` and renumbered this migration to `012`, revising `011`. |
 | R4 | **ACR-33 is in flight on shipping** | It touches `shipment_service` / invoice generation and the Shipping *page*; this ticket touches the seed + nav entry + button gate. Overlap is `ShippingView.tsx` only. Keep the diff there to the two-line privilege gate to stay mergeable. |
 | R5 | **`seed_fake_data.py` drift** | Root cause of the whole class of bug: two privilege lists, no test tying them together. The guard test covers routers→migrations. Tying `seed_fake_data` to the migration is left as a note in the follow-up. |
 | R6 | **Existing DBs** | Anyone with a DB already at `head` picks the grants up on `alembic upgrade head`; no data backfill needed. |
@@ -263,7 +263,7 @@ Against a real `npm run build && npm run start` server (**not `next dev`** — K
 
 1. Cut `ticket-35/seed-shipping-privileges-nav` from `origin/master`; bring up Postgres on the port
    that is actually free (`CLAUDE.md` says 5433; local `.env` may say 5434 — check before starting).
-2. Write `011_shipping_privileges.py`; `alembic upgrade head`; `alembic downgrade 010`; `upgrade head`
+2. Write `012_shipping_privileges.py`; `alembic upgrade head`; `alembic downgrade 010`; `upgrade head`
    again to prove reversibility.
 3. Add the `shipping.*` grants to `seed_fake_data.py`; re-seed.
 4. Backend tests: the three 403 cases in `test_shipments.py`, then `test_shipping_privileges.py`,

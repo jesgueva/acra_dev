@@ -8,14 +8,14 @@ The mapping mirrors the ``deliveries.create`` / ``deliveries.view`` split alread
 the clerk works the dock in both directions, the supervisor needs visibility into what shipped,
 and the machine operator gets neither.
 
-Revision ID: 011
-Revises: 010
+Revision ID: 012
+Revises: 011
 Create Date: 2026-07-24
 """
 from alembic import op
 
-revision = "011"
-down_revision = "010"
+revision = "012"
+down_revision = "011"
 branch_labels = None
 depends_on = None
 
