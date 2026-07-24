@@ -217,10 +217,11 @@ export function ShippingView() {
       err as { response?: { data?: { detail?: unknown } } }
     )?.response?.data?.detail;
     if (typeof detail === "string") return detail;
-    // FastAPI returns validation errors as a list of {loc, msg, …}.
+    // FastAPI returns validation errors as a list of {loc, msg, …}; Pydantic prefixes messages
+    // raised by a custom validator with "Value error, ", which means nothing to an operator.
     if (Array.isArray(detail)) {
       const first = detail[0] as { msg?: string } | undefined;
-      if (first?.msg) return first.msg;
+      if (first?.msg) return first.msg.replace(/^Value error,\s*/, "");
     }
     return null;
   }
@@ -308,7 +309,7 @@ export function ShippingView() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader title={t("title")} description={t("subtitle")}>
-        <Button onClick={openCreate}>
+        <Button onClick={openCreate} data-testid="new-shipment-button">
           <Plus className="mr-2 h-4 w-4" />
           {t("newShipment")}
         </Button>
@@ -331,7 +332,7 @@ export function ShippingView() {
       {!isLoading && !isError && data && (
         <>
           <div className="overflow-x-auto rounded-md border border-border">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm" data-testid="shipment-table">
               <thead>
                 <tr className="border-b border-border bg-muted/40">
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">
@@ -374,6 +375,7 @@ export function ShippingView() {
                   data.results.map((s) => (
                     <tr
                       key={s.id}
+                      data-testid={`shipment-row-${s.id}`}
                       className="cursor-pointer border-b border-border last:border-0 hover:bg-muted/20"
                       onClick={() => openDetail(s)}
                     >
@@ -453,6 +455,7 @@ export function ShippingView() {
                 <Label htmlFor="bol_number">{t("bolNumber")} *</Label>
                 <Input
                   id="bol_number"
+                  data-testid="bol-input"
                   value={form.bol_number}
                   onChange={(e) => setForm({ ...form, bol_number: e.target.value })}
                   required
@@ -464,6 +467,7 @@ export function ShippingView() {
                 <Label htmlFor="shipment_date">{t("shipmentDate")} *</Label>
                 <Input
                   id="shipment_date"
+                  data-testid="date-input"
                   type="date"
                   value={form.shipment_date}
                   onChange={(e) => setForm({ ...form, shipment_date: e.target.value })}
@@ -526,7 +530,7 @@ export function ShippingView() {
                     })
                   }
                 >
-                  <SelectTrigger id="type">
+                  <SelectTrigger id="type" data-testid="type-select">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -542,6 +546,7 @@ export function ShippingView() {
                   <Label htmlFor="source">{t("source")}</Label>
                   <Input
                     id="source"
+                    data-testid="source-input"
                     value={form.source}
                     onChange={(e) => setForm({ ...form, source: e.target.value })}
                     maxLength={50}
@@ -600,6 +605,7 @@ export function ShippingView() {
                             onChange={(e) => updateLine(idx, "lot_id", e.target.value)}
                             placeholder="Lot ID"
                             className="h-8"
+                            data-testid={`lot-input-${idx}`}
                             aria-label={`${t("lotId")} ${idx + 1}`}
                           />
                         </td>
@@ -612,6 +618,7 @@ export function ShippingView() {
                             onChange={(e) => updateLine(idx, "quantity", e.target.value)}
                             placeholder="0.00"
                             className="h-8"
+                            data-testid={`qty-input-${idx}`}
                             aria-label={`${t("quantity")} ${idx + 1}`}
                           />
                         </td>
@@ -626,6 +633,7 @@ export function ShippingView() {
                             }
                             placeholder="0.00"
                             className="h-8"
+                            data-testid={`price-input-${idx}`}
                             aria-label={`${t("unitPrice")} ${idx + 1}`}
                           />
                         </td>
@@ -664,7 +672,7 @@ export function ShippingView() {
               >
                 {tc("cancel")}
               </Button>
-              <Button type="submit" disabled={createMutation.isPending}>
+              <Button type="submit" data-testid="submit-shipment" disabled={createMutation.isPending}>
                 {createMutation.isPending ? tc("loading") : t("submit")}
               </Button>
             </DialogFooter>
@@ -760,6 +768,7 @@ export function ShippingView() {
                     <Button
                       type="button"
                       size="sm"
+                      data-testid="generate-invoice"
                       onClick={() => invoiceMutation.mutate(detailShipment.id)}
                       disabled={invoiceMutation.isPending}
                     >
@@ -784,11 +793,14 @@ export function ShippingView() {
                 )}
 
                 {invoice && (
-                  <div className="space-y-2 rounded-md border border-border p-3">
+                  <div
+                    className="space-y-2 rounded-md border border-border p-3"
+                    data-testid="invoice-panel"
+                  >
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <p className="text-muted-foreground">{t("invoiceNumber")}</p>
-                        <p className="font-mono font-medium">
+                        <p className="font-mono font-medium" data-testid="invoice-number">
                           {invoice.invoice_number}
                         </p>
                       </div>
@@ -826,7 +838,7 @@ export function ShippingView() {
                     </div>
                     <div className="flex justify-between font-medium">
                       <span>{t("invoiceTotal")}</span>
-                      <span>
+                      <span data-testid="invoice-total">
                         {toDisplay(invoice.total_amount)} {invoice.currency}
                       </span>
                     </div>
