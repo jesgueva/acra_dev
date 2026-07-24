@@ -9,9 +9,11 @@ Before this revision the six shared document facts lived twice — once on ``del
 revision creates ``delivery_notes``, backfills one note per existing row, makes the link
 ``NOT NULL UNIQUE``, and **drops the duplicated columns** so each fact has exactly one home.
 
-Numbering: slot ``010`` is contested by three unmerged branches (ACR-27 reservations, ACR-30
-worksheets, ACR-33 invoices), so this takes ``011`` and revises ``009``, which is ``master`` head.
-Whichever branch merges second re-points its own ``down_revision`` (CLAUDE.md → Merge Notes).
+Numbering: slot ``010``/``011`` were contested while this was in flight. ACR-27 (reservations) took
+``010`` and ACR-30 (production worksheets) took ``011`` on ``master`` first, so this revision moved
+to ``012`` and now revises ``011`` — the standing manual resolution for concurrent branches
+(CLAUDE.md → Merge Notes). ACR-33's unmerged ``010_shipment_invoices.py`` still needs the same
+treatment.
 
 **Downgrade caveats**, both inherent rather than incidental:
 
@@ -21,15 +23,15 @@ Whichever branch merges second re-points its own ``down_revision`` (CLAUDE.md �
    suffix on the way down. Reversing it would mean guessing which suffixes were ours, and the
    duplicate was only ever reachable through the ``force=true`` override.
 
-Revision ID: 011
-Revises: 009
+Revision ID: 012
+Revises: 011
 Create Date: 2026-07-23
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "011"
-down_revision = "009"
+revision = "012"
+down_revision = "011"
 branch_labels = None
 depends_on = None
 

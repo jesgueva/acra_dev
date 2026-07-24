@@ -1,9 +1,9 @@
-"""Migration 011 up/down against a real database (ACR-39).
+"""The delivery-notes migration, up and down against a real database (ACR-39).
 
 The delivery-note backfill is the riskiest part of this ticket: it rewrites live receiving and
 shipping rows, de-duplicates BoL references that `force=true` allowed to repeat, and drops columns.
-Mocked sessions cannot prove any of that, so this test builds a scratch database, seeds it at `009`,
-migrates to `011`, asserts the result, then migrates back down.
+Mocked sessions cannot prove any of that, so this test builds a scratch database, seeds it at the
+preceding revision, migrates through ours, asserts the result, then migrates back down.
 
 Skipped automatically when no Postgres is reachable.
 """
@@ -18,6 +18,11 @@ from pathlib import Path
 import pytest
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+#: Everything on the chain before this ticket's migration, and the migration itself.
+#: Named so a renumber at merge time is a one-line edit.
+BASELINE_REVISION = "011"
+DELIVERY_NOTES_REVISION = "012"
 
 asyncpg = pytest.importorskip("asyncpg")
 
@@ -76,7 +81,7 @@ def _alembic(scratch_db: str, *args: str) -> None:
 
 @pytest.fixture
 async def scratch_db():
-    """A throwaway database migrated to 009, dropped on the way out."""
+    """A throwaway database migrated to the revision before ours, dropped on the way out."""
     name = f"acra_mig_{uuid.uuid4().hex[:12]}"
     admin = await _connect("postgres")
     try:
@@ -85,7 +90,7 @@ async def scratch_db():
         await admin.close()
 
     try:
-        _alembic(name, "upgrade", "009")
+        _alembic(name, "upgrade", BASELINE_REVISION)
         yield name
     finally:
         admin = await _connect("postgres")
@@ -100,7 +105,7 @@ async def scratch_db():
             await admin.close()
 
 
-async def _seed_at_009(conn) -> None:
+async def _seed_pre_migration(conn) -> None:
     """Two deliveries sharing a BoL (the force=true path) and one shipment of each flavour."""
     user_id = await conn.fetchval(
         "INSERT INTO users (username, password_hash, full_name, status) "
@@ -132,14 +137,14 @@ async def _seed_at_009(conn) -> None:
     )
 
 
-async def test_migration_011_backfills_and_reverses(scratch_db):
+async def test_migration_backfills_and_reverses(scratch_db):
     conn = await _connect(scratch_db)
     try:
-        await _seed_at_009(conn)
+        await _seed_pre_migration(conn)
     finally:
         await conn.close()
 
-    _alembic(scratch_db, "upgrade", "011")
+    _alembic(scratch_db, "upgrade", DELIVERY_NOTES_REVISION)
 
     conn = await _connect(scratch_db)
     try:
@@ -198,7 +203,7 @@ async def test_migration_011_backfills_and_reverses(scratch_db):
     finally:
         await conn.close()
 
-    _alembic(scratch_db, "downgrade", "009")
+    _alembic(scratch_db, "downgrade", BASELINE_REVISION)
 
     conn = await _connect(scratch_db)
     try:
@@ -221,9 +226,9 @@ async def test_migration_011_backfills_and_reverses(scratch_db):
         await conn.close()
 
 
-async def test_migration_011_enforces_note_constraints(scratch_db):
+async def test_migration_enforces_note_constraints(scratch_db):
     """The CHECK constraints §4.1/§4.3 rely on are real, not conventional."""
-    _alembic(scratch_db, "upgrade", "011")
+    _alembic(scratch_db, "upgrade", DELIVERY_NOTES_REVISION)
 
     conn = await _connect(scratch_db)
     try:
