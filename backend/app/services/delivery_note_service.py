@@ -8,8 +8,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.contact import Contact
-from app.models.delivery_note import DeliveryNote, DeliveryNoteType
+from app.models.delivery_note import (
+    DOCUMENT_NUMBER_MAX,
+    DeliveryNote,
+    DeliveryNoteType,
+)
+from app.services import contact_service
 from app.schemas.delivery_note import (
     DeliveryNoteListResponse,
     DeliveryNoteResponse,
@@ -35,11 +39,12 @@ def _response(note: DeliveryNote, partner_name: Optional[str]) -> DeliveryNoteRe
     )
 
 
-async def _load_partners(db: AsyncSession, ids: set[int]) -> dict[int, Contact]:
+async def load_by_ids(db: AsyncSession, ids: set[int]) -> dict[int, DeliveryNote]:
+    """Batch-load notes keyed by id, for projecting document facts onto headers."""
     if not ids:
         return {}
-    res = await db.execute(select(Contact).where(Contact.id.in_(ids)))
-    return {c.id: c for c in res.scalars().all()}
+    res = await db.execute(select(DeliveryNote).where(DeliveryNote.id.in_(ids)))
+    return {n.id: n for n in res.scalars().all()}
 
 
 async def _next_internal_number(db: AsyncSession, on: Optional[date] = None) -> str:
@@ -93,10 +98,18 @@ async def dedupe_document_number(
     )
     if document_number not in taken:
         return document_number
+
+    def _suffixed(n: int) -> str:
+        # The column is String(DOCUMENT_NUMBER_MAX); trim the base, never the suffix, so a
+        # maximum-length BoL does not overflow when it gains one.
+        suffix = f" ({n})"
+        base = document_number[: DOCUMENT_NUMBER_MAX - len(suffix)]
+        return f"{base}{suffix}"
+
     n = 2
-    while f"{document_number} ({n})" in taken:
+    while _suffixed(n) in taken:
         n += 1
-    return f"{document_number} ({n})"
+    return _suffixed(n)
 
 
 async def _insert_with_free_number(
@@ -218,7 +231,7 @@ async def list_notes(
         )
     ).scalars().all()
 
-    partners = await _load_partners(db, {n.partner_id for n in rows if n.partner_id})
+    partners = await contact_service.load_by_ids(db, {n.partner_id for n in rows if n.partner_id})
     results = [
         _response(n, partners[n.partner_id].name if n.partner_id in partners else None)
         for n in rows
@@ -238,7 +251,7 @@ async def get_note(db: AsyncSession, note_id: int) -> DeliveryNoteResponse:
             detail=f"Delivery note {note_id} not found",
         )
 
-    partners = await _load_partners(db, {note.partner_id} if note.partner_id else set())
+    partners = await contact_service.load_by_ids(db, {note.partner_id} if note.partner_id else set())
     return _response(
         note, partners[note.partner_id].name if note.partner_id in partners else None
     )

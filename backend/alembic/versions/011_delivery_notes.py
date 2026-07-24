@@ -92,7 +92,8 @@ def upgrade():
             d.contact_id,
             CASE WHEN d.rn = 1
                  THEN d.bol_reference
-                 ELSE d.bol_reference || ' (' || d.rn || ')'
+                 ELSE left(d.bol_reference, 100 - length(' (' || d.rn || ')'))
+                      || ' (' || d.rn || ')'
             END,
             d.delivery_date,
             true,
@@ -124,7 +125,8 @@ def upgrade():
             s.contact_id,
             CASE WHEN s.rn = 1
                  THEN s.bol_number
-                 ELSE s.bol_number || ' (' || s.rn || ')'
+                 ELSE left(s.bol_number, 100 - length(' (' || s.rn || ')'))
+                      || ' (' || s.rn || ')'
             END,
             s.shipment_date,
             false,

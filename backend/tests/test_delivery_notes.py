@@ -15,7 +15,7 @@ from app.core.database import get_db
 from app.core.security import create_access_token
 from app.main import app
 from app.models.delivery_note import DeliveryNote, DeliveryNoteType
-from app.schemas.delivery_note import DeliveryNoteCreate
+from app.schemas.delivery_note import DeliveryNoteBase
 from tests.conftest import (
     _make_session,
     _make_user,
@@ -258,7 +258,7 @@ async def test_delivery_notes_require_auth(path):
 # ---------------------------------------------------------------------------
 def test_schema_rejects_unknown_type():
     with pytest.raises(ValidationError):
-        DeliveryNoteCreate(
+        DeliveryNoteBase(
             type="not_a_type",
             document_number="X-1",
             document_date="2026-07-23",
@@ -268,7 +268,7 @@ def test_schema_rejects_unknown_type():
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_schema_rejects_blank_document_number(blank):
     with pytest.raises(ValidationError):
-        DeliveryNoteCreate(
+        DeliveryNoteBase(
             type=DeliveryNoteType.INBOUND,
             document_number=blank,
             document_date="2026-07-23",
@@ -278,7 +278,7 @@ def test_schema_rejects_blank_document_number(blank):
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_schema_rejects_blank_document_date(blank):
     with pytest.raises(ValidationError):
-        DeliveryNoteCreate(
+        DeliveryNoteBase(
             type=DeliveryNoteType.INBOUND,
             document_number="X-1",
             document_date=blank,
@@ -288,7 +288,7 @@ def test_schema_rejects_blank_document_date(blank):
 def test_schema_rejects_source_on_non_direct_customer_note():
     """§4.3 — only a direct-customer note names an originating location."""
     with pytest.raises(ValidationError, match="direct_customer"):
-        DeliveryNoteCreate(
+        DeliveryNoteBase(
             type=DeliveryNoteType.TRANSFER,
             document_number="X-1",
             document_date="2026-07-23",
@@ -297,7 +297,7 @@ def test_schema_rejects_source_on_non_direct_customer_note():
 
 
 def test_schema_allows_source_on_direct_customer_note():
-    note = DeliveryNoteCreate(
+    note = DeliveryNoteBase(
         type=DeliveryNoteType.DIRECT_CUSTOMER,
         document_number="X-1",
         document_date="2026-07-23",
@@ -307,7 +307,7 @@ def test_schema_allows_source_on_direct_customer_note():
 
 
 def test_schema_normalizes_empty_source_to_none():
-    note = DeliveryNoteCreate(
+    note = DeliveryNoteBase(
         type=DeliveryNoteType.TRANSFER,
         document_number="  X-1  ",
         document_date="2026-07-23",
@@ -319,7 +319,7 @@ def test_schema_normalizes_empty_source_to_none():
 
 def test_schema_rejects_overlong_document_number():
     with pytest.raises(ValidationError):
-        DeliveryNoteCreate(
+        DeliveryNoteBase(
             type=DeliveryNoteType.INBOUND,
             document_number="X" * 101,
             document_date="2026-07-23",
@@ -416,6 +416,20 @@ async def test_dedupe_suffixes_a_taken_number():
 
     session = _session_returning(scalars_list=["BOL-1"])
     assert await dedupe_document_number(session, "inbound", "BOL-1") == "BOL-1 (2)"
+
+
+@pytest.mark.asyncio
+async def test_dedupe_keeps_a_maximum_length_number_within_the_column():
+    """A 100-char BoL must not overflow varchar(100) when it gains a suffix."""
+    from app.models.delivery_note import DOCUMENT_NUMBER_MAX
+    from app.services.delivery_note_service import dedupe_document_number
+
+    longest = "X" * DOCUMENT_NUMBER_MAX
+    session = _session_returning(scalars_list=[longest])
+    result = await dedupe_document_number(session, "inbound", longest)
+
+    assert len(result) == DOCUMENT_NUMBER_MAX
+    assert result.endswith(" (2)")
 
 
 @pytest.mark.asyncio

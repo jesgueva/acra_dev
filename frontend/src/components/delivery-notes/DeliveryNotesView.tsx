@@ -53,6 +53,11 @@ const TYPE_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
 
 const ALL = "all";
 
+/** `direct_customer` is the only type whose message key differs from its value. */
+function typeMessageKey(type: string) {
+  return type === "direct_customer" ? "directCustomer" : type;
+}
+
 export function DeliveryNotesView() {
   const t = useTranslations("deliveryNotes");
   const tc = useTranslations("common");
@@ -113,7 +118,7 @@ export function DeliveryNotesView() {
               <SelectItem value={ALL}>{t("allTypes")}</SelectItem>
               {NOTE_TYPES.map((type) => (
                 <SelectItem key={type} value={type}>
-                  {t(type === "direct_customer" ? "directCustomer" : type)}
+                  {t(typeMessageKey(type))}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -213,11 +218,7 @@ export function DeliveryNotesView() {
                       </td>
                       <td className="px-4 py-3">
                         <Badge variant={TYPE_VARIANTS[note.type] ?? "outline"}>
-                          {t(
-                            note.type === "direct_customer"
-                              ? "directCustomer"
-                              : note.type
-                          )}
+                          {t(typeMessageKey(note.type))}
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">

@@ -38,6 +38,9 @@ class DeliveryNoteType(str, Enum):
     INTERNAL = "internal"                  # system-generated: production issues and FG receipts
 
 
+#: Width of `document_numbers`. Shared so de-duplication can trim to fit.
+DOCUMENT_NUMBER_MAX = 100
+
 #: Values allowed in the DB CHECK constraint, in enum order.
 DELIVERY_NOTE_TYPES: tuple[str, ...] = tuple(t.value for t in DeliveryNoteType)
 
@@ -51,7 +54,7 @@ class DeliveryNote(Base):
     source = Column(String(50), nullable=True)
     # NULL for INTERNAL notes: production consumes from ourselves, there is no counterparty.
     partner_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
-    document_number = Column(String(100), nullable=False)
+    document_number = Column(String(DOCUMENT_NUMBER_MAX), nullable=False)
     # String(20) to match `deliveries.delivery_date` / `shipments.shipment_date`, rather than
     # introducing a third date convention. Converting all three is a separate sweep.
     document_date = Column(String(20), nullable=False)

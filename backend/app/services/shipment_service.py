@@ -17,7 +17,7 @@ from app.schemas.shipment import (
     ShipmentListResponse,
     ShipmentResponse,
 )
-from app.services import delivery_note_service
+from app.services import contact_service, delivery_note_service
 
 
 def _item_response(
@@ -68,20 +68,6 @@ def _shipment_response(
         created_at=s.created_at,
         items=[_item_response(it, lots_by_id, products_by_id) for it in items],
     )
-
-
-async def _load_notes(db: AsyncSession, ids: set[int]) -> dict[int, DeliveryNote]:
-    if not ids:
-        return {}
-    res = await db.execute(select(DeliveryNote).where(DeliveryNote.id.in_(ids)))
-    return {n.id: n for n in res.scalars().all()}
-
-
-async def _load_contacts(db: AsyncSession, ids: set[int]) -> dict[int, Contact]:
-    if not ids:
-        return {}
-    res = await db.execute(select(Contact).where(Contact.id.in_(ids)))
-    return {c.id: c for c in res.scalars().all()}
 
 
 async def _load_lots(db: AsyncSession, ids: set[int]) -> dict[int, InventoryLot]:
@@ -183,7 +169,7 @@ async def create_shipment(
     await db.commit()
 
     contact_ids: set[int] = {cid for cid in (body.contact_id, body.carrier_id) if cid}
-    contacts_by_id = await _load_contacts(db, contact_ids)
+    contacts_by_id = await contact_service.load_by_ids(db, contact_ids)
     product_ids = {lot.product_id for lot in lots_by_id.values() if lot.product_id}
     products_by_id = await _load_products(db, product_ids)
 
@@ -234,7 +220,7 @@ async def list_shipments(
         for it in items_rows:
             items_map.setdefault(it.shipment_id, []).append(it)
 
-        notes_by_id = await _load_notes(db, {s.delivery_note_id for s in rows})
+        notes_by_id = await delivery_note_service.load_by_ids(db, {s.delivery_note_id for s in rows})
 
         contact_ids: set[int] = set()
         for s in rows:
@@ -243,7 +229,7 @@ async def list_shipments(
                 if cid:
                     contact_ids.add(cid)
 
-        contacts_by_id = await _load_contacts(db, contact_ids)
+        contacts_by_id = await contact_service.load_by_ids(db, contact_ids)
 
         lot_ids = {it.lot_id for it in items_rows}
         lots_by_id = await _load_lots(db, lot_ids)
@@ -281,7 +267,7 @@ async def get_shipment(db: AsyncSession, shipment_id: int) -> ShipmentResponse:
         )
     ).scalars().all()
 
-    note = (await _load_notes(db, {shipment.delivery_note_id})).get(
+    note = (await delivery_note_service.load_by_ids(db, {shipment.delivery_note_id})).get(
         shipment.delivery_note_id
     )
 
@@ -290,7 +276,7 @@ async def get_shipment(db: AsyncSession, shipment_id: int) -> ShipmentResponse:
         for cid in ((note.partner_id if note else None), shipment.carrier_id)
         if cid
     }
-    contacts_by_id = await _load_contacts(db, contact_ids)
+    contacts_by_id = await contact_service.load_by_ids(db, contact_ids)
 
     lot_ids = {it.lot_id for it in items_rows}
     lots_by_id = await _load_lots(db, lot_ids)

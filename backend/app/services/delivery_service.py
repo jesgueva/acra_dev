@@ -264,18 +264,9 @@ async def list_deliveries(
         for it in items_rows:
             items_map.setdefault(it.delivery_id, []).append(it)
 
-        notes_by_id: dict[int, DeliveryNote] = {
-            n.id: n
-            for n in (
-                await db.execute(
-                    select(DeliveryNote).where(
-                        DeliveryNote.id.in_([d.delivery_note_id for d in rows])
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        }
+        notes_by_id = await delivery_note_service.load_by_ids(
+            db, {d.delivery_note_id for d in rows}
+        )
 
         contact_ids: set[int] = set()
         for d in rows:

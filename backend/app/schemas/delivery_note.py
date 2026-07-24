@@ -37,10 +37,6 @@ class DeliveryNoteBase(BaseModel):
         return self
 
 
-class DeliveryNoteCreate(DeliveryNoteBase):
-    pass
-
-
 class DeliveryNoteResponse(DeliveryNoteBase):
     model_config = ConfigDict(from_attributes=True)
 
