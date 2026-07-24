@@ -337,11 +337,13 @@ async def close_worksheet(
         entity_id=worksheet_id,
         details={"consumed_by_product": consumed_by_product},
     )
-    await db.commit()
 
-    # Read for the response before touching ws below: any query autoflushes, and a dirty ws would
-    # emit a stray UPDATE in a fresh transaction that nothing ever commits.
+    # Read the response data inside the same transaction: doing it after the commit would open a
+    # second transaction purely to render a reply, and it must happen before ws is touched below
+    # (a query autoflushes, and a dirty ws would emit a stray UPDATE).
     products_by_id = await _load_products(db, {line.product_id for line in lines})
+
+    await db.commit()
 
     # ws still holds its pre-guard values (the UPDATE ran with synchronize_session=False), so the
     # three fields the guard changed are restated here rather than re-read.

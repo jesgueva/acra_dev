@@ -31,6 +31,7 @@ and stayed green with the version guard deleted, because "insufficient stock" qu
 the guard. That is why ``ABUNDANT_STOCK`` exists.
 """
 import asyncio
+import uuid
 
 import pytest
 from fastapi import HTTPException
@@ -96,7 +97,7 @@ async def _seed(sessionmaker_, *, lot_quantities, worksheets, planned=6000) -> S
                 "INSERT INTO users (username, password_hash, full_name, preferred_language, status)"
                 " VALUES (:u, 'x', 'TC-02 Runner', 'en', 'active') RETURNING id"
             ),
-            {"u": f"tc02_{__import__('uuid').uuid4().hex[:12]}"},
+            {"u": f"tc02_{uuid.uuid4().hex[:12]}"},
         )
         product_id = await db.scalar(
             text(
@@ -224,47 +225,47 @@ async def test_negative_control_unsafe_close_loses_an_update(sessionmaker_):
     """An unguarded read-modify-write close double-consumes. If this ever passes cleanly, every
     other test in this file is worthless — so it is asserted, not commented.
 
-    The interleaving is forced rather than raced, so the control is deterministic: both
-    transactions read the same on-hand before either writes. That is exactly the window the real
-    close closes with ``SELECT ... FOR UPDATE`` + the version guard.
+    Both transactions are held genuinely **open and overlapping**: A reads, then B reads before A
+    has written, and only then do they write. Interleaving them by hand rather than racing them
+    makes the control deterministic — it fails the same way every run, instead of only when the
+    scheduler happens to cooperate. That overlap is precisely the window ``SELECT ... FOR UPDATE``
+    plus the version guard closes.
     """
     scenario = await _seed(sessionmaker_, lot_quantities=[10000], worksheets=2)
+    draw = 6000
     try:
         lot_id = scenario.lot_ids[0]
+        read_sql = text("SELECT quantity_on_hand FROM inventory_lots WHERE id = :id")
+        write_sql = text("UPDATE inventory_lots SET quantity_on_hand = :q WHERE id = :id")
 
-        async def unsafe_close(consume: int):
-            """No row lock, no version guard — the naive implementation."""
-            async with sessionmaker_() as db:
-                on_hand = await db.scalar(
-                    text("SELECT quantity_on_hand FROM inventory_lots WHERE id = :id"),
-                    {"id": lot_id},
-                )
-                return db, on_hand
+        # Two sessions, two connections, both transactions open at the same time. Nothing is
+        # returned out of the `async with`, so neither transaction closes early.
+        async with sessionmaker_() as db_a, sessionmaker_() as db_b:
+            read_a = await db_a.scalar(read_sql, {"id": lot_id})
+            read_b = await db_b.scalar(read_sql, {"id": lot_id})
 
-        # Both closers read first...
-        db_a, read_a = await unsafe_close(6000)
-        db_b, read_b = await unsafe_close(6000)
-        assert read_a == read_b == 10000
+            # No lock was taken, so B sees the pre-A value. This is the lost update forming.
+            assert read_a == read_b == 10000
 
-        # ...then both write what they computed from that stale read.
-        try:
-            for db, read in ((db_a, read_a), (db_b, read_b)):
-                await db.execute(
-                    text("UPDATE inventory_lots SET quantity_on_hand = :q WHERE id = :id"),
-                    {"q": read - 6000, "id": lot_id},
-                )
-                await db.commit()
-        finally:
-            await db_a.close()
-            await db_b.close()
+            await db_a.execute(write_sql, {"q": read_a - draw, "id": lot_id})
+            await db_a.commit()
+
+            # B still writes the total it computed from its stale read, erasing A's decrement.
+            await db_b.execute(write_sql, {"q": read_b - draw, "id": lot_id})
+            await db_b.commit()
 
         final = await _on_hand(sessionmaker_, scenario)
-        # 12000 was consumed but only 6000 left the books: the lost update, made visible.
-        assert final == 4000, (
-            "the unsafe path should have lost an update; if this is 4000 by a different route, "
-            "or the writes failed, the control is not proving what it claims"
+        intended = 2 * draw  # what the two closers together believed they consumed
+        actual_decrement = 10000 - final
+
+        assert actual_decrement == draw, (
+            f"expected only one closer's {draw} to survive, saw {actual_decrement}"
         )
-        assert final != 10000 - 12000, "sanity: a correct implementation would have refused one"
+        assert actual_decrement < intended, (
+            f"the unsafe path must lose an update: {intended} was consumed but only "
+            f"{actual_decrement} left the books. If these are equal, the control is not proving "
+            "what it claims and every other test in this file is unverified."
+        )
     finally:
         await _teardown(sessionmaker_, scenario)
 
