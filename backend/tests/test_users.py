@@ -223,12 +223,12 @@ async def test_update_user_last_admin_http():
     app.dependency_overrides[get_db] = _override(session)
     try:
         with patch("app.services.user_service.update_user", new_callable=AsyncMock) as mock:
-            mock.side_effect = HTTPException(400, detail="Cannot deactivate the last admin")
+            mock.side_effect = HTTPException(409, detail="Cannot deactivate the last admin")
             async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
                 resp = await c.patch(
                     "/api/v1/users/1", json={"status": "inactive"}, headers=_auth_header()
                 )
-        assert resp.status_code == 400
+        assert resp.status_code == 409
     finally:
         app.dependency_overrides.pop(get_db, None)
 
@@ -364,7 +364,7 @@ async def test_svc_update_user_last_admin():
     data = UserUpdate(status="inactive")
     with pytest.raises(HTTPException) as exc_info:
         await user_service.update_user(db, 1, data, actor_id=1)
-    assert exc_info.value.status_code == 400
+    assert exc_info.value.status_code == 409
     assert "last admin" in exc_info.value.detail
 
 
@@ -408,3 +408,79 @@ async def test_svc_replace_roles():
     ]
     result = await user_service.replace_roles(db, 1, [2], actor_id=1)
     assert "operator" in result.roles
+
+
+# ---------------------------------------------------------------------------
+# T19 — production_line round-trip (schema + service)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_svc_create_user_persists_production_line():
+    """An operator created with a production line keeps it on the ORM object."""
+    db = _make_service_db()
+    added_user: list = []
+
+    def _on_add(obj):
+        if isinstance(obj, User):
+            added_user.append(obj)
+
+    db.add = MagicMock(side_effect=_on_add)
+
+    async def _on_flush():
+        for u in added_user:
+            u.id = 8
+            u.created_at = datetime(2026, 1, 1)
+
+    db.flush = _on_flush
+    db.execute.side_effect = [
+        _r_scalar(None),                          # no duplicate username
+        _r_fetchall([(8, "machine_operator")]),   # _fetch_roles_for_users
+    ]
+    data = UserCreate(
+        username="op7", full_name="Operator Seven", password="pass123",
+        preferred_language="en", production_line="LINE-A", role_ids=[],
+    )
+    result = await user_service.create_user(db, data, actor_id=1)
+
+    assert added_user[0].production_line == "LINE-A"
+    assert result.production_line == "LINE-A"
+
+
+@pytest.mark.asyncio
+async def test_svc_update_user_sets_production_line():
+    user = _make_db_user()
+    user.production_line = None
+    db = _make_service_db()
+    db.execute.side_effect = [
+        _r_scalar(user),
+        _r_fetchall([(1, "machine_operator")]),
+    ]
+    result = await user_service.update_user(
+        db, 1, UserUpdate(production_line="LINE-B"), actor_id=1
+    )
+    assert user.production_line == "LINE-B"
+    assert result.production_line == "LINE-B"
+
+
+@pytest.mark.asyncio
+async def test_svc_update_user_non_last_admin_deactivates():
+    """Deactivating an admin while another active admin remains succeeds."""
+    user = _make_db_user()
+    admin_role = Role()
+    admin_role.id = 1
+    admin_role.role_name = "company_admin"
+    ura = UserRoleAssignment()
+    ura.user_id = 1
+    ura.role_id = 1
+    db = _make_service_db()
+    db.execute.side_effect = [
+        _r_scalar(user),          # _get_user_or_404
+        _r_scalar(admin_role),    # company_admin role lookup
+        _r_scalar_count(2),       # two active admins — guard must not fire
+        _r_scalar(ura),
+        _r_fetchall([(1, "company_admin")]),
+    ]
+    result = await user_service.update_user(
+        db, 1, UserUpdate(status="inactive"), actor_id=1
+    )
+    assert result.status == "inactive"

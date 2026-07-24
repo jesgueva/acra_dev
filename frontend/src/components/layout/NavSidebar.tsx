@@ -30,8 +30,8 @@ const NAV_ITEMS = [
   // { key: "workOrders" as const, path: "work-orders", icon: ClipboardList, privilege: PRIVILEGES.RECEIVING_VIEW },
   // { key: "shippingNav" as const, path: "shipping", icon: PackageCheck, privilege: PRIVILEGES.RECEIVING_VIEW },
   { key: "contacts" as const, path: "master-data/contacts", icon: Database, privilege: PRIVILEGES.RECEIVING_VIEW },
-  // { key: "users" as const, path: "users", icon: Users, privilege: PRIVILEGES.USERS_MANAGE },
-  // { key: "audit" as const, path: "audit", icon: ScrollText, privilege: PRIVILEGES.AUDIT_VIEW },
+  { key: "users" as const, path: "users", icon: Users, privilege: PRIVILEGES.USERS_MANAGE },
+  { key: "audit" as const, path: "audit", icon: ScrollText, privilege: PRIVILEGES.AUDIT_VIEW },
 ];
 
 export default function NavSidebar() {

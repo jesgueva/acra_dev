@@ -36,7 +36,7 @@ async def test_list_audit_logs_returns_200():
     log = _make_log()
 
     def h_count(r): r.scalar.return_value = 1
-    def h_rows(r): r.scalars.return_value.all.return_value = [log]
+    def h_rows(r): r.fetchall.return_value = [(log, "admin")]
 
     session = _make_session(user, ["company_admin"], PRIVS_AUDIT, [h_count, h_rows])
     app.dependency_overrides[get_db] = _override(session)
@@ -54,6 +54,8 @@ async def test_list_audit_logs_returns_200():
         assert len(body["results"]) == 1
         assert body["results"][0]["action"] == "login"
         assert body["results"][0]["entity_type"] == "User"
+        # T19: the actor's username is joined in so the UI need not resolve IDs.
+        assert body["results"][0]["username"] == "admin"
     finally:
         app.dependency_overrides.pop(get_db, None)
 
@@ -69,7 +71,7 @@ async def test_list_audit_logs_with_filters():
     log = _make_log(action="logout", entity_type="Session")
 
     def h_count(r): r.scalar.return_value = 1
-    def h_rows(r): r.scalars.return_value.all.return_value = [log]
+    def h_rows(r): r.fetchall.return_value = [(log, "admin")]
 
     session = _make_session(user, ["company_admin"], PRIVS_AUDIT, [h_count, h_rows])
     app.dependency_overrides[get_db] = _override(session)
@@ -103,5 +105,30 @@ async def test_list_audit_logs_missing_privilege():
                 headers={"Authorization": f"Bearer {token}"},
             )
         assert resp.status_code == 403
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+async def test_list_audit_logs_orphaned_actor_has_null_username():
+    """The outer join keeps entries whose actor no longer exists (username -> None)."""
+    user = _make_user()
+    log = _make_log(user_id=999)
+
+    def h_count(r): r.scalar.return_value = 1
+    def h_rows(r): r.fetchall.return_value = [(log, None)]
+
+    session = _make_session(user, ["company_admin"], PRIVS_AUDIT, [h_count, h_rows])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        token = create_access_token(user_id=1)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+            resp = await client.get(
+                "/api/v1/audit-logs",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["results"][0]["user_id"] == 999
+        assert body["results"][0]["username"] is None
     finally:
         app.dependency_overrides.pop(get_db, None)
