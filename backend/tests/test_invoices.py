@@ -2,7 +2,6 @@
 Tests for ACR-33 — Invoice generation against a shipment.
 All tests run without a live database connection.
 """
-import itertools
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -122,26 +121,8 @@ def _rbac_session(privileges=("shipping.view", "shipping.create")):
 
 
 def _flushing_session(handlers):
-    """A service session whose `flush()` fills in what the database would.
-
-    `generate_invoice` reads `invoice.id` straight after its first flush to stamp each line, and
-    serializes `created_at` (a `server_default`) into the response — a mock that leaves both None
-    cannot exercise that path at all.
-    """
-    session = _make_service_session(handlers)
-    added: list = []
-    session.add = added.append
-    next_id = itertools.count(1)
-
-    async def _flush():
-        for obj in added:
-            if getattr(obj, "id", None) is None:
-                obj.id = next(next_id)
-            if hasattr(obj, "created_at") and obj.created_at is None:
-                obj.created_at = _CREATED_AT
-
-    session.flush = _flush
-    return session
+    """`generate_invoice` reads `invoice.id` right after its first flush, so ids must be assigned."""
+    return _make_service_session(handlers, assign_ids=True, created_at=_CREATED_AT)
 
 
 def _token_user():
@@ -489,3 +470,35 @@ async def test_invoice_line_description_uses_product_and_lot():
     )
 
     assert resp.lines[0].description == "Steel Rod (lot LOT-0001)"
+
+
+# ---------------------------------------------------------------------------
+# Service 9 — the check-then-insert race resolves to 409, not a 500
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_concurrent_generate_surfaces_409_not_500():
+    """Two callers can both pass the existence check; the DB rejects the loser.
+
+    `invoices.shipment_id` is UNIQUE, so the second commit raises IntegrityError. That must come
+    back as the same 409 the sequential path returns.
+    """
+    from fastapi import HTTPException
+    from sqlalchemy.exc import IntegrityError
+
+    handlers = [
+        lambda r: setattr(r.scalar_one_or_none, "return_value", _make_shipment()),
+        lambda r: setattr(r.scalar_one_or_none, "return_value", None),  # no invoice yet — we race
+        lambda r: setattr(r.scalars.return_value.all, "return_value", [_make_shipment_item()]),
+        lambda r: setattr(r.scalars.return_value.all, "return_value", []),
+    ]
+    session = _flushing_session(handlers)
+    session.commit = AsyncMock(
+        side_effect=IntegrityError("INSERT INTO invoices", {}, Exception("duplicate key"))
+    )
+    session.rollback = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await invoice_service.generate_invoice(1, _token_user(), session)
+
+    assert exc.value.status_code == 409
+    assert session.rollback.await_count == 1

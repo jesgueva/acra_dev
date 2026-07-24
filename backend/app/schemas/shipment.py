@@ -41,7 +41,11 @@ class ShipmentCreate(BaseModel):
     @field_validator("bol_number", "shipment_date", "source")
     @classmethod
     def _reject_blank(cls, v: Optional[str]) -> Optional[str]:
-        """Whitespace-only is not a value. Empty `source` normalizes to None."""
+        """Reject blank strings and trim the rest — " SC " and "SC" are the same source.
+
+        An omitted `source` is None and stays None; an explicitly blank one is a mistake worth
+        reporting rather than silently coercing.
+        """
         if v is None:
             return None
         stripped = v.strip()

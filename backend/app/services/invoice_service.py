@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
@@ -57,8 +58,8 @@ def _line_response(line: InvoiceLine) -> InvoiceLineResponse:
 def _invoice_response(
     invoice: Invoice,
     lines: list[InvoiceLine],
-    shipment: Optional[Shipment] = None,
-    contact: Optional[Contact] = None,
+    shipment: Shipment,
+    contact: Optional[Contact],
 ) -> InvoiceResponse:
     return InvoiceResponse(
         id=invoice.id,
@@ -72,9 +73,17 @@ def _invoice_response(
         status=invoice.status,
         created_by=invoice.created_by,
         created_at=invoice.created_at,
-        bol_number=shipment.bol_number if shipment else None,
+        bol_number=shipment.bol_number,
         contact_name=contact.name if contact else None,
         lines=[_line_response(line) for line in lines],
+    )
+
+
+def _already_invoiced(shipment_id: int, invoice_number: Optional[str] = None) -> HTTPException:
+    suffix = f" {invoice_number}" if invoice_number else ""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=f"Shipment {shipment_id} already has invoice{suffix}",
     )
 
 
@@ -143,10 +152,7 @@ async def generate_invoice(
         await db.execute(select(Invoice).where(Invoice.shipment_id == shipment_id))
     ).scalar_one_or_none()
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Shipment {shipment_id} already has invoice {existing.invoice_number}",
-        )
+        raise _already_invoiced(shipment_id, existing.invoice_number)
 
     items = (
         await db.execute(
@@ -211,7 +217,15 @@ async def generate_invoice(
             "total_amount": invoice.total_amount,
         },
     )
-    await db.commit()
+
+    # The check above is not a lock: two concurrent callers can both find no invoice and both
+    # insert. `invoices.shipment_id` is UNIQUE, so the loser is rejected by the database — turn
+    # that into the same 409 the sequential path returns rather than letting it surface as a 500.
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise _already_invoiced(shipment_id) from None
 
     contact = await _load_contact(db, shipment.contact_id)
     return _invoice_response(invoice, lines, shipment, contact)

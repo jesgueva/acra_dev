@@ -20,7 +20,7 @@ from app.schemas.shipment import (
     ShipmentListResponse,
     ShipmentResponse,
 )
-from tests.conftest import _make_rbac_session, _override
+from tests.conftest import _make_rbac_session, _make_service_session, _override
 
 BASE_URL = "http://test"
 
@@ -537,34 +537,16 @@ def _shipping_user():
 
 def _create_session(lot, contacts=(), products=()):
     """Session for `create_shipment` called directly: lots, then contacts, then products."""
-    session = AsyncMock()
-    call_no = {"n": 0}
-    added: list = []
-
-    async def _execute(query, *a, **kw):
-        result = MagicMock()
-        n = call_no["n"]
-        call_no["n"] += 1
-        scalars = MagicMock()
-        scalars.all.return_value = (
-            [lot] if n == 0 else list(contacts) if n == 1 else list(products)
+    def _rows(rows):
+        return lambda result: setattr(
+            result.scalars.return_value.all, "return_value", list(rows)
         )
-        result.scalars.return_value = scalars
-        return result
 
-    async def _flush():
-        for idx, obj in enumerate(added):
-            if getattr(obj, "id", None) is None:
-                obj.id = idx + 1
-            if hasattr(obj, "created_at") and obj.created_at is None:
-                obj.created_at = _CREATED_AT
-
-    session.execute = _execute
-    session.add = MagicMock(side_effect=added.append)
-    session.flush = _flush
-    session.commit = AsyncMock()
-    session._added = added
-    return session
+    return _make_service_session(
+        [_rows([lot]), _rows(contacts), _rows(products)],
+        assign_ids=True,
+        created_at=_CREATED_AT,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -731,7 +713,7 @@ async def test_both_shipment_types_write_issue_movement(shipment_type):
 
     await create_shipment(body, _shipping_user(), session)
 
-    txns = [o for o in session._added if isinstance(o, InventoryTransaction)]
+    txns = [o for o in session.added if isinstance(o, InventoryTransaction)]
     assert len(txns) == 1
     assert txns[0].transaction_type == "ship"
     assert txns[0].quantity == -4000          # negative: an Issue, per domain model §4.1
