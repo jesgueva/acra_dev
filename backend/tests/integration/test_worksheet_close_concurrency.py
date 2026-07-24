@@ -378,11 +378,12 @@ async def test_parallel_closes_on_shared_stock_never_oversell(sessionmaker_):
 
         final = await _on_hand(sessionmaker_, scenario)
         assert final >= 0, "on-hand went negative — the CHECK constraint should never be the guard"
-        assert final == 10000 - successes * 2000 == 0
+        assert final == 10000 - successes * 2000, "on-hand must match exactly what won"
+        assert final == 0, "the five winners should have drained the lot"
 
+        # Five movements of -2000 and nothing else: no partial draw from the closer that lost.
         movements = await _movements(sessionmaker_, scenario)
         assert movements == [("consume", -2000)] * 5, movements
-        assert sum(-q for _, q in movements) == 10000
     finally:
         await _teardown(sessionmaker_, scenario)
 

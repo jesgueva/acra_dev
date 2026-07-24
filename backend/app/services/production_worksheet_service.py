@@ -4,7 +4,7 @@
 close. See its docstring for the protocol and why it is shaped that way.
 """
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
@@ -54,11 +54,7 @@ def _worksheet_response(
                 id=line.id,
                 worksheet_id=line.worksheet_id,
                 product_id=line.product_id,
-                product_name=(
-                    products_by_id[line.product_id].name
-                    if line.product_id in products_by_id
-                    else None
-                ),
+                product_name=getattr(products_by_id.get(line.product_id), "name", None),
                 planned_quantity=line.planned_quantity,
                 actual_quantity=line.actual_quantity,
             )
@@ -160,7 +156,7 @@ def _validate_close_lines(
     lines_by_id = {line.id: line for line in lines}
     submitted = [cl.line_id for cl in body.lines]
 
-    duplicates = sorted({lid for lid in submitted if submitted.count(lid) > 1})
+    duplicates = sorted(lid for lid, n in Counter(submitted).items() if n > 1)
     if duplicates:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -285,7 +281,7 @@ async def close_worksheet(
 
     # 5. Draw FIFO. Integer arithmetic throughout — quantities are ×100 ints, and
     #    allocation_service's float() casts on this same column are a wart worth not copying.
-    consumed_by_product: dict[int, int] = {}
+    consumed_by_product: dict[int, int] = defaultdict(int)
     for close_line in body.lines:
         line = lines_by_id[close_line.line_id]
         line.actual_quantity = close_line.actual_quantity
@@ -324,9 +320,7 @@ async def close_worksheet(
             )
             remaining -= taken
 
-        consumed_by_product[line.product_id] = (
-            consumed_by_product.get(line.product_id, 0) + close_line.actual_quantity
-        )
+        consumed_by_product[line.product_id] += close_line.actual_quantity
 
     # 6. Audit, then one commit for the whole close.
     await write_audit(
@@ -335,7 +329,7 @@ async def close_worksheet(
         action="production_worksheet_closed",
         entity_type="production_worksheet",
         entity_id=worksheet_id,
-        details={"consumed_by_product": consumed_by_product},
+        details={"consumed_by_product": dict(consumed_by_product)},
     )
 
     # Read the response data inside the same transaction: doing it after the commit would open a
