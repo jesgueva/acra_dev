@@ -6,6 +6,7 @@ from app.models.inventory import (
     InventoryTransaction,
     LowStockAlert,
 )
+from app.models.production_worksheet import ProductionWorksheet, ProductionWorksheetLine
 from app.models.shipment import Shipment, ShipmentItem
 from app.models.user import Role, RolePrivilegeAssignment, User, UserRoleAssignment
 from app.models.work_order import MaterialAllocation, WorkOrder, WorkOrderMaterial
@@ -21,6 +22,8 @@ __all__ = [
     "InventoryLot",
     "InventoryTransaction",
     "LowStockAlert",
+    "ProductionWorksheet",
+    "ProductionWorksheetLine",
     "Shipment",
     "ShipmentItem",
     "WorkOrder",
