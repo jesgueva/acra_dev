@@ -227,6 +227,11 @@ async def close_worksheet(
             status_code=status.HTTP_404_NOT_FOUND, detail="Production worksheet not found"
         )
 
+    # Read under the row lock into plain locals. A rollback below expires every ORM instance, and
+    # touching an expired attribute afterwards triggers synchronous IO — which raises
+    # MissingGreenlet on an async session and turns a clean 409 into a 500.
+    current_status, current_version = ws.status, ws.version
+
     lines = await _fetch_lines(db, worksheet_id)
     lines_by_id = _validate_close_lines(body, lines)
 
@@ -247,20 +252,17 @@ async def close_worksheet(
         .execution_options(synchronize_session=False)
     )
     if guard.rowcount != 1:
-        # ws was read under the row lock above, so its status/version are current.
-        await db.rollback()
-        if ws.status == "closed":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Worksheet is already closed.",
-            )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
+        # current_status/current_version were read under the row lock, so they are accurate.
+        detail = (
+            "Worksheet is already closed."
+            if current_status == "closed"
+            else (
                 "Worksheet was modified by another operation "
-                f"(expected version {body.expected_version}, current {ws.version})."
-            ),
+                f"(expected version {body.expected_version}, current {current_version})."
+            )
         )
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
     # 4. Lock the stock — ascending lot id, one global order for every caller.
     product_ids = {
@@ -296,14 +298,13 @@ async def close_worksheet(
         # Re-summed per line, so two lines drawing on the same product see each other's decrements.
         available = sum(lot.quantity_on_hand for lot in candidate_lots)
         if available < remaining:
-            await db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"Insufficient stock for product {line.product_id}. "
-                    f"Required: {remaining}, available: {available}."
-                ),
+            # Build the message before rolling back — rollback expires line.product_id.
+            detail = (
+                f"Insufficient stock for product {line.product_id}. "
+                f"Required: {remaining}, available: {available}."
             )
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
         for lot in candidate_lots:
             if remaining <= 0:
