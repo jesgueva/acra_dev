@@ -94,12 +94,21 @@ operator surfaces.
 ## Phase 2 direction (where the next sprint lands)
 
 The realignment replaces the lot-centric inventory model with an **append-only `StockMovement`
-ledger** keyed by `(item, state)`, where on-hand is the sum of signed movements and every operator
-surface (receiving, production close, shipment) writes movements rather than mutating rows. The
-Sprint I baseline includes **skeleton stubs** for this module (model/service/router raising
+ledger** keyed by `(item, state, location)`, where on-hand is the sum of signed movements and every
+operator surface (receiving, production close, shipment) writes movements rather than mutating rows.
+The Sprint I baseline includes **skeleton stubs** for this module (model/service/router raising
 `NotImplementedError`) and a placeholder migration, so the structure is in place and aligned with
 the design before behavior is implemented. See [`RISK_LOG.md`](RISK_LOG.md) RSK-01/RSK-02 for the
 load-bearing risks (concurrency-safe close; reversible migration).
+
+**`state` is the material axis** — `RAW_MATERIAL | WORK_IN_PROGRESS | FINISHED_GOOD`, nullable for
+auxiliary items. It is not a lifecycle axis: shipping and consumption are negative movements, not
+destination states, and material on the line is WIP plus an active reservation. Lifecycle is
+carried by `MovementType` and `StockReservation`.
+
+The authoritative build target — table shapes, the delete/add/migrate list from the ACR-25 decision
+gate, and which ticket owns each piece — is `acra_docs/reference/target_schema.md` (ACR-26). The
+next available Alembic revision is **`011`** — `010` is claimed by in-flight ACR-27 work.
 
 ## Verified version snapshot
 
