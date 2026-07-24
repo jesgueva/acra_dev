@@ -39,7 +39,7 @@ const SHIPMENT = {
   bol_number: "AV26-0001",
   shipment_date: "2026-04-09",
   notes: null,
-  type: "customer_order",
+  type: "direct_customer",
   created_by: 1,
   created_at: "2026-04-09T00:00:00Z",
   items: [
@@ -98,7 +98,7 @@ test("renders the shipment log from the list response", () => {
   expect(screen.getByText("AV26-0001")).toBeInTheDocument();
   expect(screen.getByText("Acme Corp")).toBeInTheDocument();
   expect(screen.getByText("Fast Freight")).toBeInTheDocument();
-  expect(screen.getByText("shipping.customerOrder")).toBeInTheDocument();
+  expect(screen.getByText("shipping.directCustomer")).toBeInTheDocument();
 });
 
 test("renders the empty state rather than crashing on zero shipments", () => {

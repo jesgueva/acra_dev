@@ -6,7 +6,7 @@ import { API_URL, USERS, apiToken, login } from "./helpers";
  *
  * Before this ticket, shipping.view / shipping.create were granted to no role, so every shipment
  * endpoint returned 403 for every user and the Shipping page was unreachable. These tests assert
- * the seeded mapping from migration 012 through the UI:
+ * the seeded mapping from migration 013 through the UI:
  *
  *   company_admin         view + create
  *   receiving_clerk       view + create

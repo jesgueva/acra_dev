@@ -30,7 +30,7 @@ _SENTINEL_PRIVILEGES = {"authenticated"}
 # Tracked separately — deliberately out of ACR-35's scope rather than silently widened into it.
 _UNSEEDED_KNOWN_GAPS = {"master_data.view", "master_data.manage"}
 
-# The mapping migration 012 seeds, restated rather than imported so a bad edit there fails here.
+# The mapping migration 013 seeds, restated rather than imported so a bad edit there fails here.
 EXPECTED_SHIPPING_GRANTS = {
     ("shipping.view", "company_admin"),
     ("shipping.view", "receiving_clerk"),
@@ -76,7 +76,7 @@ def _grant_side_source(path: Path) -> str:
     Every migration names its privileges twice — granted in `upgrade()`, revoked in `downgrade()`
     — so scanning whole files would credit a revoke-only migration as a grant. Dropping just the
     `downgrade` body is the coarse-but-honest cut: migrations hold their names in module-level
-    constants (010/011/012), so keeping only `upgrade()` would miss the real grants.
+    constants (010/011/013), so keeping only `upgrade()` would miss the real grants.
     """
     lines = path.read_text().splitlines()
     for node in ast.parse("\n".join(lines), filename=str(path)).body:
@@ -136,7 +136,7 @@ def test_known_gaps_are_still_gaps():
 
 
 async def test_shipping_privileges_granted_to_expected_roles(conn):
-    """The exact ACR-35 mapping, so dropping a role from migration 012 fails loudly."""
+    """The exact ACR-35 mapping, so dropping a role from migration 013 fails loudly."""
     rows = await conn.fetch(
         """
         SELECT a.privilege_name, r.role_name

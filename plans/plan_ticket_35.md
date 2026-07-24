@@ -105,7 +105,7 @@ conversation if ACR-26 lands first.
 
 | File | Purpose |
 |---|---|
-| `backend/alembic/versions/012_shipping_privileges.py` | Seed `shipping.view` / `shipping.create` grants; reversible via `DELETE … WHERE privilege_name IN (…)` |
+| `backend/alembic/versions/013_shipping_privileges.py` | Seed `shipping.view` / `shipping.create` grants; reversible via `DELETE … WHERE privilege_name IN (…)` |
 | `backend/tests/test_shipping_privileges.py` | Guard test — every privilege any router requires is seeded by some migration |
 | `frontend/src/components/shipping/__tests__/ShippingView.test.tsx` | Component tests incl. the create-button privilege gate |
 | `frontend/e2e/ticket-35.spec.ts` | Committed Playwright spec for the nav → page → create flow |
@@ -127,7 +127,7 @@ No model, schema, service, or endpoint changes. No new tables or columns.
 
 ## 3. Data / API
 
-### Migration `012_shipping_privileges`
+### Migration `013_shipping_privileges`
 
 ```python
 revision = "012"
@@ -263,7 +263,7 @@ Against a real `npm run build && npm run start` server (**not `next dev`** — K
 
 1. Cut `ticket-35/seed-shipping-privileges-nav` from `origin/master`; bring up Postgres on the port
    that is actually free (`CLAUDE.md` says 5433; local `.env` may say 5434 — check before starting).
-2. Write `012_shipping_privileges.py`; `alembic upgrade head`; `alembic downgrade 010`; `upgrade head`
+2. Write `013_shipping_privileges.py`; `alembic upgrade head`; `alembic downgrade 010`; `upgrade head`
    again to prove reversibility.
 3. Add the `shipping.*` grants to `seed_fake_data.py`; re-seed.
 4. Backend tests: the three 403 cases in `test_shipments.py`, then `test_shipping_privileges.py`,
