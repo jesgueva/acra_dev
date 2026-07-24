@@ -1,7 +1,7 @@
 """Production-worksheet service — home of the concurrency-safe close protocol (ACR-30).
 
 The close is the reason this module exists. See `close_worksheet` for the protocol and
-`docs/ADR-02-worksheet-close-concurrency.md` for why it is ordered the way it is.
+`docs/architecture.md` (ADR-02) for why it is ordered the way it is.
 """
 
 from datetime import datetime, timezone
@@ -65,16 +65,65 @@ async def _ws_response(db: AsyncSession, ws: ProductionWorksheet) -> WorksheetRe
     )
 
 
-async def _get_worksheet_or_404(db: AsyncSession, worksheet_id: int) -> ProductionWorksheet:
-    res = await db.execute(
-        select(ProductionWorksheet).where(ProductionWorksheet.id == worksheet_id)
-    )
-    ws = res.scalar_one_or_none()
+async def _get_worksheet_or_404(
+    db: AsyncSession, worksheet_id: int, *, lock: bool = False
+) -> ProductionWorksheet:
+    """Load a worksheet, 404 if absent. ``lock=True`` takes the row lock the close needs."""
+    q = select(ProductionWorksheet).where(ProductionWorksheet.id == worksheet_id)
+    if lock:
+        q = q.with_for_update()
+    ws = (await db.execute(q)).scalar_one_or_none()
     if ws is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Production worksheet not found"
         )
     return ws
+
+
+def _draw_fifo(
+    db: AsyncSession,
+    lots: list[InventoryLot],
+    quantity: int,
+    worksheet_id: int,
+    user_id: int,
+) -> None:
+    """Draw ``quantity`` from ``lots`` oldest-first, one `consume` movement per lot touched.
+
+    Pure arithmetic plus `db.add` (sync) — the caller owns locking, validation and the commit.
+    ``lots`` is mutated in place so two lines drawing on the same product see each other's draw.
+    """
+    remaining = quantity
+    for lot in lots:
+        if remaining <= 0:
+            break
+        taken = min(remaining, lot.quantity_on_hand)
+        lot.quantity_on_hand -= taken
+        if lot.quantity_on_hand == 0:
+            lot.status = "consumed"
+        db.add(
+            InventoryTransaction(
+                lot_id=lot.id,
+                transaction_type="consume",
+                quantity=-taken,
+                reference_type=REFERENCE_TYPE,
+                reference_id=worksheet_id,
+                reason=f"Production worksheet {worksheet_id} close",
+                created_by=user_id,
+            )
+        )
+        remaining -= taken
+
+
+async def _rollback_and_409(db: AsyncSession, detail: str) -> None:
+    """Roll back the close, then refuse it with 409.
+
+    ``detail`` is taken as an already-built string on purpose: rollback expires every instance
+    in the session, so any attribute the message needs must be read **before** this is called.
+    Making that a parameter is what keeps the rule structural rather than a comment the next
+    conflict path can forget.
+    """
+    await db.rollback()
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
 async def create_worksheet(
@@ -161,16 +210,7 @@ async def close_worksheet(
     (`client_domain_model.md` §7.1, binding on this ticket by name).
     """
     # 2 — lock the parent row; also fixes lock ordering for step 4.
-    res = await db.execute(
-        select(ProductionWorksheet)
-        .where(ProductionWorksheet.id == worksheet_id)
-        .with_for_update()
-    )
-    ws = res.scalar_one_or_none()
-    if ws is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Production worksheet not found"
-        )
+    ws = await _get_worksheet_or_404(db, worksheet_id, lock=True)
 
     lines_res = await db.execute(
         select(ProductionWorksheetLine)
@@ -206,22 +246,16 @@ async def close_worksheet(
         .values(status="closed", version=ProductionWorksheet.version + 1, closed_at=now)
     )
     if claim.rowcount != 1:
-        # Read the status *before* rolling back — rollback expires the instance, and touching an
-        # expired attribute afterwards triggers a lazy refresh outside the async context.
-        was_closed = ws.status == "closed"
-        await db.rollback()
-        if was_closed:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Worksheet is already closed.",
-            )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
+        # Build the message while `ws` is still live — see `_rollback_and_409`.
+        detail = (
+            "Worksheet is already closed."
+            if ws.status == "closed"
+            else (
                 "Worksheet was modified by another operation "
                 f"(expected version {body.expected_version})."
-            ),
+            )
         )
+        await _rollback_and_409(db, detail)
 
     # 4 — lock the stock in a deterministic order across every caller.
     product_ids = {lines_by_id[line_id].product_id for line_id in submitted}
@@ -250,36 +284,21 @@ async def close_worksheet(
         lots = lots_by_product.get(product_id, [])
         available = sum(lot.quantity_on_hand for lot in lots)
         if available < actual:
-            # Build the message before rolling back: rollback expires every instance in the
-            # session, and reading an expired attribute afterwards would lazy-load outside the
-            # async context. This path is only reachable when a close loses a real race.
-            detail = (
+            # This path is only reachable when a close loses a real race for the stock.
+            await _rollback_and_409(
+                db,
                 f"Insufficient stock for product {product_id}. "
-                f"Required: {actual}, available: {available}."
+                f"Required: {actual}, available: {available}.",
             )
-            await db.rollback()
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
-        remaining = actual
-        for lot in lots:
-            if remaining <= 0:
-                break
-            taken = min(remaining, lot.quantity_on_hand)
-            lot.quantity_on_hand -= taken
-            if lot.quantity_on_hand == 0:
-                lot.status = "consumed"
-            db.add(
-                InventoryTransaction(
-                    lot_id=lot.id,
-                    transaction_type="consume",
-                    quantity=-taken,
-                    reference_type=REFERENCE_TYPE,
-                    reference_id=worksheet_id,
-                    reason=f"Production worksheet {worksheet_id} close",
-                    created_by=current_user.user_id,
-                )
-            )
-            remaining -= taken
+        _draw_fifo(db, lots, actual, worksheet_id, current_user.user_id)
+
+    # Mirror the claim onto the instance *inside* the transaction. The claim in step 3 was a Core
+    # UPDATE, so this keeps the response consistent with what was committed without mutating
+    # persistent state after the commit.
+    ws.status = "closed"
+    ws.version = body.expected_version + 1
+    ws.closed_at = now
 
     await write_audit(
         db=db,
@@ -291,7 +310,4 @@ async def close_worksheet(
     )
     await db.commit()
 
-    ws.status = "closed"
-    ws.version = body.expected_version + 1
-    ws.closed_at = now
     return await _ws_response(db, ws)

@@ -30,6 +30,13 @@ _PRIVILEGES = (
     "production.worksheet.create",
     "production.worksheet.close",
 )
+_ROLES = ("company_admin", "production_supervisor")
+
+# Single source of truth: upgrade() seeds exactly what downgrade() removes. Spelling the names
+# out twice is how a later grant survives `alembic downgrade` as an orphaned row.
+_GRANT_VALUES = ",\n            ".join(
+    f"('{role}', '{privilege}')" for role in _ROLES for privilege in _PRIVILEGES
+)
 
 
 def upgrade():
@@ -81,17 +88,12 @@ def upgrade():
     op.create_index("ix_pwl_product_id", "production_worksheet_lines", ["product_id"])
 
     op.execute(
-        """
+        f"""
         INSERT INTO role_privilege_assignments (role_id, privilege_name)
         SELECT r.id, p.privilege_name
         FROM roles r
         CROSS JOIN (VALUES
-            ('company_admin',         'production.worksheet.view'),
-            ('company_admin',         'production.worksheet.create'),
-            ('company_admin',         'production.worksheet.close'),
-            ('production_supervisor', 'production.worksheet.view'),
-            ('production_supervisor', 'production.worksheet.create'),
-            ('production_supervisor', 'production.worksheet.close')
+            {_GRANT_VALUES}
         ) AS p(role_name, privilege_name)
         WHERE r.role_name = p.role_name
         """

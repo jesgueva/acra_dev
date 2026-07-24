@@ -1,5 +1,9 @@
 import { test, expect, Page, APIRequestContext } from "@playwright/test";
 
+// Imported, not re-implemented: a local copy would keep asserting the old format — and keep
+// passing — the moment the app's formatter changed, which is exactly what this spec must catch.
+import { toDisplay } from "@/src/lib/qty";
+
 /**
  * ACR-30 — concurrency-safe production-worksheet close, end to end against a live stack.
  *
@@ -18,9 +22,6 @@ const API = process.env.E2E_API_URL ?? "http://localhost:8000";
 
 const CONSUMED = 6000; // ×100 → 60.00 units
 const PLANNED = 10000; // ×100 → 100.00 units, so actual < planned leaves a real delta
-
-/** ×100 integer → the "1234.00" string the inventory table renders (src/lib/qty.ts). */
-const toDisplay = (n: number) => (n / 100).toFixed(2);
 
 async function login(page: Page, username: string, password: string) {
   await page.goto("/en/login");

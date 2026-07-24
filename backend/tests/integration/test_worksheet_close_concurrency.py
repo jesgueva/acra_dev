@@ -23,6 +23,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.core.config import settings
 from app.models.audit import AuditLog
 from app.models.contact import Contact  # noqa: F401 — registers `contacts` for products.contact_id
 from app.models.inventory import InventoryLot, InventoryTransaction
@@ -33,9 +34,10 @@ from app.schemas.auth import TokenUser
 from app.schemas.production_worksheet import WorksheetCloseLine, WorksheetCloseRequest
 from app.services import production_worksheet_service as svc
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/acra_db"
-)
+# Resolved through pydantic-settings, not os.getenv, so this reads `backend/.env` exactly as the
+# application does. `os.getenv` would silently fall back to a different database than the one the
+# app is configured against — and this module seeds and DELETEs rows.
+DATABASE_URL = settings.database_url
 
 # Deterministic knobs — raise locally for a heavier sweep without editing the file.
 CLOSERS = int(os.getenv("SPIKE_CLOSERS", "8"))
@@ -194,14 +196,22 @@ async def _on_hand(session_factory, lot_ids):
         return sum(r[0] for r in res.fetchall())
 
 
-async def _consume_rows(session_factory, worksheet_id):
+async def _consume_rows(session_factory, worksheet_id, fx: "Fixture | None" = None):
+    """Movements this worksheet wrote.
+
+    Scoped to the fixture's own lots when one is given. `reference_id` alone is not enough:
+    these tests run against a real, potentially long-lived database, and worksheet ids restart
+    from 1 whenever migration 010 is rolled back and re-applied — so a stale row from an earlier
+    life of the schema can collide with a freshly created worksheet and inflate the count.
+    """
     async with session_factory() as db:
-        res = await db.execute(
-            select(InventoryTransaction).where(
-                InventoryTransaction.reference_type == "production_worksheet",
-                InventoryTransaction.reference_id == worksheet_id,
-            )
+        q = select(InventoryTransaction).where(
+            InventoryTransaction.reference_type == "production_worksheet",
+            InventoryTransaction.reference_id == worksheet_id,
         )
+        if fx is not None:
+            q = q.where(InventoryTransaction.lot_id.in_(fx.lot_ids))
+        res = await db.execute(q)
         return list(res.scalars().all())
 
 
@@ -286,7 +296,7 @@ async def test_parallel_close_same_worksheet_exactly_one_wins(session_factory):
 
         assert await _on_hand(session_factory, fx.lot_ids) == 4000
 
-        txns = await _consume_rows(session_factory, ws_id)
+        txns = await _consume_rows(session_factory, ws_id, fx)
         assert len(txns) == 1, f"stock must move exactly once, saw {len(txns)} movements"
         assert txns[0].transaction_type == "consume"
         assert txns[0].quantity == -6000
@@ -328,6 +338,22 @@ async def test_parallel_close_is_repeatable(session_factory):
             assert len(oks) == 1, f"round {round_no}: {len(oks)} winners — {results}"
             final = await _on_hand(session_factory, fx.lot_ids)
             assert final == 4000, f"round {round_no}: on-hand {final}, expected 4000"
+
+            # Assert the same invariants scenario 1 does. Checking only the winner count and the
+            # total would let a regression that writes two consume rows, or bumps the version
+            # twice, pass all R rounds and be caught by the single-shot test alone.
+            txns = await _consume_rows(session_factory, ws_id, fx)
+            assert len(txns) == 1, f"round {round_no}: {len(txns)} movements, expected 1"
+            assert txns[0].quantity == -6000, f"round {round_no}: {txns[0].quantity}"
+
+            async with session_factory() as db:
+                ws = (
+                    await db.execute(
+                        select(ProductionWorksheet).where(ProductionWorksheet.id == ws_id)
+                    )
+                ).scalar_one()
+                assert ws.version == 1, f"round {round_no}: version {ws.version}, expected 1"
+                assert ws.status == "closed"
         finally:
             await _teardown(session_factory, fx)
 
@@ -372,7 +398,7 @@ async def test_parallel_close_different_worksheets_never_oversells(session_facto
 
         total_consumed = 0
         for ws_id in fx.worksheet_ids:
-            total_consumed += sum(-t.quantity for t in await _consume_rows(session_factory, ws_id))
+            total_consumed += sum(-t.quantity for t in await _consume_rows(session_factory, ws_id, fx))
         assert total_consumed == 10000, "ledger must account for every unit that left"
     finally:
         await _teardown(session_factory, fx)
@@ -441,7 +467,7 @@ async def test_close_writes_no_delta_adjustment(session_factory):
         )
         assert status == "ok"
 
-        txns = await _consume_rows(session_factory, ws_id)
+        txns = await _consume_rows(session_factory, ws_id, fx)
         assert [t.transaction_type for t in txns] == ["consume"]
         assert [t.quantity for t in txns] == [-6000]
         assert await _on_hand(session_factory, fx.lot_ids) == 4000
