@@ -11,6 +11,7 @@ The seed is an async context manager rather than a pytest fixture on purpose: an
 torn down in a different event loop than the test body, which breaks asyncpg with MissingGreenlet.
 `async with` keeps setup, body, and cleanup on one loop.
 """
+import asyncio
 import os
 import statistics
 import time
@@ -23,10 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.models.audit import AuditLog
 from app.models.contact import Contact  # noqa: F401 — registers products.contact_id's FK target
-from app.models.inventory import InventoryLot, InventoryTransaction
+from app.models.inventory import InventoryLot, InventoryTransaction, LotStatus
 from app.models.product import Product
 from app.models.reservation import ReservationStatus, StockReservation
-from app.models.inventory import LotStatus
 from app.models.user import User
 from app.schemas.reservation import ReservationCreate
 from app.services import reservation_service
@@ -262,6 +262,47 @@ async def test_reserving_more_than_available_is_rejected():
         )
         assert final.available == 0
         assert final.on_hand == ON_HAND_IN_STORAGE
+
+
+async def test_concurrent_reserves_cannot_oversubscribe():
+    """The FOR UPDATE guard must serialize concurrent reserves.
+
+    Two callers each ask for 60% of on-hand at the same time, on separate connections. Exactly
+    one may win: without the row lock both would read the same `available` and oversubscribe,
+    which is the lost-update class of bug ACR-30 exists to rule out at close time.
+    """
+    async with seeded_stock() as seeded:
+        product_id, user_id = seeded["product_id"], seeded["user_id"]
+        engine = create_async_engine(DATABASE_URL)
+        qty = int(ON_HAND_IN_STORAGE * 0.6)  # two of these cannot both fit
+
+        async def _attempt():
+            async with AsyncSession(engine, expire_on_commit=False) as s:
+                try:
+                    await reservation_service.reserve(
+                        db=s,
+                        data=ReservationCreate(product_id=product_id, quantity=qty),
+                        user_id=user_id,
+                    )
+                    return "ok"
+                except HTTPException as exc:
+                    return exc.status_code
+
+        try:
+            results = await asyncio.gather(_attempt(), _attempt())
+
+            assert sorted(str(r) for r in results) == ["422", "ok"], (
+                f"expected exactly one winner, got {results}"
+            )
+
+            final = await reservation_service.availability(
+                db=seeded["session"], product_id=product_id, state=LotStatus.IN_STORAGE
+            )
+            assert final.reserved == qty, "only the winning reservation may be recorded"
+            assert final.on_hand == ON_HAND_IN_STORAGE
+            assert final.available == ON_HAND_IN_STORAGE - qty
+        finally:
+            await engine.dispose()
 
 
 async def test_availability_latency_budget():

@@ -3,8 +3,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.reservation import ReservationStatus
 from app.models.inventory import LotStatus
+from app.models.reservation import ReservationStatus
 
 # ── Reservations ──────────────────────────────────────────────────────────────
 

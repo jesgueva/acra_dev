@@ -3,8 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.rbac import require_privilege
-from app.models.reservation import ReservationStatus
 from app.models.inventory import LotStatus
+from app.models.reservation import ReservationStatus
 from app.schemas.auth import TokenUser
 from app.schemas.reservation import (
     ReservationCreate,
