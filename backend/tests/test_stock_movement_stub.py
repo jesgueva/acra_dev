@@ -13,13 +13,25 @@ from app.services import stock_movement_service
 
 
 def test_stock_state_vocabulary():
-    assert StockState.IN_STORAGE.value == "in_storage"
+    """State is the material axis (RM → WIP → FG), never a lifecycle axis."""
+    assert StockState.RAW_MATERIAL.value == "raw_material"
     assert {s.value for s in StockState} == {
-        "in_storage",
-        "in_production",
-        "shipped",
-        "consumed",
+        "raw_material",
+        "work_in_progress",
+        "finished_good",
     }
+
+
+def test_stock_state_excludes_lifecycle_values():
+    """Guards ACR-26: lifecycle belongs to MovementType + reservations, not to state.
+
+    ``shipped`` / ``consumed`` as states would break ``on_hand = Σ signed qty`` — an ISSUE of -100
+    at state=SHIPPED gives on_hand(item, SHIPPED) == -100. ``auxiliary`` is a category on the item
+    (D-Q4), not a state.
+    """
+    values = {s.value for s in StockState}
+    for forbidden in ("in_storage", "in_production", "shipped", "consumed", "auxiliary"):
+        assert forbidden not in values
 
 
 def test_movement_type_vocabulary():
@@ -39,7 +51,7 @@ async def test_record_movement_not_implemented():
     with pytest.raises(NotImplementedError):
         await stock_movement_service.record_movement(
             item_id=1,
-            state=StockState.IN_STORAGE,
+            state=StockState.RAW_MATERIAL,
             movement_type=MovementType.RECEIPT,
             quantity=1,
         )
@@ -48,7 +60,7 @@ async def test_record_movement_not_implemented():
 @pytest.mark.asyncio
 async def test_on_hand_not_implemented():
     with pytest.raises(NotImplementedError):
-        await stock_movement_service.on_hand(item_id=1, state=StockState.IN_STORAGE)
+        await stock_movement_service.on_hand(item_id=1, state=StockState.RAW_MATERIAL)
 
 
 @pytest.mark.asyncio
