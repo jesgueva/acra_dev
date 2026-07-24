@@ -1,96 +1,46 @@
-"""Tests for the production-worksheet close surface (ACR-30).
+"""
+Tests for ACR-30 — Production Worksheets API (create / get / concurrency-safe close).
 
-Two layers, both database-free:
+Mocked-session unit layer: no live database. The lost-update guarantee itself is proven against
+real PostgreSQL in ``tests/integration/test_worksheet_close_concurrency.py`` (TC-02) — these tests
+cover the surface: status codes, RBAC, validation, and the failure modes the close must report.
 
-* **Router** — RBAC 403s, validation 422s and status codes, with the service patched.
-* **Service** — the close protocol's branch logic against a fake `AsyncSession` that dispatches
-  on the SQL construct it is handed.
-
-The concurrency guarantee itself cannot be proven with mocks — that is
-`tests/integration/test_worksheet_close_concurrency.py`, which runs against real Postgres.
+Every ``require_privilege`` dependency burns execute calls 0-2 (user, roles, privileges); service
+queries start at index 3. See CLAUDE.md "Authenticated endpoint mocks".
 """
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.sql import Select, Update
 
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.main import app
-from app.models.inventory import InventoryLot
+from app.models.inventory import InventoryLot, InventoryTransaction
 from app.models.product import Product
 from app.models.production_worksheet import ProductionWorksheet, ProductionWorksheetLine
-from app.schemas.auth import TokenUser
-from app.schemas.production_worksheet import (
-    WorksheetCloseLine,
-    WorksheetCloseRequest,
-    WorksheetCreate,
-    WorksheetLineCreate,
-    WorksheetResponse,
-)
-from app.services import production_worksheet_service as svc
-from tests.conftest import _make_rbac_session, _override
+from tests.conftest import _make_session, _make_user, _override
 
 BASE_URL = "http://test"
+_URL = "/api/v1/production-worksheets"
 _CREATED_AT = datetime(2026, 7, 23, tzinfo=timezone.utc)
 
-_ALL_PRIVS = (
+_ALL_PRIVILEGES = (
     "production.worksheet.view",
     "production.worksheet.create",
     "production.worksheet.close",
 )
 
 _VALID_CREATE = {
-    "work_order_id": None,
-    "production_line": "LINE-1",
-    "scheduled_date": "2026-07-23",
-    "lines": [{"product_id": 5, "planned_quantity": 10000}],
+    "production_line": "LINE-A",
+    "scheduled_date": "2026-07-24",
+    "lines": [{"product_id": 5, "planned_quantity": 6000}],
 }
-_VALID_CLOSE = {"expected_version": 0, "lines": [{"line_id": 100, "actual_quantity": 6000}]}
 
 
 # ---------------------------------------------------------------------------
-# Fixtures / fakes
+# Helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_worksheet(ws_id=1, status="draft", version=0):
-    ws = ProductionWorksheet()
-    ws.id = ws_id
-    ws.work_order_id = None
-    ws.production_line = "LINE-1"
-    ws.scheduled_date = "2026-07-23"
-    ws.status = status
-    ws.version = version
-    ws.created_by = 1
-    ws.created_at = _CREATED_AT
-    ws.closed_at = None
-    return ws
-
-
-def _make_line(line_id=100, ws_id=1, product_id=5, planned=10000, actual=None):
-    ln = ProductionWorksheetLine()
-    ln.id = line_id
-    ln.worksheet_id = ws_id
-    ln.product_id = product_id
-    ln.planned_quantity = planned
-    ln.actual_quantity = actual
-    return ln
-
-
-def _make_lot(lot_id=1, product_id=5, qty=10000, status="in_storage"):
-    lot = InventoryLot()
-    lot.id = lot_id
-    lot.product_id = product_id
-    lot.lot_number = f"LOT-{lot_id:04d}"
-    lot.storage_location = "A-01"
-    lot.status = status
-    lot.quantity_on_hand = qty
-    lot.pallet_number = None
-    return lot
 
 
 def _make_product(product_id=5, name="Steel Rod"):
@@ -101,535 +51,502 @@ def _make_product(product_id=5, name="Steel Rod"):
     return p
 
 
-def _entity_name(stmt) -> str:
-    """Which table a SQLAlchemy construct targets — how the fake session dispatches."""
-    if isinstance(stmt, Update):
-        return stmt.table.name
-    if isinstance(stmt, Select):
-        return stmt.column_descriptions[0]["entity"].__tablename__
-    return ""
+def _make_lot(lot_id=1, product_id=5, quantity_on_hand=10000, status="in_storage"):
+    lot = InventoryLot()
+    lot.id = lot_id
+    lot.product_id = product_id
+    lot.lot_number = f"LOT-{lot_id:04d}"
+    lot.storage_location = "A-01"
+    lot.status = status
+    lot.quantity_on_hand = quantity_on_hand
+    lot.pallet_number = None
+    return lot
 
 
-class _FakeSession:
-    """AsyncSession stand-in that answers by construct type rather than call order."""
+def _make_worksheet(ws_id=1, status="draft", version=0, closed_at=None):
+    ws = ProductionWorksheet()
+    ws.id = ws_id
+    ws.work_order_id = None
+    ws.production_line = "LINE-A"
+    ws.scheduled_date = "2026-07-24"
+    ws.status = status
+    ws.version = version
+    ws.created_by = 1
+    ws.created_at = _CREATED_AT
+    ws.closed_at = closed_at
+    return ws
 
-    def __init__(self, worksheet=None, lines=(), lots=(), products=(), claim_rowcount=1):
-        self.worksheet = worksheet
-        self.lines = list(lines)
-        self.lots = list(lots)
-        self.products = list(products)
-        self.claim_rowcount = claim_rowcount
-        self.added = []
-        self.committed = False
-        self.rolled_back = False
-        self.claims = 0
 
-    async def execute(self, stmt, *args, **kwargs):
-        result = MagicMock()
-        name = _entity_name(stmt)
+def _make_line(line_id=10, ws_id=1, product_id=5, planned=6000, actual=None):
+    line = ProductionWorksheetLine()
+    line.id = line_id
+    line.worksheet_id = ws_id
+    line.product_id = product_id
+    line.planned_quantity = planned
+    line.actual_quantity = actual
+    return line
 
-        if isinstance(stmt, Update) and name == "production_worksheets":
-            self.claims += 1
-            result.rowcount = self.claim_rowcount
-            return result
 
-        if name == "production_worksheets":
-            result.scalar_one_or_none.return_value = self.worksheet
-        elif name == "production_worksheet_lines":
-            result.scalars.return_value.all.return_value = list(self.lines)
-        elif name == "inventory_lots":
-            result.scalars.return_value.all.return_value = list(self.lots)
-        elif name == "products":
-            result.scalars.return_value.all.return_value = list(self.products)
-        return result
+def _scalars_all(items):
+    """Handler for a query consumed via ``.scalars().all()``."""
 
-    def add(self, obj):
-        self.added.append(obj)
+    def _handler(result):
+        result.scalars.return_value.all.return_value = items
 
-    async def flush(self):
-        """Stand in for the DB assigning PKs and server defaults on pending rows."""
-        for obj in self.added:
-            if isinstance(obj, ProductionWorksheet):
-                if obj.id is None:
-                    obj.id = 1
-                if obj.created_at is None:
-                    obj.created_at = _CREATED_AT
-                if obj.version is None:
-                    obj.version = 0
-                self.worksheet = obj
+    return _handler
 
-    async def commit(self):
-        self.committed = True
 
-    async def rollback(self):
-        self.rolled_back = True
+def _scalar_one(obj):
+    """Handler for a query consumed via ``.scalar_one_or_none()``."""
 
-    def consume_txns(self):
-        from app.models.inventory import InventoryTransaction
+    def _handler(result):
+        result.scalar_one_or_none.return_value = obj
 
-        return [o for o in self.added if isinstance(o, InventoryTransaction)]
+    return _handler
 
 
-def _user(user_id=1) -> TokenUser:
-    return TokenUser(
-        user_id=user_id,
-        full_name="Test User",
-        roles=["production_supervisor"],
-        preferred_language="en",
-        effective_privileges=list(_ALL_PRIVS),
-        production_line="LINE-1",
-    )
+def _session(privileges=_ALL_PRIVILEGES, handlers=None, roles=("company_admin",)):
+    """Mock session with the 3 RBAC queries wired and ``flush`` populating server defaults.
 
-
-def _mock_response(status="draft", version=0) -> WorksheetResponse:
-    return WorksheetResponse(
-        id=1,
-        work_order_id=None,
-        production_line="LINE-1",
-        scheduled_date="2026-07-23",
-        status=status,
-        version=version,
-        created_by=1,
-        created_at=_CREATED_AT,
-        closed_at=None,
-        lines=[],
-    )
-
-
-# ===========================================================================
-# Router — status codes, RBAC, validation
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_create_worksheet_returns_201():
-    """Case 1 — valid body with production.worksheet.create → 201, version 0."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=_ALL_PRIVS)
-
-    with patch.object(svc, "create_worksheet", new=AsyncMock(return_value=_mock_response())):
-        app.dependency_overrides[get_db] = _override(session)
-        try:
-            async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
-                resp = await c.post(
-                    "/api/v1/production-worksheets",
-                    json=_VALID_CREATE,
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-            assert resp.status_code == 201
-            assert resp.json()["version"] == 0
-            assert resp.json()["status"] == "draft"
-        finally:
-            app.dependency_overrides.pop(get_db, None)
-
-
-@pytest.mark.asyncio
-async def test_create_worksheet_without_privilege_returns_403():
-    """Case 2 — machine_operator holds no production.worksheet.* privilege."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=("work_orders.view",))
-
-    app.dependency_overrides[get_db] = _override(session)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
-            resp = await c.post(
-                "/api/v1/production-worksheets",
-                json=_VALID_CREATE,
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        assert resp.status_code == 403
-        assert "production.worksheet.create" in resp.json()["detail"]
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-
-
-@pytest.mark.asyncio
-async def test_create_worksheet_no_auth_returns_401():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
-        resp = await c.post("/api/v1/production-worksheets", json=_VALID_CREATE)
-    assert resp.status_code in (401, 403)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "body,reason",
-    [
-        ({**_VALID_CREATE, "lines": []}, "empty lines"),
-        ({**_VALID_CREATE, "lines": [{"product_id": 5, "planned_quantity": 0}]}, "zero qty"),
-        ({**_VALID_CREATE, "lines": [{"product_id": 5, "planned_quantity": -100}]}, "negative qty"),
-        ({"production_line": "LINE-1"}, "lines missing"),
-    ],
-)
-async def test_create_worksheet_validation_returns_422(body, reason):
-    """Cases 3-4 — Pydantic rejects malformed create bodies before the service runs."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=_ALL_PRIVS)
-
-    app.dependency_overrides[get_db] = _override(session)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
-            resp = await c.post(
-                "/api/v1/production-worksheets",
-                json=body,
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        assert resp.status_code == 422, f"{reason} should be rejected"
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-
-
-@pytest.mark.asyncio
-async def test_get_worksheet_returns_200():
-    """Case 5."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=_ALL_PRIVS)
-
-    with patch.object(svc, "get_worksheet", new=AsyncMock(return_value=_mock_response())):
-        app.dependency_overrides[get_db] = _override(session)
-        try:
-            async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
-                resp = await c.get(
-                    "/api/v1/production-worksheets/1",
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-            assert resp.status_code == 200
-            assert resp.json()["id"] == 1
-        finally:
-            app.dependency_overrides.pop(get_db, None)
-
-
-@pytest.mark.asyncio
-async def test_get_worksheet_missing_returns_404():
-    """Case 6."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=_ALL_PRIVS)
-    boom = HTTPException(status_code=404, detail="Production worksheet not found")
-
-    with patch.object(svc, "get_worksheet", new=AsyncMock(side_effect=boom)):
-        app.dependency_overrides[get_db] = _override(session)
-        try:
-            async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
-                resp = await c.get(
-                    "/api/v1/production-worksheets/999",
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-            assert resp.status_code == 404
-        finally:
-            app.dependency_overrides.pop(get_db, None)
-
-
-@pytest.mark.asyncio
-async def test_get_worksheet_without_privilege_returns_403():
-    """Case 7."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=("work_orders.view",))
-
-    app.dependency_overrides[get_db] = _override(session)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
-            resp = await c.get(
-                "/api/v1/production-worksheets/1",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        assert resp.status_code == 403
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-
-
-@pytest.mark.asyncio
-async def test_close_worksheet_returns_200():
-    """Case 8 — happy path through the router."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=_ALL_PRIVS)
-
-    with patch.object(
-        svc, "close_worksheet", new=AsyncMock(return_value=_mock_response("closed", 1))
-    ):
-        app.dependency_overrides[get_db] = _override(session)
-        try:
-            async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
-                resp = await c.post(
-                    "/api/v1/production-worksheets/1/close",
-                    json=_VALID_CLOSE,
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "closed"
-            assert resp.json()["version"] == 1
-        finally:
-            app.dependency_overrides.pop(get_db, None)
-
-
-@pytest.mark.asyncio
-async def test_close_worksheet_without_privilege_returns_403():
-    """Case 9 — blocked at the API, not merely hidden in the UI."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=("production.worksheet.view",))
-
-    app.dependency_overrides[get_db] = _override(session)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
-            resp = await c.post(
-                "/api/v1/production-worksheets/1/close",
-                json=_VALID_CLOSE,
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        assert resp.status_code == 403
-        assert "production.worksheet.close" in resp.json()["detail"]
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "body,reason",
-    [
-        ({"expected_version": 0, "lines": [{"line_id": 100, "actual_quantity": -5}]}, "negative"),
-        ({"expected_version": 0, "lines": []}, "empty lines"),
-        ({"lines": [{"line_id": 100, "actual_quantity": 10}]}, "version missing"),
-        ({"expected_version": -1, "lines": [{"line_id": 1, "actual_quantity": 10}]}, "neg version"),
-    ],
-)
-async def test_close_worksheet_validation_returns_422(body, reason):
-    """Case 13 — malformed close bodies never reach the protocol."""
-    token = create_access_token(user_id=1)
-    session = _make_rbac_session(privileges=_ALL_PRIVS)
-
-    app.dependency_overrides[get_db] = _override(session)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as c:
-            resp = await c.post(
-                "/api/v1/production-worksheets/1/close",
-                json=body,
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        assert resp.status_code == 422, f"{reason} should be rejected"
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-
-
-# ===========================================================================
-# Service — the close protocol's branch logic
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_service_create_worksheet_persists_lines():
-    ws = _make_worksheet()
-    session = _FakeSession(worksheet=ws, lines=[_make_line()], products=[_make_product()])
-    body = WorksheetCreate(
-        production_line="LINE-1",
-        scheduled_date="2026-07-23",
-        lines=[WorksheetLineCreate(product_id=5, planned_quantity=10000)],
-    )
-
-    # The worksheet the service constructs is not the fake's; capture what it adds.
-    resp = await svc.create_worksheet(db=session, body=body, current_user=_user())
-
-    assert session.committed is True
-    added_lines = [o for o in session.added if isinstance(o, ProductionWorksheetLine)]
-    assert len(added_lines) == 1
-    assert added_lines[0].planned_quantity == 10000
-    assert resp.status == "draft"
-
-
-@pytest.mark.asyncio
-async def test_service_create_worksheet_unknown_product_raises_422():
-    """An unknown product_id must not fall through to the FK constraint as a 500."""
-    session = _FakeSession(products=[])  # nothing resolves
-    body = WorksheetCreate(lines=[WorksheetLineCreate(product_id=4242, planned_quantity=100)])
-
-    with pytest.raises(HTTPException) as exc:
-        await svc.create_worksheet(db=session, body=body, current_user=_user())
-
-    assert exc.value.status_code == 422
-    assert "4242" in exc.value.detail
-    assert session.committed is False
-
-
-@pytest.mark.asyncio
-async def test_service_get_worksheet_missing_raises_404():
-    session = _FakeSession(worksheet=None)
-    with pytest.raises(HTTPException) as exc:
-        await svc.get_worksheet(db=session, worksheet_id=999)
-    assert exc.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_service_close_missing_worksheet_raises_404():
-    """Case 15."""
-    session = _FakeSession(worksheet=None)
-    body = WorksheetCloseRequest(
-        expected_version=0, lines=[WorksheetCloseLine(line_id=100, actual_quantity=100)]
-    )
-    with pytest.raises(HTTPException) as exc:
-        await svc.close_worksheet(db=session, worksheet_id=999, body=body, current_user=_user())
-    assert exc.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_service_close_stale_version_raises_409():
-    """Case 10 — the conditional UPDATE matched no row, and the worksheet is still open."""
-    ws = _make_worksheet(version=3)
-    session = _FakeSession(
-        worksheet=ws, lines=[_make_line()], lots=[_make_lot()], claim_rowcount=0
-    )
-    body = WorksheetCloseRequest(
-        expected_version=0, lines=[WorksheetCloseLine(line_id=100, actual_quantity=100)]
-    )
-
-    with pytest.raises(HTTPException) as exc:
-        await svc.close_worksheet(db=session, worksheet_id=1, body=body, current_user=_user())
-
-    assert exc.value.status_code == 409
-    assert "modified by another operation" in exc.value.detail
-    assert session.rolled_back is True
-    assert session.consume_txns() == [], "no stock may move when the claim fails"
-
-
-@pytest.mark.asyncio
-async def test_service_close_already_closed_raises_409():
-    """Case 11 — distinguishable message from the stale-version case."""
-    ws = _make_worksheet(status="closed", version=1)
-    session = _FakeSession(
-        worksheet=ws, lines=[_make_line()], lots=[_make_lot()], claim_rowcount=0
-    )
-    body = WorksheetCloseRequest(
-        expected_version=1, lines=[WorksheetCloseLine(line_id=100, actual_quantity=100)]
-    )
-
-    with pytest.raises(HTTPException) as exc:
-        await svc.close_worksheet(db=session, worksheet_id=1, body=body, current_user=_user())
-
-    assert exc.value.status_code == 409
-    assert "already closed" in exc.value.detail
-    assert session.consume_txns() == []
-
-
-@pytest.mark.asyncio
-async def test_service_close_insufficient_stock_raises_409():
-    """Case 12 — availability shortfall is a 409, never a negative on-hand."""
-    ws = _make_worksheet()
-    session = _FakeSession(
-        worksheet=ws, lines=[_make_line()], lots=[_make_lot(qty=500)], products=[_make_product()]
-    )
-    body = WorksheetCloseRequest(
-        expected_version=0, lines=[WorksheetCloseLine(line_id=100, actual_quantity=9000)]
-    )
-
-    with pytest.raises(HTTPException) as exc:
-        await svc.close_worksheet(db=session, worksheet_id=1, body=body, current_user=_user())
-
-    assert exc.value.status_code == 409
-    assert "Insufficient stock" in exc.value.detail
-    assert session.rolled_back is True
-    assert session.committed is False
-
-
-@pytest.mark.asyncio
-async def test_service_close_unknown_line_raises_422():
-    """Case 14 — a line_id from another worksheet."""
-    ws = _make_worksheet()
-    session = _FakeSession(worksheet=ws, lines=[_make_line(line_id=100)])
-    body = WorksheetCloseRequest(
-        expected_version=0, lines=[WorksheetCloseLine(line_id=777, actual_quantity=10)]
-    )
-
-    with pytest.raises(HTTPException) as exc:
-        await svc.close_worksheet(db=session, worksheet_id=1, body=body, current_user=_user())
-
-    assert exc.value.status_code == 422
-    assert "does not belong" in exc.value.detail
-    assert session.claims == 0, "the claim must not run on a malformed request"
-
-
-@pytest.mark.asyncio
-async def test_service_close_duplicate_line_raises_422():
-    ws = _make_worksheet()
-    session = _FakeSession(worksheet=ws, lines=[_make_line(line_id=100)])
-    body = WorksheetCloseRequest(
-        expected_version=0,
-        lines=[
-            WorksheetCloseLine(line_id=100, actual_quantity=10),
-            WorksheetCloseLine(line_id=100, actual_quantity=20),
-        ],
-    )
-
-    with pytest.raises(HTTPException) as exc:
-        await svc.close_worksheet(db=session, worksheet_id=1, body=body, current_user=_user())
-
-    assert exc.value.status_code == 422
-    assert "more than once" in exc.value.detail
-
-
-@pytest.mark.asyncio
-async def test_service_close_happy_path_draws_fifo():
-    """Consumes across lots oldest-id first and bumps the version exactly once."""
-    ws = _make_worksheet()
-    lots = [_make_lot(lot_id=1, qty=4000), _make_lot(lot_id=2, qty=5000)]
-    session = _FakeSession(
-        worksheet=ws, lines=[_make_line()], lots=lots, products=[_make_product()]
-    )
-    body = WorksheetCloseRequest(
-        expected_version=0, lines=[WorksheetCloseLine(line_id=100, actual_quantity=6000)]
-    )
-
-    resp = await svc.close_worksheet(db=session, worksheet_id=1, body=body, current_user=_user())
-
-    assert resp.status == "closed"
-    assert resp.version == 1
-    assert session.committed is True
-    # FIFO: lot 1 drained, remainder off lot 2
-    assert lots[0].quantity_on_hand == 0
-    assert lots[0].status == "consumed"
-    assert lots[1].quantity_on_hand == 3000
-    assert lots[1].status == "in_storage"
-
-
-@pytest.mark.asyncio
-async def test_service_close_writes_only_consume_movements():
-    """§7.1 — the `actual − planned` delta is computed, never written as a movement.
-
-    planned 10000, actual 6000 → a 4000 delta exists as a reporting figure. If it were also
-    written as an adjustment the ledger would double-count. Asserted on movement *kind and
-    count*, not just the resulting total, because a compensating pair of rows nets to the right
-    number while still being wrong.
+    A real PostgreSQL flush returns the generated ``id`` and ``created_at`` (SQLAlchemy 2.0 fetches
+    server defaults via RETURNING). The mock has to do the same or the response model fails to
+    validate on fields the database would have filled.
     """
-    ws = _make_worksheet()
-    lots = [_make_lot(lot_id=1, qty=10000)]
-    session = _FakeSession(
-        worksheet=ws, lines=[_make_line(planned=10000)], lots=lots, products=[_make_product()]
+    user = _make_user()
+    session = _make_session(user, list(roles), list(privileges), service_handlers=handlers or [])
+
+    added: list = []
+    session.add = MagicMock(side_effect=added.append)
+
+    next_id = {"n": 100}
+
+    async def _flush():
+        for obj in added:
+            if getattr(obj, "id", None) is None:
+                next_id["n"] += 1
+                obj.id = next_id["n"]
+            if hasattr(obj, "created_at") and getattr(obj, "created_at", None) is None:
+                obj.created_at = _CREATED_AT
+
+    session.flush = AsyncMock(side_effect=_flush)
+    session.added = added
+    return session
+
+
+def _client() -> AsyncClient:
+    return AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL)
+
+
+def _auth() -> dict:
+    return {"Authorization": f"Bearer {create_access_token(user_id=1)}"}
+
+
+# ---------------------------------------------------------------------------
+# 1-4 — create
+# ---------------------------------------------------------------------------
+
+
+async def test_create_worksheet_returns_201_with_version_zero():
+    session = _session(handlers=[_scalars_all([_make_product()])])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(_URL, json=_VALID_CREATE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["status"] == "draft"
+    assert body["version"] == 0
+    assert body["production_line"] == "LINE-A"
+    assert len(body["lines"]) == 1
+    assert body["lines"][0]["product_id"] == 5
+    assert body["lines"][0]["planned_quantity"] == 6000
+    assert body["lines"][0]["product_name"] == "Steel Rod"
+    assert body["lines"][0]["actual_quantity"] is None
+    session.commit.assert_awaited()
+
+
+async def test_create_worksheet_without_privilege_is_403():
+    """machine_operator holds no production.worksheet.* privilege (migration 010)."""
+    session = _session(privileges=("work_orders.view",), roles=("machine_operator",))
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(_URL, json=_VALID_CREATE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 403
+    assert "production.worksheet.create" in resp.json()["detail"]
+
+
+async def test_create_worksheet_with_no_lines_is_422():
+    session = _session()
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                _URL, json={**_VALID_CREATE, "lines": []}, headers=_auth()
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+
+
+async def test_create_worksheet_with_non_positive_planned_quantity_is_422():
+    # A fresh session per request: _make_session counts execute calls per session, so reusing one
+    # across two requests would leave the second request's RBAC lookup reading past the end.
+    for bad in (0, -100):
+        app.dependency_overrides[get_db] = _override(_session())
+        try:
+            async with _client() as client:
+                resp = await client.post(
+                    _URL,
+                    json={**_VALID_CREATE, "lines": [{"product_id": 5, "planned_quantity": bad}]},
+                    headers=_auth(),
+                )
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+        assert resp.status_code == 422, f"planned_quantity={bad} should be rejected"
+
+
+async def test_create_worksheet_with_unknown_product_is_422():
+    """The FK would raise IntegrityError → 500; the service checks first and reports 422."""
+    session = _session(handlers=[_scalars_all([])])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(_URL, json=_VALID_CREATE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    assert "Unknown product_id(s): [5]" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# 5-7 — get
+# ---------------------------------------------------------------------------
+
+
+async def test_get_worksheet_returns_200():
+    session = _session(
+        handlers=[
+            _scalar_one(_make_worksheet()),
+            _scalars_all([_make_line()]),
+            _scalars_all([_make_product()]),
+        ]
     )
-    body = WorksheetCloseRequest(
-        expected_version=0, lines=[WorksheetCloseLine(line_id=100, actual_quantity=6000)]
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.get(f"{_URL}/1", headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == 1
+    assert body["status"] == "draft"
+    assert body["version"] == 0
+    assert body["lines"][0]["product_name"] == "Steel Rod"
+
+
+async def test_get_worksheet_missing_is_404():
+    session = _session(handlers=[_scalar_one(None)])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.get(f"{_URL}/999", headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Production worksheet not found"
+
+
+async def test_get_worksheet_without_privilege_is_403():
+    session = _session(privileges=("work_orders.view",), roles=("machine_operator",))
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.get(f"{_URL}/1", headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 403
+    assert "production.worksheet.view" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# 8-15 — close
+# ---------------------------------------------------------------------------
+
+
+def _rowcount(n):
+    """Handler for the optimistic-guard UPDATE, which is judged by rowcount alone."""
+
+    def _handler(result):
+        result.rowcount = n
+
+    return _handler
+
+
+_UNSET = object()  # lets a test pass worksheet=None to mean "no such worksheet"
+
+
+def _close_session(
+    worksheet=_UNSET,
+    lines=None,
+    guard_rowcount=1,
+    lots=None,
+    privileges=_ALL_PRIVILEGES,
+    roles=("company_admin",),
+):
+    """Wire the close's query sequence: worksheet FOR UPDATE, lines, guard UPDATE, lots, products."""
+    handlers = [
+        _scalar_one(_make_worksheet() if worksheet is _UNSET else worksheet),
+        _scalars_all([_make_line()] if lines is None else lines),
+        _rowcount(guard_rowcount),
+    ]
+    if guard_rowcount == 1:
+        handlers.append(_scalars_all([_make_lot()] if lots is None else lots))
+        handlers.append(_scalars_all([_make_product()]))
+    return _session(privileges=privileges, handlers=handlers, roles=roles)
+
+
+_VALID_CLOSE = {"expected_version": 0, "lines": [{"line_id": 10, "actual_quantity": 6000}]}
+
+
+async def test_close_worksheet_happy_path_consumes_stock():
+    lot = _make_lot(quantity_on_hand=10000)
+    session = _close_session(lots=[lot])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "closed"
+    assert body["version"] == 1
+    assert body["closed_at"] is not None
+    assert body["lines"][0]["actual_quantity"] == 6000
+
+    # Stock decremented by exactly the actual, once.
+    assert lot.quantity_on_hand == 4000
+
+    # Exactly one consume movement, and no compensating adjust row (plan §9.1).
+    movements = [obj for obj in session.added if isinstance(obj, InventoryTransaction)]
+    assert len(movements) == 1
+    assert movements[0].transaction_type == "consume"
+    assert movements[0].quantity == -6000
+    assert movements[0].reference_type == "production_worksheet"
+    assert movements[0].reference_id == 1
+    assert [m for m in movements if m.transaction_type == "adjust"] == []
+    session.commit.assert_awaited()
+
+
+async def test_close_worksheet_without_privilege_is_403():
+    session = _close_session(privileges=("production.worksheet.view",))
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 403
+    assert "production.worksheet.close" in resp.json()["detail"]
+    # Nothing was consumed on the way to the 403.
+    assert [obj for obj in session.added if isinstance(obj, InventoryTransaction)] == []
+
+
+async def test_close_worksheet_with_stale_version_is_409():
+    """The guard UPDATE matched no row: another close already bumped the version."""
+    session = _close_session(worksheet=_make_worksheet(version=1), guard_rowcount=0)
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 409
+    assert "modified by another operation" in resp.json()["detail"]
+    assert [obj for obj in session.added if isinstance(obj, InventoryTransaction)] == []
+    session.rollback.assert_awaited()
+    session.commit.assert_not_awaited()
+
+
+async def test_close_worksheet_already_closed_is_409():
+    session = _close_session(
+        worksheet=_make_worksheet(status="closed", version=1), guard_rowcount=0
     )
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                f"{_URL}/1/close",
+                json={**_VALID_CLOSE, "expected_version": 1},
+                headers=_auth(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
-    await svc.close_worksheet(db=session, worksheet_id=1, body=body, current_user=_user())
-
-    txns = session.consume_txns()
-    assert len(txns) == 1, "exactly one movement per lot drawn from"
-    assert txns[0].transaction_type == "consume"
-    assert txns[0].quantity == -6000, "the consume is already at actual — nothing to adjust"
-    assert txns[0].reference_type == "production_worksheet"
-    assert txns[0].reference_id == 1
-    assert [t for t in txns if t.transaction_type == "adjust"] == []
-    assert lots[0].quantity_on_hand == 4000
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Worksheet is already closed."
+    session.commit.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_service_close_zero_actual_consumes_nothing():
-    """A line that consumed nothing is legal and must move no stock."""
-    ws = _make_worksheet()
-    lots = [_make_lot(lot_id=1, qty=10000)]
-    session = _FakeSession(
-        worksheet=ws, lines=[_make_line()], lots=lots, products=[_make_product()]
-    )
-    body = WorksheetCloseRequest(
-        expected_version=0, lines=[WorksheetCloseLine(line_id=100, actual_quantity=0)]
-    )
+async def test_close_worksheet_with_insufficient_stock_is_409():
+    lot = _make_lot(quantity_on_hand=1000)  # need 6000
+    session = _close_session(lots=[lot])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
-    resp = await svc.close_worksheet(db=session, worksheet_id=1, body=body, current_user=_user())
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert "Insufficient stock for product 5" in detail
+    assert "Required: 6000, available: 1000" in detail
+    # Rolled back — the guard's status change is undone and the worksheet stays retryable.
+    session.rollback.assert_awaited()
+    session.commit.assert_not_awaited()
 
-    assert resp.status == "closed"
-    assert session.consume_txns() == []
-    assert lots[0].quantity_on_hand == 10000
+
+async def test_close_worksheet_with_negative_actual_quantity_is_422():
+    session = _close_session()
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                f"{_URL}/1/close",
+                json={"expected_version": 0, "lines": [{"line_id": 10, "actual_quantity": -5}]},
+                headers=_auth(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+
+
+async def test_close_worksheet_with_foreign_line_id_is_422():
+    session = _close_session()
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                f"{_URL}/1/close",
+                json={"expected_version": 0, "lines": [{"line_id": 999, "actual_quantity": 10}]},
+                headers=_auth(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    assert "not on this worksheet: [999]" in resp.json()["detail"]
+
+
+async def test_close_worksheet_with_duplicate_line_id_is_422():
+    """Two entries for one line would double-consume inside a single serialized close."""
+    session = _close_session()
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                f"{_URL}/1/close",
+                json={
+                    "expected_version": 0,
+                    "lines": [
+                        {"line_id": 10, "actual_quantity": 3000},
+                        {"line_id": 10, "actual_quantity": 3000},
+                    ],
+                },
+                headers=_auth(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    assert "Duplicate line_id(s)" in resp.json()["detail"]
+    assert [obj for obj in session.added if isinstance(obj, InventoryTransaction)] == []
+
+
+async def test_close_worksheet_missing_a_line_is_422():
+    """A partial close would leave a line unaccounted for and its stock never drawn."""
+    session = _close_session(lines=[_make_line(line_id=10), _make_line(line_id=11, product_id=6)])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    assert "missing line_id(s): [11]" in resp.json()["detail"]
+
+
+async def test_close_worksheet_missing_worksheet_is_404():
+    session = _close_session(worksheet=None)
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/999/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Production worksheet not found"
+
+
+async def test_close_worksheet_with_zero_actual_records_no_movement():
+    """A line that produced nothing closes cleanly and touches no stock."""
+    lot = _make_lot(quantity_on_hand=10000)
+    session = _close_session(lots=[lot])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                f"{_URL}/1/close",
+                json={"expected_version": 0, "lines": [{"line_id": 10, "actual_quantity": 0}]},
+                headers=_auth(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["lines"][0]["actual_quantity"] == 0
+    assert lot.quantity_on_hand == 10000
+    assert [obj for obj in session.added if isinstance(obj, InventoryTransaction)] == []
+
+
+async def test_close_worksheet_draws_fifo_across_multiple_lots():
+    """Need 6000 from lots of 2500 + 2500 + 5000 → drains the first two, part-draws the third."""
+    lots = [
+        _make_lot(lot_id=1, quantity_on_hand=2500),
+        _make_lot(lot_id=2, quantity_on_hand=2500),
+        _make_lot(lot_id=3, quantity_on_hand=5000),
+    ]
+    session = _close_session(lots=lots)
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    assert [lot.quantity_on_hand for lot in lots] == [0, 0, 4000]
+
+    movements = [obj for obj in session.added if isinstance(obj, InventoryTransaction)]
+    assert [(m.lot_id, m.quantity) for m in movements] == [(1, -2500), (2, -2500), (3, -1000)]
+    assert sum(-m.quantity for m in movements) == 6000

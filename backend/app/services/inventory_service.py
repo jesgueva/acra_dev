@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.models.delivery import Delivery, DeliveryItem
+from app.models.delivery_note import DeliveryNote
 from app.models.inventory import InventoryLot, InventoryTransaction, LowStockAlert
 from app.models.product import Product
 from app.models.work_order import MaterialAllocation, WorkOrder, WorkOrderMaterial
@@ -278,12 +279,18 @@ async def trace_lot(db: AsyncSession, lot_number: str) -> TraceabilityResponse:
             d_res = await db.execute(select(Delivery).where(Delivery.id == di.delivery_id))
             d = d_res.scalar_one_or_none()
             if d:
+                # The supplier, reference and date live on the linked delivery note.
+                note = (
+                    await db.execute(
+                        select(DeliveryNote).where(DeliveryNote.id == d.delivery_note_id)
+                    )
+                ).scalar_one_or_none()
                 source_delivery = {
                     "delivery_id": d.id,
-                    "contact_id": d.contact_id,
+                    "contact_id": note.partner_id if note else None,
                     "carrier_id": d.carrier_id,
-                    "delivery_date": str(d.delivery_date),
-                    "bol_reference": d.bol_reference,
+                    "delivery_date": str(note.document_date) if note else None,
+                    "bol_reference": note.document_number if note else None,
                 }
 
     alloc_res = await db.execute(

@@ -26,6 +26,14 @@ async def list_contacts(
     return ContactListResponse(total=total, page=page, page_size=page_size, results=list(items))
 
 
+async def load_by_ids(db: AsyncSession, ids: set[int]) -> dict[int, Contact]:
+    """Batch-load contacts keyed by id, for denormalizing names onto responses."""
+    if not ids:
+        return {}
+    res = await db.execute(select(Contact).where(Contact.id.in_(ids)))
+    return {c.id: c for c in res.scalars().all()}
+
+
 async def get_contact(db: AsyncSession, contact_id: int) -> Contact:
     res = await db.execute(select(Contact).where(Contact.id == contact_id))
     contact = res.scalar_one_or_none()

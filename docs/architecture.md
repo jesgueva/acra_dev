@@ -101,46 +101,39 @@ Sprint I baseline includes **skeleton stubs** for this module (model/service/rou
 the design before behavior is implemented. See [`RISK_LOG.md`](RISK_LOG.md) RSK-01/RSK-02 for the
 load-bearing risks (concurrency-safe close; reversible migration).
 
-### ADR-02 — worksheet-close concurrency (decided, ACR-30)
+### ADR-02 — worksheet-close concurrency (spiked in ACR-30)
 
-**Context.** RSK-01: a production-worksheet close has a lost-update path when several closes race
-on the same worksheet or on the same stock. It had to be de-risked before ACR-31 builds the real
-close.
+RSK-01 was de-risked ahead of the real close. The protocol `close_worksheet` proves out, in order:
 
-**Decision.** The close runs at **Read Committed** (the Postgres default) and executes, in order:
+1. **Read Committed** — *not* the `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE` that
+   `allocation_service.allocate_materials` uses. Under N-way parallelism SERIALIZABLE aborts the
+   losers with `could not serialize access`, which reaches the operator as a 500 and needs a retry
+   loop to be usable at all. Row locks give the loser a deterministic 409 instead.
+2. **Lock the parent row** (`SELECT ... FOR UPDATE`), which also fixes the lock order for step 4.
+3. **Optimistic version guard as one atomic statement** —
+   `UPDATE ... WHERE id = :id AND version = :expected AND status <> 'closed'`, judged by rowcount.
+   Not a read-then-check: PostgreSQL re-evaluates the predicate against the freshly committed row,
+   so the winner of a race is chosen by the database. This step alone is sufficient against a
+   double-close; step 2 only makes the failure deterministic.
+4. **Lock every affected stock row in ascending id order** — one global order across all callers,
+   so concurrent closes queue instead of deadlocking.
 
-1. `SELECT … FOR UPDATE` on the parent worksheet row — this also fixes the lock order for step 3,
-   so two closes cannot deadlock against each other.
-2. **One conditional UPDATE** claims the worksheet:
-   `SET status='closed', version=version+1 WHERE id=:id AND version=:expected AND status<>'closed'`.
-   `rowcount != 1` → **409**. The winner of a race is decided atomically by the database, never by
-   a read-then-check — and this happens *before* any stock is touched.
-3. `SELECT … FOR UPDATE … ORDER BY id ASC` on the candidate lots — the same order for every caller.
-4. Availability check, then a FIFO draw in integer arithmetic, one `consume` transaction per lot.
+Verified by TC-02 (`backend/tests/integration/test_worksheet_close_concurrency.py`) against live
+PostgreSQL: 8 parallel closes × 5 rounds, one winner and correct on-hand every run. The suite is
+mutation-verified — deleting the version guard turns two tests red, deleting the row locks turns
+the oversell test red — so it cannot pass by accident.
 
-**SERIALIZABLE was rejected.** `allocation_service.py:22` sets it, but under N-way parallelism it
-raises `could not serialize access due to concurrent update`, which reaches the operator as a
-**500** rather than a 409 they can act on, and it needs a retry loop to be usable at all.
+**Carried forward to ACR-31.** Two findings do not transfer for free when the close moves onto the
+append-only ledger:
 
-**Evidence.** `backend/tests/integration/test_worksheet_close_concurrency.py` (TC-02) runs against
-real Postgres with each closer on its own connection — a mocked session cannot exhibit a lost
-update. 8 closers × 5 rounds by default; also verified at 16 × 20. Exactly one winner every run;
-competing worksheets never oversell and never drive on-hand negative; opposing-order multi-lot
-closes do not deadlock. A **negative control** implements the unguarded read-modify-write close and
-asserts that it *does* lose updates (10000 − 3000 − 3000 → 7000, not 4000). If that control ever
-passes, the suite has gone blind and every other assertion in it is worthless.
-
-**Carry-forward for ACR-31 — the one place this does not transfer.** `FOR UPDATE` over **zero rows
-locks nothing**. That is benign against `inventory_lots` (no lots ⇒ no stock ⇒ 409 regardless), but
-it will **not** be benign for the append-only ledger, where on-hand is an aggregate over
-`(item, state)` and a fresh key legitimately has no rows to lock — two closes could then both read
-"nothing reserved" and both proceed. The ledger close will need `pg_advisory_xact_lock(hashtext(…))`
-on the `(item, state)` key, or a per-`(item, state)` balance anchor row to lock instead.
-
-**Also settled here:** the close writes Issue-at-actual per line and nothing else — the
-`actual − planned` delta is computed from the worksheet line, never written as an adjustment
-movement (`client_domain_model.md` §7.1). TC-02 asserts this on movement *kind and count*, because
-a compensating pair of rows nets to the right total while still being wrong.
+- **`FOR UPDATE` over zero rows locks nothing.** Harmless against `inventory_lots` (no lots means
+  no stock means a 409 regardless), but on a ledger where on-hand is an aggregate, a fresh
+  `(item, state)` key legitimately has zero rows and two closers would serialize against nothing.
+  The ledger close needs `pg_advisory_xact_lock(hashtext(...))` or a per-`(item, state)` balance
+  anchor row.
+- **Rolling back expires ORM instances.** Reading an attribute off one afterwards triggers
+  synchronous IO and raises `MissingGreenlet` on an async session, turning a clean 409 into a 500.
+  Capture anything an error message needs *before* `await db.rollback()`.
 
 ## Verified version snapshot
 

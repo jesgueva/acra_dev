@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app
 from app.models.delivery import Delivery, DeliveryItem
+from app.models.delivery_note import DeliveryNote
 from app.models.inventory import InventoryLot as InventoryItem
 from app.models.user import User
 from app.models.work_order import MaterialAllocation, WorkOrder, WorkOrderMaterial
@@ -67,17 +68,28 @@ def _make_delivery_item() -> DeliveryItem:
 
 
 def _make_delivery() -> Delivery:
-    from datetime import date
     d = Delivery()
     d.id = 1
-    d.contact_id = None
+    d.delivery_note_id = 900
     d.carrier_id = None
-    d.delivery_date = "2026-01-15"
-    d.bol_reference = "BOL-2026-001"
     d.notes = None
     d.created_by = 1
     d.created_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
     return d
+
+
+def _make_delivery_note() -> DeliveryNote:
+    """Carries the supplier, reference and date the trace view reports."""
+    n = DeliveryNote()
+    n.id = 900
+    n.type = "inbound"
+    n.partner_id = None
+    n.document_number = "BOL-2026-001"
+    n.document_date = "2026-01-15"
+    n.uploaded = True
+    n.created_by = 1
+    n.created_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
+    return n
 
 
 def _make_allocation() -> MaterialAllocation:
@@ -136,6 +148,7 @@ async def test_lot_traceability_chain_full():
     inv = _make_inventory_item(source_delivery_item_id=10)
     di = _make_delivery_item()
     delivery = _make_delivery()
+    note = _make_delivery_note()
     alloc = _make_allocation()
     wom = _make_wom()
     wo = _make_work_order()
@@ -151,13 +164,14 @@ async def test_lot_traceability_chain_full():
     def h_items(r): r.scalars.return_value.all.return_value = [inv]
     def h_di(r): r.scalar_one_or_none.return_value = di
     def h_delivery(r): r.scalar_one_or_none.return_value = delivery
+    def h_note(r): r.scalar_one_or_none.return_value = note
     def h_allocs(r): r.scalars.return_value.all.return_value = [alloc]
     def h_woms(r): r.scalars.return_value.all.return_value = [wom]
     def h_wos(r): r.scalars.return_value.all.return_value = [wo]
 
     session = _make_session(
         user, ["company_admin"], ["inventory.view"],
-        [h_items, h_di, h_delivery, h_allocs, h_woms, h_wos],
+        [h_items, h_di, h_delivery, h_note, h_allocs, h_woms, h_wos],
     )
     app.dependency_overrides[get_db] = _override(session)
     try:

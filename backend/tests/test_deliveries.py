@@ -21,7 +21,7 @@ from app.schemas.delivery import (
     DeliveryResponse,
 )
 from app.schemas.auth import TokenUser
-from tests.conftest import _make_rbac_session, _override
+from tests.conftest import _nested_transaction_mock, _make_rbac_session, _override
 
 BASE_URL = "http://test"
 
@@ -74,16 +74,30 @@ def _make_product(name="Steel Rod", product_id=1, category="raw"):
     return p
 
 
-def _make_flush(added, delivery_id=1, item_base=10, inv_base=100, contact_id_base=50, created_at=None):
+def _make_flush(
+    added,
+    delivery_id=1,
+    item_base=10,
+    inv_base=100,
+    contact_id_base=50,
+    created_at=None,
+    note_id_base=900,
+):
     """Return a flush coroutine that assigns DB-generated IDs to added objects."""
     _dt = created_at or datetime(2026, 1, 15, tzinfo=timezone.utc)
     _contact_counter = [contact_id_base]
+    _note_counter = [note_id_base]
 
     async def _flush():
         for contact in added.get("contacts", []):
             if contact.id is None:
                 contact.id = _contact_counter[0]
                 _contact_counter[0] += 1
+        for note in added.get("delivery_notes", []):
+            if note.id is None:
+                note.id = _note_counter[0]
+                note.created_at = _dt
+                _note_counter[0] += 1
         for d in added.get("deliveries", []):
             if d.id is None:
                 d.id = delivery_id
@@ -118,6 +132,7 @@ def _make_seq_session(handlers, added, flush_fn=None):
     )
     session.flush = flush_fn or AsyncMock()
     session.commit = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
     return session
 
 
@@ -249,6 +264,7 @@ async def test_service_create_delivery_atomic():
 
     def _fix_handlers(n, result):
         if n == 0:
+            # duplicate-BOL lookup, now against delivery_notes
             result.scalar_one_or_none.return_value = None
         elif n == 1:
             result.scalar_one_or_none.return_value = carrier
@@ -257,6 +273,11 @@ async def test_service_create_delivery_atomic():
             scalars_mock.all.return_value = [product]
             result.scalars.return_value = scalars_mock
         elif n == 3:
+            # dedupe_document_number: nothing taken
+            scalars_mock = MagicMock()
+            scalars_mock.all.return_value = []
+            result.scalars.return_value = scalars_mock
+        elif n == 4:
             # batch contact lookup after commit (provider + carrier)
             scalars_mock = MagicMock()
             scalars_mock.all.return_value = [provider, carrier]
@@ -278,6 +299,7 @@ async def test_service_create_delivery_atomic():
     )
     session.flush = _make_flush(added, delivery_id=1, item_base=10, inv_base=100)
     session.commit = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
 
     body = DeliveryCreate(
         contact_id=1,
@@ -409,6 +431,7 @@ async def test_service_force_true_overrides_duplicate():
         added, delivery_id=2, item_base=20, inv_base=200,
         created_at=datetime(2026, 1, 20, tzinfo=timezone.utc),
     )
+    session.begin_nested = _nested_transaction_mock()
     session.commit = AsyncMock()
 
     body = DeliveryCreate(
@@ -440,15 +463,24 @@ async def test_service_list_deliveries_returns_paginated():
     from app.services.delivery_service import list_deliveries
     from app.models.delivery import Delivery, DeliveryItem as DeliveryItemModel
 
+    from app.models.delivery_note import DeliveryNote
+
     mock_delivery = Delivery()
     mock_delivery.id = 1
-    mock_delivery.contact_id = None
+    mock_delivery.delivery_note_id = 900
     mock_delivery.carrier_id = None
-    mock_delivery.delivery_date = "2026-01-15"
-    mock_delivery.bol_reference = "BOL-2026-001"
     mock_delivery.notes = None
     mock_delivery.created_by = 1
     mock_delivery.created_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
+
+    # The supplier, reference and date now live on the linked note.
+    mock_note = DeliveryNote()
+    mock_note.id = 900
+    mock_note.type = "inbound"
+    mock_note.partner_id = None
+    mock_note.document_number = "BOL-2026-001"
+    mock_note.document_date = "2026-01-15"
+    mock_note.uploaded = True
 
     mock_item = DeliveryItemModel()
     mock_item.id = 10
@@ -479,6 +511,10 @@ async def test_service_list_deliveries_returns_paginated():
             scalars.all.return_value = [mock_item]
             result.scalars.return_value = scalars
         elif n == 4:
+            scalars = MagicMock()
+            scalars.all.return_value = [mock_note]
+            result.scalars.return_value = scalars
+        elif n == 5:
             from app.models.user import User
 
             creator = User()
@@ -535,6 +571,11 @@ async def test_service_transfer_carrier_sets_internal_supplier():
             scalars_mock.all.return_value = [product]
             result.scalars.return_value = scalars_mock
         elif n == 4:
+            # dedupe_document_number: nothing taken
+            scalars_mock = MagicMock()
+            scalars_mock.all.return_value = []
+            result.scalars.return_value = scalars_mock
+        elif n == 5:
             # batch contact lookup after commit (internal contact + transfer carrier)
             from app.models.contact import Contact
             internal_contact = Contact()
@@ -561,6 +602,7 @@ async def test_service_transfer_carrier_sets_internal_supplier():
     )
     session.flush = _make_flush(added, delivery_id=5, item_base=50, inv_base=500, contact_id_base=50)
     session.commit = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
 
     body = DeliveryCreate(
         contact_id=1,
