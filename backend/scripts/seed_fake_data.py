@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.core.security import hash_password
 from app.models.contact import Contact
 from app.models.delivery import Delivery, DeliveryItem
+from app.models.delivery_note import DeliveryNote, DeliveryNoteType
 from app.models.inventory import InventoryLot, InventoryTransaction, LowStockAlert
 from app.models.product import Product
 from app.models.user import Role, RolePrivilegeAssignment, User, UserRoleAssignment
@@ -467,7 +468,10 @@ async def create_demo_deliveries(
     for index in range(1, 25):
         bol_reference = f"DEMO-BOL-{today.year}-{index:03d}"
         existing = await db.execute(
-            select(Delivery.id).where(Delivery.bol_reference == bol_reference)
+            select(DeliveryNote.id).where(
+                DeliveryNote.type == DeliveryNoteType.INBOUND.value,
+                DeliveryNote.document_number == bol_reference,
+            )
         )
         if existing.scalar_one_or_none() is not None:
             continue
@@ -476,11 +480,22 @@ async def create_demo_deliveries(
         supplier_name = SUPPLIERS[(index - 1) % len(SUPPLIERS)]
         carrier_name = CARRIERS[(index - 1) % len(CARRIERS)]
 
+        # §4.1/§4.2 — the paper document that arrived with the goods owns the
+        # supplier, reference and date.
+        note = DeliveryNote(
+            type=DeliveryNoteType.INBOUND.value,
+            partner_id=supplier_ids[supplier_name],
+            document_number=bol_reference,
+            document_date=delivery_date.strftime("%d/%m/%y"),
+            uploaded=True,
+            created_by=created_by,
+        )
+        db.add(note)
+        await db.flush()
+
         delivery = Delivery(
-            contact_id=supplier_ids[supplier_name],
+            delivery_note_id=note.id,
             carrier_id=carrier_ids[carrier_name],
-            delivery_date=delivery_date.strftime("%d/%m/%y"),
-            bol_reference=bol_reference,
             notes=None,
             created_by=created_by,
         )
@@ -538,7 +553,7 @@ async def create_demo_deliveries(
                     quantity=item.quantity,
                     reference_type="delivery",
                     reference_id=delivery.id,
-                    reason=f"Seeded receive — {delivery.bol_reference}",
+                    reason=f"Seeded receive — {note.document_number}",
                     created_by=created_by,
                 )
             )

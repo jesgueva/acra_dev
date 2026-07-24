@@ -6,8 +6,11 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuth } from "@/src/contexts/AuthContext";
 
 interface PrivilegeGateProps {
-  /** Privilege the viewer must hold, e.g. PRIVILEGES.USERS_MANAGE */
-  privilege: string;
+  /**
+   * Privilege the viewer must hold, e.g. PRIVILEGES.USERS_MANAGE. An array means
+   * "any of", mirroring the backend's `require_any_privilege`.
+   */
+  privilege: string | string[];
   children: React.ReactNode;
 }
 
@@ -25,7 +28,11 @@ export function PrivilegeGate({ privilege, children }: PrivilegeGateProps) {
   // Wait for the session to resolve so we don't flash the denial state.
   if (!authResolved) return null;
 
-  if (!hasPrivilege(privilege)) {
+  const allowed = Array.isArray(privilege)
+    ? privilege.some(hasPrivilege)
+    : hasPrivilege(privilege);
+
+  if (!allowed) {
     return (
       <div className="p-6">
         <Alert variant="destructive" data-testid="privilege-denied">
