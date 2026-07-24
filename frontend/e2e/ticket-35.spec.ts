@@ -5,7 +5,7 @@ import { test, expect, Page } from "@playwright/test";
  *
  * Before this ticket, shipping.view / shipping.create were granted to no role, so every shipment
  * endpoint returned 403 for every user and the Shipping page was unreachable. These tests assert
- * the seeded mapping from migration 011 through the UI:
+ * the seeded mapping from migration 012 through the UI:
  *
  *   company_admin         view + create
  *   receiving_clerk       view + create
@@ -15,6 +15,9 @@ import { test, expect, Page } from "@playwright/test";
  * Run against a seeded database (./scripts/reset-db-and-seed.sh) with the backend on :8000 and a
  * production frontend build on :3000 (NOT `next dev`, see KI-02).
  */
+
+/** The backend, which is a different origin from the frontend `baseURL`. */
+const API_URL = process.env.E2E_API_URL ?? "http://localhost:8000";
 
 const ADMIN = { username: "admin", password: "admin123" };
 const CLERK = { username: "clerk1", password: "demo123" };
@@ -78,13 +81,29 @@ test.describe("ACR-35 shipping privileges", () => {
 
     await expect(page.getByRole("link", { name: "Shipping" })).toHaveCount(0);
 
-    // Hiding the link is not access control — the API must refuse a direct visit too.
+    // Hiding the link is not access control: typing the URL must land on the denial state,
+    // and PrivilegeGate must refuse before ShippingView mounts and queries the API.
     await page.goto("/en/shipping");
-    await expect.poll(() => reads.length).toBeGreaterThan(0);
-    expect(reads).toContain(403);
-
+    await expect(page.getByTestId("privilege-denied")).toBeVisible();
     await expect(page.getByRole("button", { name: /New Shipment/i })).toHaveCount(0);
     await expect(page.locator("tbody tr")).toHaveCount(0);
+    expect(reads).toHaveLength(0);
+  });
+
+  test("the API refuses the operator directly, not just the UI", async ({ request }) => {
+    // The client-side gate is convenience; the privilege is enforced server-side. Without this
+    // the suite would prove only that we hid a button.
+    const auth = await request.post(`${API_URL}/api/v1/auth/login`, {
+      data: { username: OPERATOR.username, password: OPERATOR.password },
+    });
+    expect(auth.ok()).toBeTruthy();
+    const { access_token: token } = await auth.json();
+
+    const list = await request.get(`${API_URL}/api/v1/shipments`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(list.status()).toBe(403);
+    expect(await list.text()).toContain("shipping.view");
   });
 
   test("clerk creates a shipment, and a bad lot fails cleanly", async ({ page }) => {
