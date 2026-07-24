@@ -16,7 +16,7 @@ from httpx import ASGITransport, AsyncClient
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.main import app
-from app.models.inventory import InventoryLot
+from app.models.inventory import InventoryLot, InventoryTransaction
 from app.models.product import Product
 from app.models.production_worksheet import ProductionWorksheet, ProductionWorksheetLine
 from tests.conftest import _make_session, _make_user, _override
@@ -279,3 +279,274 @@ async def test_get_worksheet_without_privilege_is_403():
 
     assert resp.status_code == 403
     assert "production.worksheet.view" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# 8-15 — close
+# ---------------------------------------------------------------------------
+
+
+def _rowcount(n):
+    """Handler for the optimistic-guard UPDATE, which is judged by rowcount alone."""
+
+    def _handler(result):
+        result.rowcount = n
+
+    return _handler
+
+
+_UNSET = object()  # lets a test pass worksheet=None to mean "no such worksheet"
+
+
+def _close_session(
+    worksheet=_UNSET,
+    lines=None,
+    guard_rowcount=1,
+    lots=None,
+    privileges=_ALL_PRIVILEGES,
+    roles=("company_admin",),
+):
+    """Wire the close's query sequence: worksheet FOR UPDATE, lines, guard UPDATE, lots, products."""
+    handlers = [
+        _scalar_one(_make_worksheet() if worksheet is _UNSET else worksheet),
+        _scalars_all([_make_line()] if lines is None else lines),
+        _rowcount(guard_rowcount),
+    ]
+    if guard_rowcount == 1:
+        handlers.append(_scalars_all([_make_lot()] if lots is None else lots))
+        handlers.append(_scalars_all([_make_product()]))
+    return _session(privileges=privileges, handlers=handlers, roles=roles)
+
+
+_VALID_CLOSE = {"expected_version": 0, "lines": [{"line_id": 10, "actual_quantity": 6000}]}
+
+
+async def test_close_worksheet_happy_path_consumes_stock():
+    lot = _make_lot(quantity_on_hand=10000)
+    session = _close_session(lots=[lot])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "closed"
+    assert body["version"] == 1
+    assert body["closed_at"] is not None
+    assert body["lines"][0]["actual_quantity"] == 6000
+
+    # Stock decremented by exactly the actual, once.
+    assert lot.quantity_on_hand == 4000
+
+    # Exactly one consume movement, and no compensating adjust row (plan §9.1).
+    movements = [obj for obj in session.added if isinstance(obj, InventoryTransaction)]
+    assert len(movements) == 1
+    assert movements[0].transaction_type == "consume"
+    assert movements[0].quantity == -6000
+    assert movements[0].reference_type == "production_worksheet"
+    assert movements[0].reference_id == 1
+    assert [m for m in movements if m.transaction_type == "adjust"] == []
+    session.commit.assert_awaited()
+
+
+async def test_close_worksheet_without_privilege_is_403():
+    session = _close_session(privileges=("production.worksheet.view",))
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 403
+    assert "production.worksheet.close" in resp.json()["detail"]
+    # Nothing was consumed on the way to the 403.
+    assert [obj for obj in session.added if isinstance(obj, InventoryTransaction)] == []
+
+
+async def test_close_worksheet_with_stale_version_is_409():
+    """The guard UPDATE matched no row: another close already bumped the version."""
+    session = _close_session(worksheet=_make_worksheet(version=1), guard_rowcount=0)
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 409
+    assert "modified by another operation" in resp.json()["detail"]
+    assert [obj for obj in session.added if isinstance(obj, InventoryTransaction)] == []
+    session.rollback.assert_awaited()
+    session.commit.assert_not_awaited()
+
+
+async def test_close_worksheet_already_closed_is_409():
+    session = _close_session(
+        worksheet=_make_worksheet(status="closed", version=1), guard_rowcount=0
+    )
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                f"{_URL}/1/close",
+                json={**_VALID_CLOSE, "expected_version": 1},
+                headers=_auth(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Worksheet is already closed."
+    session.commit.assert_not_awaited()
+
+
+async def test_close_worksheet_with_insufficient_stock_is_409():
+    lot = _make_lot(quantity_on_hand=1000)  # need 6000
+    session = _close_session(lots=[lot])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert "Insufficient stock for product 5" in detail
+    assert "Required: 6000, available: 1000" in detail
+    # Rolled back — the guard's status change is undone and the worksheet stays retryable.
+    session.rollback.assert_awaited()
+    session.commit.assert_not_awaited()
+
+
+async def test_close_worksheet_with_negative_actual_quantity_is_422():
+    session = _close_session()
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                f"{_URL}/1/close",
+                json={"expected_version": 0, "lines": [{"line_id": 10, "actual_quantity": -5}]},
+                headers=_auth(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+
+
+async def test_close_worksheet_with_foreign_line_id_is_422():
+    session = _close_session()
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                f"{_URL}/1/close",
+                json={"expected_version": 0, "lines": [{"line_id": 999, "actual_quantity": 10}]},
+                headers=_auth(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    assert "not on this worksheet: [999]" in resp.json()["detail"]
+
+
+async def test_close_worksheet_with_duplicate_line_id_is_422():
+    """Two entries for one line would double-consume inside a single serialized close."""
+    session = _close_session()
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                f"{_URL}/1/close",
+                json={
+                    "expected_version": 0,
+                    "lines": [
+                        {"line_id": 10, "actual_quantity": 3000},
+                        {"line_id": 10, "actual_quantity": 3000},
+                    ],
+                },
+                headers=_auth(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    assert "Duplicate line_id(s)" in resp.json()["detail"]
+    assert [obj for obj in session.added if isinstance(obj, InventoryTransaction)] == []
+
+
+async def test_close_worksheet_missing_a_line_is_422():
+    """A partial close would leave a line unaccounted for and its stock never drawn."""
+    session = _close_session(lines=[_make_line(line_id=10), _make_line(line_id=11, product_id=6)])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    assert "missing line_id(s): [11]" in resp.json()["detail"]
+
+
+async def test_close_worksheet_missing_worksheet_is_404():
+    session = _close_session(worksheet=None)
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/999/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Production worksheet not found"
+
+
+async def test_close_worksheet_with_zero_actual_records_no_movement():
+    """A line that produced nothing closes cleanly and touches no stock."""
+    lot = _make_lot(quantity_on_hand=10000)
+    session = _close_session(lots=[lot])
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                f"{_URL}/1/close",
+                json={"expected_version": 0, "lines": [{"line_id": 10, "actual_quantity": 0}]},
+                headers=_auth(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["lines"][0]["actual_quantity"] == 0
+    assert lot.quantity_on_hand == 10000
+    assert [obj for obj in session.added if isinstance(obj, InventoryTransaction)] == []
+
+
+async def test_close_worksheet_draws_fifo_across_multiple_lots():
+    """Need 6000 from lots of 2500 + 2500 + 5000 → drains the first two, part-draws the third."""
+    lots = [
+        _make_lot(lot_id=1, quantity_on_hand=2500),
+        _make_lot(lot_id=2, quantity_on_hand=2500),
+        _make_lot(lot_id=3, quantity_on_hand=5000),
+    ]
+    session = _close_session(lots=lots)
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with _client() as client:
+            resp = await client.post(f"{_URL}/1/close", json=_VALID_CLOSE, headers=_auth())
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    assert [lot.quantity_on_hand for lot in lots] == [0, 0, 4000]
+
+    movements = [obj for obj in session.added if isinstance(obj, InventoryTransaction)]
+    assert [(m.lot_id, m.quantity) for m in movements] == [(1, -2500), (2, -2500), (3, -1000)]
+    assert sum(-m.quantity for m in movements) == 6000
