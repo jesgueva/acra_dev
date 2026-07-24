@@ -7,6 +7,7 @@ from app.models.inventory import (
     LotStatus,
     LowStockAlert,
 )
+from app.models.invoice import Invoice, InvoiceLine
 from app.models.reservation import ReservationStatus, StockReservation
 from app.models.shipment import Shipment, ShipmentItem
 from app.models.user import Role, RolePrivilegeAssignment, User, UserRoleAssignment
@@ -28,6 +29,8 @@ __all__ = [
     "StockReservation",
     "Shipment",
     "ShipmentItem",
+    "Invoice",
+    "InvoiceLine",
     "WorkOrder",
     "WorkOrderMaterial",
     "MaterialAllocation",

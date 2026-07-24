@@ -55,6 +55,33 @@ def _make_session(user, roles, privileges, service_handlers=None):
     return session
 
 
+def _make_service_session(handlers=None):
+    """
+    Build a mock AsyncSession for calling a service function **directly**.
+
+    Unlike `_make_session`, no `require_privilege` dependency runs, so there are no RBAC queries to
+    skip: `handlers[0]` answers the service's first `execute`.
+    """
+    handlers = handlers or []
+    session = AsyncMock()
+    call_no = {"n": 0}
+
+    async def _execute(query, *args, **kwargs):
+        result = MagicMock()
+        n = call_no["n"]
+        call_no["n"] += 1
+        if n < len(handlers):
+            handlers[n](result)
+        return result
+
+    session.execute = _execute
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    session.flush = AsyncMock()
+    session.delete = AsyncMock()
+    return session
+
+
 def _override(session):
     async def _dep():
         yield session

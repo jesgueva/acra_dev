@@ -1,6 +1,5 @@
 """
-Tests for Phase 4 — Shipments API.
-Expected: 9 passed, 0 failed.
+Tests for Phase 4 — Shipments API, extended by ACR-33 (Transfer/Direct Customer + source).
 All tests run without a live database connection.
 """
 from datetime import datetime, timezone
@@ -8,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 
 from app.core.database import get_db
 from app.core.security import create_access_token
@@ -26,13 +26,14 @@ BASE_URL = "http://test"
 
 _CREATED_AT = datetime(2026, 4, 9, tzinfo=timezone.utc)
 
-_VALID_ITEM = {"lot_id": 1, "quantity": 5000}
+_VALID_ITEM = {"lot_id": 1, "quantity": 5000, "unit_price": 250}
 _VALID_BODY = {
     "contact_id": 10,
     "carrier_id": 20,
     "bol_number": "AV26-0001",
     "shipment_date": "2026-04-09",
-    "type": "customer_order",
+    "type": "direct_customer",
+    "source": "SC",
     "items": [_VALID_ITEM],
 }
 
@@ -96,7 +97,8 @@ def _make_mock_shipment_response():
         bol_number="AV26-0001",
         shipment_date="2026-04-09",
         notes=None,
-        type="customer_order",
+        type="direct_customer",
+        source="SC",
         created_by=1,
         created_at=_CREATED_AT,
         items=[
@@ -105,6 +107,7 @@ def _make_mock_shipment_response():
                 shipment_id=1,
                 lot_id=1,
                 quantity=5000,
+                unit_price=250,
                 product_name="Steel Rod",
                 lot_number="LOT-0001",
             )
@@ -515,3 +518,271 @@ async def test_service_list_shipments_returns_paginated():
     assert result.results[0].bol_number == "AV26-0001"
     assert result.results[0].contact_name is None
     assert result.results[0].items == []
+
+
+# ===========================================================================
+# ACR-33 — Transfer / Direct Customer vocabulary, `source`, price snapshot
+# ===========================================================================
+
+
+def _shipping_user():
+    return TokenUser(
+        user_id=1,
+        full_name="Test Clerk",
+        roles=["company_admin"],
+        preferred_language="en",
+        effective_privileges=["shipping.create"],
+    )
+
+
+def _create_session(lot, contacts=(), products=()):
+    """Session for `create_shipment` called directly: lots, then contacts, then products."""
+    session = AsyncMock()
+    call_no = {"n": 0}
+    added: list = []
+
+    async def _execute(query, *a, **kw):
+        result = MagicMock()
+        n = call_no["n"]
+        call_no["n"] += 1
+        scalars = MagicMock()
+        scalars.all.return_value = (
+            [lot] if n == 0 else list(contacts) if n == 1 else list(products)
+        )
+        result.scalars.return_value = scalars
+        return result
+
+    async def _flush():
+        for idx, obj in enumerate(added):
+            if getattr(obj, "id", None) is None:
+                obj.id = idx + 1
+            if hasattr(obj, "created_at") and obj.created_at is None:
+                obj.created_at = _CREATED_AT
+
+    session.execute = _execute
+    session.add = MagicMock(side_effect=added.append)
+    session.flush = _flush
+    session.commit = AsyncMock()
+    session._added = added
+    return session
+
+
+# ---------------------------------------------------------------------------
+# ACR-33 Test 1 — a Direct Customer shipment records `source` (§4.3)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_direct_customer_shipment_records_source():
+    from app.services.shipment_service import create_shipment
+
+    lot = _make_lot(lot_id=1, quantity_on_hand=10000)
+    session = _create_session(lot)
+
+    body = ShipmentCreate(
+        bol_number="AV26-0100",
+        shipment_date="2026-07-23",
+        type="direct_customer",
+        source="SC",
+        items=[ShipmentItemCreate(lot_id=1, quantity=5000, unit_price=250)],
+    )
+
+    result = await create_shipment(body, _shipping_user(), session)
+
+    assert result.type == "direct_customer"
+    assert result.source == "SC"
+    assert result.items[0].unit_price == 250
+
+
+# ---------------------------------------------------------------------------
+# ACR-33 Test 2 — `source` on a Transfer note is rejected
+# ---------------------------------------------------------------------------
+def test_source_on_transfer_shipment_is_rejected():
+    with pytest.raises(ValidationError) as exc:
+        ShipmentCreate(
+            bol_number="AV26-0101",
+            shipment_date="2026-07-23",
+            type="transfer",
+            source="SC",
+            items=[ShipmentItemCreate(lot_id=1, quantity=100)],
+        )
+    assert "direct_customer" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_source_on_transfer_shipment_returns_422_over_http():
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session_for_shipping()
+
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+            resp = await client.post(
+                "/api/v1/shipments",
+                json={**_VALID_BODY, "type": "transfer", "source": "SC"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert resp.status_code == 422
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+# ---------------------------------------------------------------------------
+# ACR-33 Test 3 — a Transfer note without `source` is fine
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_transfer_shipment_without_source_is_accepted():
+    from app.services.shipment_service import create_shipment
+
+    lot = _make_lot(lot_id=1, quantity_on_hand=10000)
+    session = _create_session(lot)
+
+    body = ShipmentCreate(
+        bol_number="AV26-0102",
+        shipment_date="2026-07-23",
+        type="transfer",
+        items=[ShipmentItemCreate(lot_id=1, quantity=1000)],
+    )
+
+    result = await create_shipment(body, _shipping_user(), session)
+
+    assert result.type == "transfer"
+    assert result.source is None
+
+
+# ---------------------------------------------------------------------------
+# ACR-33 Test 4 — the retired vocabulary no longer validates
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("retired_type", ["customer_order", "transfer_out", "", "DIRECT_CUSTOMER"])
+def test_retired_shipment_types_are_rejected(retired_type):
+    with pytest.raises(ValidationError):
+        ShipmentCreate(
+            bol_number="AV26-0103",
+            shipment_date="2026-07-23",
+            type=retired_type,
+            items=[ShipmentItemCreate(lot_id=1, quantity=100)],
+        )
+
+
+# ---------------------------------------------------------------------------
+# ACR-33 Test 5 — field validation on the create payload
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"bol_number": ""},                 # empty
+        {"bol_number": "   "},              # whitespace only
+        {"bol_number": "X" * 101},          # over max_length
+        {"shipment_date": "  "},            # whitespace only
+        {"source": "   "},                  # whitespace only
+        {"source": "S" * 51},               # over max_length
+        {"items": []},                      # no lines
+    ],
+)
+def test_invalid_shipment_payloads_are_rejected(overrides):
+    payload = {
+        "bol_number": "AV26-0104",
+        "shipment_date": "2026-07-23",
+        "type": "direct_customer",
+        "items": [{"lot_id": 1, "quantity": 100}],
+    }
+    payload.update(overrides)
+    with pytest.raises(ValidationError):
+        ShipmentCreate(**payload)
+
+
+@pytest.mark.parametrize(
+    "item_overrides",
+    [
+        {"quantity": 0},
+        {"quantity": -100},
+        {"unit_price": -1},
+        {"lot_id": 0},
+        {"lot_id": -3},
+    ],
+)
+def test_invalid_shipment_line_values_are_rejected(item_overrides):
+    item = {"lot_id": 1, "quantity": 100}
+    item.update(item_overrides)
+    with pytest.raises(ValidationError):
+        ShipmentCreate(
+            bol_number="AV26-0105",
+            shipment_date="2026-07-23",
+            items=[item],
+        )
+
+
+# ---------------------------------------------------------------------------
+# ACR-33 Test 6 — BOTH types write the Issue movement against the ledger
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("shipment_type", ["transfer", "direct_customer"])
+@pytest.mark.asyncio
+async def test_both_shipment_types_write_issue_movement(shipment_type):
+    from app.models.inventory import InventoryTransaction
+    from app.services.shipment_service import create_shipment
+
+    lot = _make_lot(lot_id=1, quantity_on_hand=10000)
+    session = _create_session(lot)
+
+    body = ShipmentCreate(
+        bol_number=f"AV26-{shipment_type}",
+        shipment_date="2026-07-23",
+        type=shipment_type,
+        items=[ShipmentItemCreate(lot_id=1, quantity=4000)],
+    )
+
+    await create_shipment(body, _shipping_user(), session)
+
+    txns = [o for o in session._added if isinstance(o, InventoryTransaction)]
+    assert len(txns) == 1
+    assert txns[0].transaction_type == "ship"
+    assert txns[0].quantity == -4000          # negative: an Issue, per domain model §4.1
+    assert txns[0].reference_type == "shipment"
+    assert lot.quantity_on_hand == 6000
+
+
+# ---------------------------------------------------------------------------
+# ACR-33 Test 7 — an unpriced line is allowed (price is optional at ship time)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_shipment_line_without_unit_price_is_allowed():
+    from app.services.shipment_service import create_shipment
+
+    lot = _make_lot(lot_id=1, quantity_on_hand=10000)
+    session = _create_session(lot)
+
+    body = ShipmentCreate(
+        bol_number="AV26-0106",
+        shipment_date="2026-07-23",
+        items=[ShipmentItemCreate(lot_id=1, quantity=1000)],
+    )
+
+    result = await create_shipment(body, _shipping_user(), session)
+
+    assert result.items[0].unit_price is None
+
+
+# ---------------------------------------------------------------------------
+# ACR-33 Test 8 — `type` defaults to direct_customer
+# ---------------------------------------------------------------------------
+def test_shipment_type_defaults_to_direct_customer():
+    body = ShipmentCreate(
+        bol_number="AV26-0107",
+        shipment_date="2026-07-23",
+        items=[ShipmentItemCreate(lot_id=1, quantity=100)],
+    )
+    assert body.type == "direct_customer"
+    assert body.source is None
+
+
+# ---------------------------------------------------------------------------
+# ACR-33 Test 9 — surrounding whitespace is trimmed, not preserved
+# ---------------------------------------------------------------------------
+def test_shipment_string_fields_are_trimmed():
+    body = ShipmentCreate(
+        bol_number="  AV26-0108  ",
+        shipment_date=" 2026-07-23 ",
+        source="  SC  ",
+        items=[ShipmentItemCreate(lot_id=1, quantity=100)],
+    )
+    assert body.bol_number == "AV26-0108"
+    assert body.shipment_date == "2026-07-23"
+    assert body.source == "SC"
