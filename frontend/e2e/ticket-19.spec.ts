@@ -1,4 +1,5 @@
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import { USERS, login } from "./helpers/auth";
 
 /**
  * T19 — User Management & Audit UI, end to end against a live stack.
@@ -7,32 +8,26 @@ import { test, expect, Page } from "@playwright/test";
  * backend on :8000 and a production frontend build on :3000.
  */
 
-const ADMIN = { username: "admin", password: "admin123" };
-const CLERK = { username: "clerk1", password: "demo123" };
-
 // Unique per run so repeated runs against the same database do not collide.
 const NEW_USER = `e2euser${Date.now().toString().slice(-6)}`;
 
-async function login(page: Page, username: string, password: string) {
-  await page.goto("/en/login");
-  await page.locator("#username").fill(username);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: /sign in|iniciar|login/i }).click();
-  await page.waitForURL((url) => !url.pathname.endsWith("/login"));
-}
+/** Links must be looked up inside the sidebar: the dashboard's quick-action bar links to the same
+ *  modules, so an unscoped getByRole("link") matches twice. */
+const sidebar = (page: Parameters<typeof login>[0]) =>
+  page.getByRole("complementary", { name: "sidebar" });
 
 test.describe("T19 user management", () => {
   test("admin sees the Users and Audit nav links", async ({ page }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
 
-    await expect(page.getByRole("link", { name: "Users" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Audit Log" })).toBeVisible();
+    await expect(sidebar(page).getByRole("link", { name: "Users" })).toBeVisible();
+    await expect(sidebar(page).getByRole("link", { name: "Audit Log" })).toBeVisible();
   });
 
   test("admin creates an operator with a production line, then deactivates them", async ({
     page,
   }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
     await page.goto("/en/users");
 
     await expect(page.getByTestId("user-table")).toBeVisible();
@@ -82,7 +77,7 @@ test.describe("T19 user management", () => {
   });
 
   test("the last admin cannot be deactivated", async ({ page }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
     await page.goto("/en/users");
 
     await page.getByTestId("deactivate-user-1").click();
@@ -98,7 +93,7 @@ test.describe("T19 audit log", () => {
   test("entries render with the actor and expand to show JSON details", async ({
     page,
   }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
     await page.goto("/en/audit");
 
     await expect(page.getByTestId("audit-table")).toBeVisible();
@@ -116,7 +111,7 @@ test.describe("T19 audit log", () => {
   });
 
   test("filtering by action narrows the table", async ({ page }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
     await page.goto("/en/audit");
 
     await page.getByTestId("action-filter").fill("login");
@@ -132,10 +127,10 @@ test.describe("T19 audit log", () => {
 
 test.describe("T19 authorization", () => {
   test("a clerk is denied both modules and sees no nav links", async ({ page }) => {
-    await login(page, CLERK.username, CLERK.password);
+    await login(page, USERS.clerk);
 
-    await expect(page.getByRole("link", { name: "Users" })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Audit Log" })).toHaveCount(0);
+    await expect(sidebar(page).getByRole("link", { name: "Users" })).toHaveCount(0);
+    await expect(sidebar(page).getByRole("link", { name: "Audit Log" })).toHaveCount(0);
 
     // Direct URL access is refused by PrivilegeGate, not just hidden in the nav.
     await page.goto("/en/users");

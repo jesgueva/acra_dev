@@ -3,40 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
-import {
-  Truck,
-  Boxes,
-  ClipboardList,
-  Users,
-  ScrollText,
-  LogOut,
-  Languages,
-  Cpu,
-  Database,
-  FileText,
-  PackageCheck,
-} from "lucide-react";
+import { LogOut, Languages, Cpu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/src/components/layout/ThemeToggle";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { apiClient } from "@/src/lib/api-client";
-import { PRIVILEGES } from "@/src/lib/privileges";
+import { NAV_ITEMS } from "@/src/components/layout/navItems";
 import { cn } from "@/lib/utils";
 
-const NAV_ITEMS = [
-  { key: "receiving" as const, path: "receiving", icon: Truck, privilege: PRIVILEGES.RECEIVING_VIEW },
-  { key: "inventory" as const, path: "inventory", icon: Boxes, privilege: PRIVILEGES.INVENTORY_VIEW },
-  // { key: "workOrders" as const, path: "work-orders", icon: ClipboardList, privilege: PRIVILEGES.RECEIVING_VIEW },
-  // { key: "shippingNav" as const, path: "shipping", icon: PackageCheck, privilege: PRIVILEGES.RECEIVING_VIEW },
-  // Gated on deliveries.view to match the API. Not shipping.view — that is granted
-  // to no role until ACR-35, so it would hide the link from everyone.
-  { key: "deliveryNotes" as const, path: "delivery-notes", icon: FileText, privilege: PRIVILEGES.DELIVERIES_VIEW },
-  { key: "contacts" as const, path: "master-data/contacts", icon: Database, privilege: PRIVILEGES.RECEIVING_VIEW },
-  { key: "users" as const, path: "users", icon: Users, privilege: PRIVILEGES.USERS_MANAGE },
-  { key: "audit" as const, path: "audit", icon: ScrollText, privilege: PRIVILEGES.AUDIT_VIEW },
-];
 
 export default function NavSidebar() {
   const t = useTranslations("nav");
@@ -71,7 +47,7 @@ export default function NavSidebar() {
   return (
     <aside
       aria-label="sidebar"
-      className="fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-border bg-sidebar"
+      className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-border bg-sidebar md:flex"
     >
       <div className="flex items-center gap-3 border-b border-border px-5 py-4">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15">

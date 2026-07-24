@@ -287,11 +287,11 @@ export default function NewDeliveryForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form onSubmit={handleSubmit} className="space-y-5" data-testid="delivery-form">
       {/* Header fields */}
       <div className="grid grid-cols-2 gap-3">
         {/* Carrier combobox */}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5" data-testid="carrier-combobox">
           <Label>{t("carrier")}</Label>
           <CreatableCombobox
             items={carriers.map((c) => ({ id: c.id, label: c.name }))}
@@ -307,7 +307,7 @@ export default function NewDeliveryForm({
         </div>
 
         {/* Supplier / provider combobox */}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5" data-testid="supplier-combobox">
           <Label>
             {t("supplier")}
             {supplierLocked && (
@@ -335,6 +335,7 @@ export default function NewDeliveryForm({
           <Label htmlFor="bol_reference">{t("bolNumber")}</Label>
           <Input
             id="bol_reference"
+            data-testid="bol-input"
             value={bolReference}
             onChange={(e) => {
               setBolReference(e.target.value);
@@ -350,6 +351,7 @@ export default function NewDeliveryForm({
           <Label htmlFor="delivery_date">{t("deliveryDate")}</Label>
           <Input
             id="delivery_date"
+            data-testid="delivery-date-input"
             value={deliveryDate}
             onChange={(e) => setDeliveryDate(e.target.value)}
             className={isHighlighted("delivery_date") ? "border-yellow-400 bg-yellow-50/10" : ""}
@@ -360,7 +362,10 @@ export default function NewDeliveryForm({
       </div>
 
       {showProceedAnyway && (
-        <div className="rounded-md bg-yellow-50/10 border border-yellow-400/50 px-4 py-3 flex items-center justify-between gap-4">
+        <div
+          className="rounded-md bg-yellow-50/10 border border-yellow-400/50 px-4 py-3 flex items-center justify-between gap-4"
+          data-testid="bol-duplicate"
+        >
           <p className="text-sm text-yellow-600 dark:text-yellow-400">{t("bolDuplicate")}</p>
           <Button
             type="button"
@@ -368,6 +373,7 @@ export default function NewDeliveryForm({
             size="sm"
             onClick={() => submitDelivery(true)}
             disabled={loading}
+            data-testid="proceed-anyway"
           >
             {t("proceedAnyway")}
           </Button>
@@ -421,6 +427,7 @@ export default function NewDeliveryForm({
                       }}
                     >
                       <SelectTrigger
+                        data-testid={`product-select-${index}`}
                         className={
                           isHighlighted(`items.${index}.product_id`)
                             ? "border-yellow-400 bg-yellow-50/10"
@@ -460,6 +467,7 @@ export default function NewDeliveryForm({
                   <Label htmlFor={`quantity_${index}`}>{t("quantity")}</Label>
                   <Input
                     id={`quantity_${index}`}
+                    data-testid={`quantity-${index}`}
                     type="number"
                     min="0"
                     step="0.01"
@@ -472,6 +480,7 @@ export default function NewDeliveryForm({
                   <Label htmlFor={`pallets_${index}`}>{t("pallets")}</Label>
                   <Input
                     id={`pallets_${index}`}
+                    data-testid={`pallets-${index}`}
                     type="number"
                     min="0"
                     value={row.pallets}
@@ -482,6 +491,7 @@ export default function NewDeliveryForm({
                   <Label htmlFor={`upm_${index}`}>{t("unitsPerPallet")}</Label>
                   <Input
                     id={`upm_${index}`}
+                    data-testid={`upm-${index}`}
                     type="number"
                     min="0"
                     value={row.units_per_pallet}
@@ -533,18 +543,18 @@ export default function NewDeliveryForm({
       </div>
 
       {validationError && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" data-testid="delivery-error">
           <AlertDescription>{validationError}</AlertDescription>
         </Alert>
       )}
 
       <div className="flex items-center gap-3">
-        <Button type="button" variant="outline" onClick={addItem}>
+        <Button type="button" variant="outline" onClick={addItem} data-testid="add-item">
           <Plus className="h-4 w-4 mr-1" />
           {t("addItem")}
         </Button>
 
-        <Button type="submit" disabled={loading}>
+        <Button type="submit" disabled={loading} data-testid="submit-delivery">
           {loading ? (
             <Loader2 className="animate-spin" aria-label="loading" />
           ) : (

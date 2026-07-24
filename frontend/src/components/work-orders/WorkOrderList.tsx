@@ -16,7 +16,10 @@ function WorkOrderRow({ wo, onSelect }: WorkOrderRowProps) {
   return (
     <Button
       variant="ghost"
-      className="flex h-auto w-full items-center justify-between rounded-md border bg-white px-4 py-3 text-left shadow-sm hover:bg-muted/50"
+      // `bg-card`, not a hard-coded `bg-white`: the app is dark by default, so these rows rendered
+      // as white cards carrying near-white text — effectively unreadable. Surfacing this module in
+      // the nav made that reachable, so it is fixed here rather than left to be tripped over.
+      className="flex h-auto w-full items-center justify-between rounded-md border bg-card px-4 py-3 text-left shadow-sm hover:bg-muted/50"
       onClick={() => onSelect(wo)}
       data-testid={`wo-row-${wo.id}`}
     >

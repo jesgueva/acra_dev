@@ -109,3 +109,32 @@ test("Clear Filters resets search and status to defaults", async () => {
 
   expect(onChange).toHaveBeenCalledWith(DEFAULT_FILTERS);
 });
+
+test("Clear Filters empties the box even when pressed before the debounce fires", async () => {
+  // Regression (ACR-21): the input used to be reset only by syncing from `filters.search`. Typing
+  // and clearing inside the 300ms debounce window meant the parent's search never changed from "",
+  // so no sync ran and the box kept text that was no longer filtering anything.
+  jest.useFakeTimers();
+  const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+  const onChange = jest.fn();
+
+  render(<FilterPanel filters={DEFAULT_FILTERS} onChange={onChange} />);
+
+  const input = screen.getByTestId("search-input");
+  await user.type(input, "aluminum");
+  expect(input).toHaveValue("aluminum");
+
+  // Clear before the debounce has had a chance to push the value up.
+  await user.click(screen.getByTestId("clear-filters"));
+
+  expect(input).toHaveValue("");
+  expect(onChange).toHaveBeenCalledWith(DEFAULT_FILTERS);
+
+  // The cancelled debounce must not fire afterwards and resurrect the search.
+  jest.runAllTimers();
+  expect(onChange).not.toHaveBeenCalledWith(
+    expect.objectContaining({ search: "aluminum" })
+  );
+
+  jest.useRealTimers();
+});

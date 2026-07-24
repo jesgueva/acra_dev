@@ -19,6 +19,14 @@ async def allocate_materials(
     user_id: int,
 ) -> WorkOrderResponse:
     """FIFO pessimistic-locking allocation under SERIALIZABLE isolation."""
+    # Postgres only accepts SET TRANSACTION ISOLATION LEVEL as the first statement of a
+    # transaction, and by the time this runs `require_privilege` has already issued its three
+    # lookups (user, roles, privileges) on this same session — so the transaction is open and the
+    # SET failed with ActiveSQLTransactionError, making every allocation a 500.
+    #
+    # Rolling back first closes that read-only transaction so the SET lands on a fresh one. Nothing
+    # is lost: the only statements so far were the RBAC reads.
+    await db.rollback()
     await db.execute(text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
 
     res = await db.execute(

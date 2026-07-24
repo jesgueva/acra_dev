@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { formatDateTime } from "@/src/lib/datetime";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { TableCell, TableRow } from "@/components/ui/table";
@@ -13,13 +14,11 @@ interface AuditLogTableProps {
   loading: boolean;
 }
 
-function formatTimestamp(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
+
 
 export function AuditLogTable({ logs, loading }: AuditLogTableProps) {
   const t = useTranslations("audit");
+  const locale = useLocale();
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const columns = [
@@ -55,7 +54,7 @@ export function AuditLogTable({ logs, loading }: AuditLogTableProps) {
                 )}
               </TableCell>
               <TableCell className="whitespace-nowrap">
-                {formatTimestamp(log.timestamp)}
+                {formatDateTime(log.timestamp, locale)}
               </TableCell>
               <TableCell>
                 {log.username ?? (

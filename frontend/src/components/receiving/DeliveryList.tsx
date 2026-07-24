@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { formatDateTime } from "@/src/lib/datetime";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,7 @@ interface DeliveryListProps {
 export default function DeliveryList({ refetch }: DeliveryListProps) {
   const t = useTranslations("receiving");
   const tc = useTranslations("common");
+  const locale = useLocale();
 
   const [page, setPage] = useState(1);
   const [supplierFilter, setSupplierFilter] = useState("");
@@ -97,6 +99,7 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
       <div className="flex items-center gap-2">
         <Input
           placeholder={t("filterBySupplier")}
+          data-testid="delivery-search"
           value={supplierFilter}
           onChange={(e) => {
             setSupplierFilter(e.target.value);
@@ -111,12 +114,14 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
         loading={isLoading}
         isEmpty={!isLoading && deliveries.length === 0}
         emptyMessage={t("noDeliveries")}
+        data-testid="delivery-table"
       >
         {deliveries.map((d) => (
           <TableRow
             key={d.id}
             className="cursor-pointer"
             onClick={() => setSelectedDelivery(d)}
+            data-testid={`delivery-row-${d.id}`}
           >
             <TableCell>{d.contact_name ?? "—"}</TableCell>
             <TableCell>
@@ -161,7 +166,10 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
           if (!open) setSelectedDelivery(null);
         }}
       >
-        <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent
+          className="sm:max-w-4xl max-h-[90vh] overflow-y-auto"
+          data-testid="delivery-detail"
+        >
           <DialogHeader>
             <DialogTitle className="font-mono text-base">
               {selectedDelivery?.bol_reference}
@@ -193,7 +201,7 @@ export default function DeliveryList({ refetch }: DeliveryListProps) {
                 <div className="col-span-2">
                   <p className="text-muted-foreground">{t("recordedAt")}</p>
                   <p className="font-medium">
-                    {new Date(selectedDelivery.created_at).toLocaleString()}
+                    {formatDateTime(selectedDelivery.created_at, locale)}
                   </p>
                 </div>
               </div>
