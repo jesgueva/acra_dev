@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app
 from app.models.delivery import Delivery, DeliveryItem
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryLot as InventoryItem
 from app.models.user import User
 from app.models.work_order import MaterialAllocation, WorkOrder, WorkOrderMaterial
 from tests.conftest import _make_session, _override
@@ -42,13 +42,13 @@ def _make_user() -> User:
 def _make_inventory_item(source_delivery_item_id: int | None = 10) -> InventoryItem:
     inv = InventoryItem()
     inv.id = 100
-    inv.material_type = "Steel Rod"
-    inv.category = "raw"
-    inv.quantity_on_hand = 30.0
-    inv.lot_batch_number = LOT
+    inv.product_id = None
+    inv.product_name = "Steel Rod"
+    inv.lot_number = LOT
+    inv.status = "in_storage"
+    inv.quantity_on_hand = 3000        # 30.00 units × 100
     inv.storage_location = "RACK-A"
     inv.source_delivery_item_id = source_delivery_item_id
-    inv.last_updated = datetime(2026, 1, 15, tzinfo=timezone.utc)
     return inv
 
 
@@ -56,11 +56,13 @@ def _make_delivery_item() -> DeliveryItem:
     di = DeliveryItem()
     di.id = 10
     di.delivery_id = 1
-    di.material_type = "Steel Rod"
-    di.quantity = 50.0
-    di.lot_batch_number = LOT
-    di.storage_location = "RACK-A"
-    di.inventory_item_id = 100
+    di.product_id = 1
+    di.description = "Steel Rod"
+    di.quantity = 5000                 # 50.00 units × 100
+    di.pallets = None
+    di.units_per_pallet = None
+    di.leftover = None
+    di.inventory_lot_id = 100
     return di
 
 
@@ -68,10 +70,11 @@ def _make_delivery() -> Delivery:
     from datetime import date
     d = Delivery()
     d.id = 1
-    d.supplier = "Acme Metals"
-    d.carrier = "Fast Freight"
-    d.delivery_date = date(2026, 1, 15)
+    d.contact_id = None
+    d.carrier_id = None
+    d.delivery_date = "2026-01-15"
     d.bol_reference = "BOL-2026-001"
+    d.notes = None
     d.created_by = 1
     d.created_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
     return d
@@ -166,20 +169,18 @@ async def test_lot_traceability_chain_full():
         assert resp.status_code == 200
         body = resp.json()
 
-        assert body["lot_batch_number"] == LOT
+        assert body["lot_number"] == LOT
 
         # Source delivery is populated
         src = body["source_delivery"]
         assert src is not None
-        assert src["supplier"] == "Acme Metals"
         assert src["bol_reference"] == "BOL-2026-001"
         assert src["delivery_id"] == 1
 
-        # Inventory items present
-        assert len(body["inventory_items"]) == 1
-        item = body["inventory_items"][0]
-        assert item["material_type"] == "Steel Rod"
-        assert item["category"] == "raw"
+        # Lots present
+        assert len(body["lots"]) == 1
+        item = body["lots"][0]
+        assert item["storage_location"] == "RACK-A"
 
         # Work order that consumed this lot
         assert len(body["work_orders"]) == 1
@@ -219,9 +220,9 @@ async def test_trace_lot_no_source_delivery():
             )
         assert resp.status_code == 200
         body = resp.json()
-        assert body["lot_batch_number"] == LOT
+        assert body["lot_number"] == LOT
         assert body["source_delivery"] is None
-        assert len(body["inventory_items"]) == 1
+        assert len(body["lots"]) == 1
         assert body["work_orders"] == []
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -258,8 +259,8 @@ async def test_trace_lot_multiple_inventory_items():
             )
         assert resp.status_code == 200
         body = resp.json()
-        assert len(body["inventory_items"]) == 2
-        locations = {i["storage_location"] for i in body["inventory_items"]}
+        assert len(body["lots"]) == 2
+        locations = {i["storage_location"] for i in body["lots"]}
         assert "RACK-A" in locations
         assert "RACK-B" in locations
     finally:

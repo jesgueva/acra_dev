@@ -23,7 +23,7 @@ def test_model_imports():
     assert User.__tablename__ == "users"
     assert Role.__tablename__ == "roles"
     assert Delivery.__tablename__ == "deliveries"
-    assert InventoryItem.__tablename__ == "inventory_items"
+    assert InventoryItem.__tablename__ == "inventory_lots"  # renamed in phase 3
     assert WorkOrder.__tablename__ == "work_orders"
     assert AuditLog.__tablename__ == "audit_logs"
 
@@ -45,22 +45,20 @@ def test_delivery_create_schema_valid():
     from app.schemas import DeliveryCreate
 
     payload = DeliveryCreate(
-        supplier="ACME Corp",
-        carrier="FastFreight",
+        contact_id=1,
+        carrier_id=2,
         delivery_date="2026-04-08",
         bol_reference="BOL-001",
         items=[
             {
-                "material_type": "Steel Rod",
-                "quantity": 50.0,
-                "lot_batch_number": "LOT-A",
-                "storage_location": "A-01",
+                "product_id": 1,
+                "quantity": 5000,  # integer ×100
             }
         ],
     )
-    assert payload.supplier == "ACME Corp"
+    assert payload.contact_id == 1
     assert len(payload.items) == 1
-    assert payload.items[0].quantity == 50.0
+    assert payload.items[0].quantity == 5000
 
 
 def test_delivery_create_schema_rejects_missing_items():
@@ -68,8 +66,7 @@ def test_delivery_create_schema_rejects_missing_items():
 
     with pytest.raises(ValidationError):
         DeliveryCreate(
-            supplier="ACME Corp",
-            carrier="FastFreight",
+            contact_id=1,
             delivery_date="2026-04-08",
             bol_reference="BOL-001",
             items=[],  # empty list not allowed (min_length=1)

@@ -27,6 +27,7 @@ function makeAuth(privileges: string[]): AuthContextValue {
     },
     token: "tok",
     isAuthenticated: true,
+    authResolved: true,
     login: jest.fn(),
     logout: jest.fn(),
     hasPrivilege: (p: string) => privileges.includes(p),
@@ -58,4 +59,26 @@ test("hides all nav links when user has no privileges", () => {
   expect(screen.queryByText("nav.users")).not.toBeInTheDocument();
   expect(screen.queryByText("nav.audit")).not.toBeInTheDocument();
   expect(screen.getByText("nav.logout")).toBeInTheDocument();
+});
+
+test("shows the Users and Audit links to an admin holding both privileges", () => {
+  mockUseAuth.mockReturnValue(
+    makeAuth([
+      PRIVILEGES.RECEIVING_VIEW,
+      PRIVILEGES.INVENTORY_VIEW,
+      PRIVILEGES.USERS_MANAGE,
+      PRIVILEGES.AUDIT_VIEW,
+    ])
+  );
+
+  render(<NavSidebar />);
+
+  expect(screen.getByText("nav.users").closest("a")).toHaveAttribute(
+    "href",
+    "/en/users"
+  );
+  expect(screen.getByText("nav.audit").closest("a")).toHaveAttribute(
+    "href",
+    "/en/audit"
+  );
 });

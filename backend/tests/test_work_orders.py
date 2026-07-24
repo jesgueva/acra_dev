@@ -432,13 +432,16 @@ async def test_update_status_completed_creates_finished_item():
         body = resp.json()
         assert body["status"] == "completed"
         add_calls = session.add.call_args_list
-        from app.models.inventory import InventoryItem
-        finished_items = [
+        from app.models.inventory import InventoryLot
+        finished_lots = [
             c for c in add_calls
-            if isinstance(c.args[0], InventoryItem) and getattr(c.args[0], "category", None) == "finished"
+            if isinstance(c.args[0], InventoryLot)
         ]
-        assert len(finished_items) == 1
-        assert finished_items[0].args[0].material_type == "Widget A"
+        assert len(finished_lots) == 1
+        lot = finished_lots[0].args[0]
+        assert lot.lot_number == "WO-0001"
+        assert lot.status == "in_storage"
+        assert lot.quantity_on_hand == 1000  # 10.0 × 100
     finally:
         app.dependency_overrides.pop(get_db, None)
 

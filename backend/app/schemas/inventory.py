@@ -4,50 +4,88 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class InventoryResponse(BaseModel):
+# ── Lot schemas ───────────────────────────────────────────────────────────────
+
+class InventoryLotResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    material_type: str
-    category: str
-    quantity_on_hand: float
-    lot_batch_number: str
-    storage_location: str
+    product_id: Optional[int] = None
+    product_name: Optional[str] = None   # denormalized for display
+    lot_number: Optional[str] = None
+    storage_location: Optional[str] = None
+    status: str
+    quantity_on_hand: int                # integer ×100
     source_delivery_item_id: Optional[int] = None
-    last_updated: datetime
+    pallet_number: Optional[int] = None
     is_triggered: bool = False
 
 
-class InventoryListResponse(BaseModel):
+class InventoryLotListResponse(BaseModel):
     total: int
     page: int
     page_size: int
-    results: List[InventoryResponse]
+    results: List[InventoryLotResponse]
 
+
+# ── Transaction schemas ───────────────────────────────────────────────────────
+
+class InventoryTransactionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    lot_id: int
+    transaction_type: str
+    quantity: int                        # integer ×100; positive = in, negative = out
+    reference_type: Optional[str] = None
+    reference_id: Optional[int] = None
+    reason: Optional[str] = None
+    created_by: Optional[int] = None
+    created_at: datetime
+
+
+# ── Adjust / location / split ─────────────────────────────────────────────────
 
 class InventoryAdjust(BaseModel):
-    quantity_on_hand: float = Field(..., ge=0)
-    reason: str
+    delta: int = Field(..., description="Signed integer ×100 — positive to add, negative to deduct")
+    reason: str = Field(..., min_length=1)
 
 
 class InventoryAdjustResponse(BaseModel):
     id: int
-    quantity_on_hand: float
-    last_updated: datetime
+    quantity_on_hand: int                # integer ×100
 
+
+class LocationUpdate(BaseModel):
+    storage_location: str = Field(..., max_length=100)
+
+
+class LotSplit(BaseModel):
+    split_quantity: int = Field(..., gt=0, description="Quantity to split off (integer ×100)")
+    storage_location: Optional[str] = Field(None, max_length=100)
+
+
+class LotSplitResponse(BaseModel):
+    source_lot: InventoryAdjustResponse
+    new_lot_id: int
+    new_lot_quantity: int
+
+
+# ── Low-stock alert schemas ───────────────────────────────────────────────────
 
 class LowStockAlertCreate(BaseModel):
-    material_type: str = Field(..., max_length=200)
-    threshold: float = Field(..., ge=0)
+    product_id: int
+    threshold: int = Field(..., ge=0, description="Low-stock threshold (integer ×100)")
 
 
 class LowStockAlertResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    material_type: str
-    threshold: float
-    current_quantity: float = 0.0
+    product_id: Optional[int] = None
+    product_name: Optional[str] = None  # denormalized
+    threshold: int                       # integer ×100
+    current_quantity: int = 0            # integer ×100
     is_triggered: bool = False
 
 
@@ -55,8 +93,16 @@ class LowStockAlertListResponse(BaseModel):
     alerts: List[LowStockAlertResponse]
 
 
+# ── Traceability ──────────────────────────────────────────────────────────────
+
 class TraceabilityResponse(BaseModel):
-    lot_batch_number: str
+    lot_number: str
     source_delivery: Optional[Dict[str, Any]] = None
-    inventory_items: List[Dict[str, Any]] = []
+    lots: List[Dict[str, Any]] = []
     work_orders: List[Dict[str, Any]] = []
+
+
+# ── Legacy aliases kept for backward compatibility ────────────────────────────
+
+InventoryResponse = InventoryLotResponse
+InventoryListResponse = InventoryLotListResponse

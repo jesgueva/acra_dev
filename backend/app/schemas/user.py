@@ -9,6 +9,7 @@ class UserCreate(BaseModel):
     full_name: str = Field(..., max_length=150)
     password: str
     preferred_language: Literal["en", "es"] = "en"
+    production_line: Optional[str] = Field(None, max_length=50)
     role_ids: List[int]
 
 
@@ -16,6 +17,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = Field(None, max_length=150)
     preferred_language: Optional[Literal["en", "es"]] = None
     status: Optional[Literal["active", "inactive"]] = None
+    production_line: Optional[str] = Field(None, max_length=50)
 
 
 class UserResponse(BaseModel):
@@ -26,6 +28,7 @@ class UserResponse(BaseModel):
     full_name: str
     roles: List[str] = []
     preferred_language: str
+    production_line: Optional[str] = None
     status: str
     created_at: datetime
 

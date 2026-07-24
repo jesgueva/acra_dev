@@ -45,6 +45,7 @@ def _user_to_response(user: User, roles: List[str]) -> UserResponse:
         full_name=user.full_name,
         roles=roles,
         preferred_language=user.preferred_language,
+        production_line=user.production_line,
         status=user.status,
         created_at=user.created_at,
     )
@@ -122,6 +123,7 @@ async def create_user(db: AsyncSession, data: UserCreate, actor_id: int) -> User
         full_name=data.full_name,
         password_hash=hash_password(data.password),
         preferred_language=data.preferred_language,
+        production_line=data.production_line,
         status="active",
     )
     db.add(user)
@@ -165,7 +167,7 @@ async def update_user(
             ).scalar_one_or_none()
             if user_is_admin is not None and admin_count <= 1:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=status.HTTP_409_CONFLICT,
                     detail="Cannot deactivate the last admin",
                 )
 
@@ -175,6 +177,8 @@ async def update_user(
         user.preferred_language = data.preferred_language
     if data.status is not None:
         user.status = data.status
+    if data.production_line is not None:
+        user.production_line = data.production_line
 
     await write_audit(db, actor_id, "update_user", "user", user_id)
     await db.commit()

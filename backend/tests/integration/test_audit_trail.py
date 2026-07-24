@@ -71,7 +71,7 @@ async def test_audit_trail_shows_multiple_action_types():
     ]
 
     def h_count(r): r.scalar.return_value = 3
-    def h_rows(r): r.scalars.return_value.all.return_value = logs
+    def h_rows(r): r.fetchall.return_value = [(log, "admin") for log in logs]
 
     session = _make_session(user, ["company_admin"], ADMIN_PRIVS, [h_count, h_rows])
     app.dependency_overrides[get_db] = _override(session)
@@ -117,7 +117,7 @@ async def test_audit_entries_in_chronological_order():
     ]
 
     def h_count(r): r.scalar.return_value = 5
-    def h_rows(r): r.scalars.return_value.all.return_value = logs
+    def h_rows(r): r.fetchall.return_value = [(log, "admin") for log in logs]
 
     session = _make_session(user, ["company_admin"], ADMIN_PRIVS, [h_count, h_rows])
     app.dependency_overrides[get_db] = _override(session)
@@ -156,7 +156,7 @@ async def test_audit_filter_by_action():
     login_log = _make_log(id=1, action="login", entity_type="User")
 
     def h_count(r): r.scalar.return_value = 1
-    def h_rows(r): r.scalars.return_value.all.return_value = [login_log]
+    def h_rows(r): r.fetchall.return_value = [(login_log, "admin")]
 
     session = _make_session(user, ["company_admin"], ADMIN_PRIVS, [h_count, h_rows])
     app.dependency_overrides[get_db] = _override(session)
@@ -191,7 +191,7 @@ async def test_audit_filter_by_entity_type():
     ]
 
     def h_count(r): r.scalar.return_value = 2
-    def h_rows(r): r.scalars.return_value.all.return_value = wo_logs
+    def h_rows(r): r.fetchall.return_value = [(log, "admin") for log in wo_logs]
 
     session = _make_session(user, ["company_admin"], ADMIN_PRIVS, [h_count, h_rows])
     app.dependency_overrides[get_db] = _override(session)

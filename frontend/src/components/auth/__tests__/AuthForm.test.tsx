@@ -28,6 +28,7 @@ function makeAuth(
     user: null,
     token: null,
     isAuthenticated: false,
+    authResolved: true,
     login: loginImpl,
     logout: jest.fn(),
     hasPrivilege: jest.fn(() => false),
@@ -100,7 +101,7 @@ test("disables submit button while login is in progress", async () => {
   });
 });
 
-test("redirects to /dashboard after successful login", async () => {
+test("redirects to the locale-prefixed receiving page after successful login", async () => {
   const mockLogin = jest.fn().mockResolvedValue(undefined);
   (useAuth as jest.Mock).mockReturnValue(makeAuth(mockLogin));
 
@@ -111,7 +112,7 @@ test("redirects to /dashboard after successful login", async () => {
   await userEvent.click(screen.getByRole("button", { name: "auth.loginButton" }));
 
   await waitFor(() => {
-    expect(mockPush).toHaveBeenCalledWith("/dashboard");
+    expect(mockPush).toHaveBeenCalledWith("/en/receiving");
   });
 });
 

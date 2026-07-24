@@ -2,6 +2,7 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import { Dashboard } from "../Dashboard";
 import { AuthContextValue } from "@/src/contexts/AuthContext";
+import { ROLES } from "@/src/lib/privileges";
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ function makeAuth(roles: string[]): AuthContextValue {
     },
     token: "test-token",
     isAuthenticated: true,
+    authResolved: true,
     login: jest.fn(),
     logout: jest.fn(),
     hasPrivilege: jest.fn(() => false),
@@ -87,7 +89,7 @@ beforeEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test("renders admin summary cards for admin user", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Admin"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
   setupQueries({ deliveryCount: 42, workOrderCount: 7, userCount: 10 });
 
   render(<Dashboard />);
@@ -100,7 +102,7 @@ test("renders admin summary cards for admin user", () => {
 });
 
 test("shows alert banner when low-stock alerts are triggered (admin)", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Admin"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
   setupQueries({
     alerts: [
       { material_name: "Steel", quantity: 5, threshold: 10, is_triggered: true },
@@ -116,7 +118,7 @@ test("shows alert banner when low-stock alerts are triggered (admin)", () => {
 });
 
 test("hides alert banner for non-admin users", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Supervisor"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.SUPERVISOR]));
   setupQueries({
     alerts: [
       { material_name: "Steel", quantity: 5, threshold: 10, is_triggered: true },
@@ -129,7 +131,7 @@ test("hides alert banner for non-admin users", () => {
 });
 
 test("renders inventory level chart for admin", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Admin"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
   setupQueries({
     inventoryItems: [
       { material_name: "Steel", quantity: 100, threshold: 20 },
@@ -143,7 +145,7 @@ test("renders inventory level chart for admin", () => {
 });
 
 test("does not render inventory level chart for clerk", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Clerk"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.CLERK]));
   setupQueries({ deliveryCount: 3 });
 
   render(<Dashboard />);
@@ -153,7 +155,7 @@ test("does not render inventory level chart for clerk", () => {
 });
 
 test("renders role-specific quick action links", () => {
-  mockUseAuth.mockReturnValue(makeAuth(["Clerk"]));
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.CLERK]));
   setupQueries({ deliveryCount: 1 });
 
   render(<Dashboard />);

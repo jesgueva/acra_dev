@@ -1,6 +1,10 @@
 import axios from "axios";
 import { SESSION_EXPIRED_REASON } from "@/src/lib/auth-constants";
 
+export function getResponseStatus(err: unknown): number | undefined {
+  return axios.isAxiosError(err) ? err.response?.status : undefined;
+}
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -38,11 +42,18 @@ export function registerNavigateHandler(fn: NavigateFn) {
   _navigateFn = fn;
 }
 
-// 401 interceptor → logout + redirect
+// 401 / "Not authenticated" 403 interceptor → logout + redirect
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const detail = error.response?.data?.detail;
+
+    const isUnauthenticated =
+      status === 401 ||
+      (status === 403 && detail === "Not authenticated");
+
+    if (isUnauthenticated) {
       if (_logoutFn) _logoutFn();
       _navigateFn(`/login?reason=${SESSION_EXPIRED_REASON}`);
     }

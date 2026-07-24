@@ -1,19 +1,23 @@
 import csv
 import io
-from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.models.delivery import Delivery, DeliveryItem
-from app.models.inventory import InventoryItem, LowStockAlert
+from app.models.inventory import InventoryLot, InventoryTransaction, LowStockAlert
+from app.models.product import Product
 from app.models.work_order import MaterialAllocation, WorkOrder, WorkOrderMaterial
 from app.schemas.inventory import (
     InventoryAdjustResponse,
-    InventoryListResponse,
-    InventoryResponse,
+    InventoryLotListResponse,
+    InventoryLotResponse,
+    InventoryTransactionResponse,
+    LocationUpdate,
+    LotSplit,
+    LotSplitResponse,
     LowStockAlertCreate,
     LowStockAlertListResponse,
     LowStockAlertResponse,
@@ -21,117 +25,250 @@ from app.schemas.inventory import (
 )
 
 
-def _build_item_query(
-    category: str | None = None,
-    material_type: str | None = None,
-    storage_location: str | None = None,
+def _build_lot_query(
+    status: str | None = None,
+    search: str | None = None,
 ):
-    q = select(InventoryItem)
-    if category:
-        q = q.where(InventoryItem.category == category)
-    if material_type:
-        q = q.where(InventoryItem.material_type.ilike(f"%{material_type}%"))
-    if storage_location:
-        q = q.where(InventoryItem.storage_location.ilike(f"%{storage_location}%"))
+    q = select(InventoryLot)
+    if status:
+        q = q.where(InventoryLot.status == status)
+    if search:
+        q = q.join(Product, InventoryLot.product_id == Product.id, isouter=True).where(
+            or_(
+                Product.name.ilike(f"%{search}%"),
+                InventoryLot.storage_location.ilike(f"%{search}%"),
+            )
+        )
     return q
 
 
-async def _fetch_thresholds(db: AsyncSession) -> dict[str, float]:
+async def _fetch_alert_thresholds(db: AsyncSession) -> dict[int, int]:
     alerts_res = await db.execute(select(LowStockAlert))
-    return {a.material_type: float(a.threshold) for a in alerts_res.scalars().all()}
+    return {a.product_id: a.threshold for a in alerts_res.scalars().all() if a.product_id}
+
+
+async def _load_product_names(db: AsyncSession, product_ids: set[int]) -> dict[int, str]:
+    if not product_ids:
+        return {}
+    res = await db.execute(select(Product).where(Product.id.in_(product_ids)))
+    return {p.id: p.name for p in res.scalars().all()}
+
+
+async def _get_lot_or_404(db: AsyncSession, lot_id: int) -> InventoryLot:
+    lot = (await db.execute(select(InventoryLot).where(InventoryLot.id == lot_id))).scalar_one_or_none()
+    if lot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory lot not found")
+    return lot
 
 
 async def list_inventory(
     db: AsyncSession,
     page: int = 1,
     page_size: int = 50,
-    category: str | None = None,
-    material_type: str | None = None,
-    storage_location: str | None = None,
-) -> InventoryListResponse:
-    base_q = _build_item_query(category, material_type, storage_location)
+    status: str | None = None,
+    search: str | None = None,
+) -> InventoryLotListResponse:
+    base_q = _build_lot_query(status, search)
 
     count_res = await db.execute(select(func.count()).select_from(base_q.subquery()))
     total = count_res.scalar() or 0
 
     offset = (page - 1) * page_size
-    items_res = await db.execute(base_q.offset(offset).limit(page_size))
-    items = items_res.scalars().all()
+    lots_res = await db.execute(base_q.offset(offset).limit(page_size))
+    lots = lots_res.scalars().all()
 
-    thresholds = await _fetch_thresholds(db)
+    thresholds = await _fetch_alert_thresholds(db)
+    product_ids = {lot.product_id for lot in lots if lot.product_id}
+    product_names = await _load_product_names(db, product_ids)
 
     results = []
-    for item in items:
-        qty = float(item.quantity_on_hand)
-        thr = thresholds.get(item.material_type)
+    for lot in lots:
+        thr = thresholds.get(lot.product_id) if lot.product_id else None
         results.append(
-            InventoryResponse(
-                id=item.id,
-                material_type=item.material_type,
-                category=item.category,
-                quantity_on_hand=qty,
-                lot_batch_number=item.lot_batch_number,
-                storage_location=item.storage_location,
-                source_delivery_item_id=item.source_delivery_item_id,
-                last_updated=item.last_updated,
-                is_triggered=thr is not None and qty <= thr,
+            InventoryLotResponse(
+                id=lot.id,
+                product_id=lot.product_id,
+                product_name=product_names.get(lot.product_id) if lot.product_id else None,
+                lot_number=lot.lot_number,
+                storage_location=lot.storage_location,
+                status=lot.status,
+                quantity_on_hand=lot.quantity_on_hand,
+                source_delivery_item_id=lot.source_delivery_item_id,
+                pallet_number=lot.pallet_number,
+                is_triggered=thr is not None and lot.quantity_on_hand <= thr,
             )
         )
 
-    return InventoryListResponse(total=total, page=page, page_size=page_size, results=results)
+    return InventoryLotListResponse(total=total, page=page, page_size=page_size, results=results)
 
 
 async def adjust_quantity(
     db: AsyncSession,
-    item_id: int,
-    quantity_on_hand: float,
+    lot_id: int,
+    delta: int,
     reason: str,
     user_id: int,
 ) -> InventoryAdjustResponse:
-    res = await db.execute(select(InventoryItem).where(InventoryItem.id == item_id))
-    item = res.scalar_one_or_none()
-    if item is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
+    lot = await _get_lot_or_404(db, lot_id)
 
-    item.quantity_on_hand = quantity_on_hand
-    item.last_updated = datetime.now(timezone.utc)
+    new_qty = lot.quantity_on_hand + delta
+    if new_qty < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Adjustment would result in negative quantity ({new_qty})",
+        )
+
+    lot.quantity_on_hand = new_qty
+
+    txn = InventoryTransaction(
+        lot_id=lot.id,
+        transaction_type="adjust",
+        quantity=delta,
+        reason=reason,
+        created_by=user_id,
+    )
+    db.add(txn)
 
     await write_audit(
         db=db,
         user_id=user_id,
         action="inventory_adjust",
-        entity_type="inventory_item",
-        entity_id=item_id,
-        details={"quantity_on_hand": quantity_on_hand, "reason": reason},
+        entity_type="inventory_lot",
+        entity_id=lot_id,
+        details={"delta": delta, "new_qty": new_qty, "reason": reason},
     )
     await db.commit()
 
-    return InventoryAdjustResponse(
-        id=item.id,
-        quantity_on_hand=float(item.quantity_on_hand),
-        last_updated=item.last_updated,
+    return InventoryAdjustResponse(id=lot.id, quantity_on_hand=lot.quantity_on_hand)
+
+
+async def update_location(
+    db: AsyncSession,
+    lot_id: int,
+    data: LocationUpdate,
+    user_id: int,
+) -> InventoryLotResponse:
+    lot = await _get_lot_or_404(db, lot_id)
+
+    old_location = lot.storage_location
+    lot.storage_location = data.storage_location
+
+    txn = InventoryTransaction(
+        lot_id=lot.id,
+        transaction_type="move",
+        quantity=0,
+        reason=f"Location changed: {old_location} → {data.storage_location}",
+        created_by=user_id,
+    )
+    db.add(txn)
+    await db.commit()
+
+    product_names = await _load_product_names(
+        db, {lot.product_id} if lot.product_id else set()
+    )
+    thresholds = await _fetch_alert_thresholds(db)
+    thr = thresholds.get(lot.product_id) if lot.product_id else None
+    return InventoryLotResponse(
+        id=lot.id,
+        product_id=lot.product_id,
+        product_name=product_names.get(lot.product_id) if lot.product_id else None,
+        lot_number=lot.lot_number,
+        storage_location=lot.storage_location,
+        status=lot.status,
+        quantity_on_hand=lot.quantity_on_hand,
+        source_delivery_item_id=lot.source_delivery_item_id,
+        pallet_number=lot.pallet_number,
+        is_triggered=thr is not None and lot.quantity_on_hand <= thr,
     )
 
 
-async def trace_lot(db: AsyncSession, lot_batch_number: str) -> TraceabilityResponse:
-    items_res = await db.execute(
-        select(InventoryItem).where(InventoryItem.lot_batch_number == lot_batch_number)
-    )
-    items = items_res.scalars().all()
+async def split_lot(
+    db: AsyncSession,
+    lot_id: int,
+    data: LotSplit,
+    user_id: int,
+) -> LotSplitResponse:
+    lot = await _get_lot_or_404(db, lot_id)
 
-    inventory_items_data = [
+    if data.split_quantity > lot.quantity_on_hand:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Split quantity {data.split_quantity} exceeds lot quantity {lot.quantity_on_hand}",
+        )
+
+    lot.quantity_on_hand -= data.split_quantity
+
+    new_lot = InventoryLot(
+        product_id=lot.product_id,
+        lot_number=lot.lot_number,
+        storage_location=data.storage_location or lot.storage_location,
+        status=lot.status,
+        quantity_on_hand=data.split_quantity,
+        source_delivery_item_id=lot.source_delivery_item_id,
+    )
+    db.add(new_lot)
+    await db.flush()
+
+    db.add(InventoryTransaction(
+        lot_id=lot.id,
+        transaction_type="split",
+        quantity=-data.split_quantity,
+        reason=f"Split to lot {new_lot.id}",
+        created_by=user_id,
+    ))
+    db.add(InventoryTransaction(
+        lot_id=new_lot.id,
+        transaction_type="split",
+        quantity=data.split_quantity,
+        reason=f"Split from lot {lot.id}",
+        created_by=user_id,
+    ))
+
+    await db.commit()
+
+    return LotSplitResponse(
+        source_lot=InventoryAdjustResponse(id=lot.id, quantity_on_hand=lot.quantity_on_hand),
+        new_lot_id=new_lot.id,
+        new_lot_quantity=new_lot.quantity_on_hand,
+    )
+
+
+async def list_transactions(
+    db: AsyncSession,
+    lot_id: int,
+) -> list[InventoryTransactionResponse]:
+    res = await db.execute(
+        select(InventoryTransaction)
+        .where(InventoryTransaction.lot_id == lot_id)
+        .order_by(InventoryTransaction.created_at.desc())
+    )
+    txns = res.scalars().all()
+    return [InventoryTransactionResponse.model_validate(t) for t in txns]
+
+
+async def trace_lot(db: AsyncSession, lot_number: str) -> TraceabilityResponse:
+    lots_res = await db.execute(
+        select(InventoryLot).where(InventoryLot.lot_number == lot_number)
+    )
+    lots = lots_res.scalars().all()
+
+    product_ids = {lot.product_id for lot in lots if lot.product_id}
+    product_names = await _load_product_names(db, product_ids)
+
+    lots_data = [
         {
-            "id": i.id,
-            "material_type": i.material_type,
-            "category": i.category,
-            "quantity_on_hand": float(i.quantity_on_hand),
-            "storage_location": i.storage_location,
+            "id": lot.id,
+            "product_id": lot.product_id,
+            "product_name": product_names.get(lot.product_id) if lot.product_id else None,
+            "status": lot.status,
+            "quantity_on_hand": lot.quantity_on_hand,
+            "storage_location": lot.storage_location,
         }
-        for i in items
+        for lot in lots
     ]
 
     source_delivery = None
-    source_ids = [i.source_delivery_item_id for i in items if i.source_delivery_item_id]
+    source_ids = [lot.source_delivery_item_id for lot in lots if lot.source_delivery_item_id]
     if source_ids:
         di_res = await db.execute(
             select(DeliveryItem).where(DeliveryItem.id == source_ids[0])
@@ -143,14 +280,14 @@ async def trace_lot(db: AsyncSession, lot_batch_number: str) -> TraceabilityResp
             if d:
                 source_delivery = {
                     "delivery_id": d.id,
-                    "supplier": d.supplier,
-                    "carrier": d.carrier,
+                    "contact_id": d.contact_id,
+                    "carrier_id": d.carrier_id,
                     "delivery_date": str(d.delivery_date),
                     "bol_reference": d.bol_reference,
                 }
 
     alloc_res = await db.execute(
-        select(MaterialAllocation).where(MaterialAllocation.lot_batch_number == lot_batch_number)
+        select(MaterialAllocation).where(MaterialAllocation.lot_batch_number == lot_number)
     )
     allocations = alloc_res.scalars().all()
 
@@ -173,9 +310,9 @@ async def trace_lot(db: AsyncSession, lot_batch_number: str) -> TraceabilityResp
             ]
 
     return TraceabilityResponse(
-        lot_batch_number=lot_batch_number,
+        lot_number=lot_number,
         source_delivery=source_delivery,
-        inventory_items=inventory_items_data,
+        lots=lots_data,
         work_orders=work_orders,
     )
 
@@ -184,20 +321,24 @@ async def list_alerts(db: AsyncSession) -> LowStockAlertListResponse:
     alerts_res = await db.execute(select(LowStockAlert))
     alerts = alerts_res.scalars().all()
 
+    product_ids = {a.product_id for a in alerts if a.product_id}
+    product_names = await _load_product_names(db, product_ids)
+
     qty_res = await db.execute(
-        select(InventoryItem.material_type, func.sum(InventoryItem.quantity_on_hand).label("total"))
-        .group_by(InventoryItem.material_type)
+        select(InventoryLot.product_id, func.sum(InventoryLot.quantity_on_hand).label("total"))
+        .group_by(InventoryLot.product_id)
     )
-    qty_map = {row[0]: float(row[1]) for row in qty_res.all()}
+    qty_map = {row[0]: row[1] for row in qty_res.all() if row[0] is not None}
 
     alert_responses = []
     for alert in alerts:
-        current_qty = qty_map.get(alert.material_type, 0.0)
-        thr = float(alert.threshold)
+        current_qty = qty_map.get(alert.product_id, 0)
+        thr = alert.threshold
         alert_responses.append(
             LowStockAlertResponse(
                 id=alert.id,
-                material_type=alert.material_type,
+                product_id=alert.product_id,
+                product_name=product_names.get(alert.product_id) if alert.product_id else None,
                 threshold=thr,
                 current_quantity=current_qty,
                 is_triggered=current_qty <= thr,
@@ -213,7 +354,7 @@ async def create_alert(
     user_id: int,
 ) -> LowStockAlertResponse:
     res = await db.execute(
-        select(LowStockAlert).where(LowStockAlert.material_type == data.material_type)
+        select(LowStockAlert).where(LowStockAlert.product_id == data.product_id)
     )
     existing = res.scalar_one_or_none()
 
@@ -222,20 +363,33 @@ async def create_alert(
         alert = existing
     else:
         alert = LowStockAlert(
-            material_type=data.material_type,
+            product_id=data.product_id,
             threshold=data.threshold,
             created_by=user_id,
         )
         db.add(alert)
+        await db.flush()  # assigns PK before we read alert.id
 
     await db.commit()
 
+    product_names = await _load_product_names(
+        db, {data.product_id} if data.product_id else set()
+    )
+    current_qty = 0
+    if data.product_id:
+        qty_res = await db.execute(
+            select(func.sum(InventoryLot.quantity_on_hand)).where(
+                InventoryLot.product_id == data.product_id
+            )
+        )
+        current_qty = qty_res.scalar() or 0
     return LowStockAlertResponse(
-        id=alert.id or 0,
-        material_type=alert.material_type,
-        threshold=float(alert.threshold),
-        current_quantity=0.0,
-        is_triggered=False,
+        id=alert.id,
+        product_id=alert.product_id,
+        product_name=product_names.get(data.product_id) if data.product_id else None,
+        threshold=alert.threshold,
+        current_quantity=current_qty,
+        is_triggered=current_qty <= alert.threshold,
     )
 
 
@@ -251,35 +405,35 @@ async def delete_alert(db: AsyncSession, alert_id: int) -> None:
 
 async def export_csv(
     db: AsyncSession,
-    category: str | None = None,
-    material_type: str | None = None,
-    storage_location: str | None = None,
+    status_filter: str | None = None,
+    search: str | None = None,
 ) -> str:
-    base_q = _build_item_query(category, material_type, storage_location)
+    base_q = _build_lot_query(status_filter, search)
 
-    items_res = await db.execute(base_q)
-    items = items_res.scalars().all()
+    lots_res = await db.execute(base_q)
+    lots = lots_res.scalars().all()
 
-    thresholds = await _fetch_thresholds(db)
+    product_ids = {lot.product_id for lot in lots if lot.product_id}
+    product_names = await _load_product_names(db, product_ids)
+    thresholds = await _fetch_alert_thresholds(db)
 
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "id", "material_type", "category", "quantity_on_hand",
-        "lot_batch_number", "storage_location", "last_updated", "is_triggered",
+        "id", "product_name", "lot_number", "status",
+        "quantity_on_hand", "storage_location", "is_triggered",
     ])
-    for item in items:
-        qty = float(item.quantity_on_hand)
-        thr = thresholds.get(item.material_type)
+    for lot in lots:
+        pname = product_names.get(lot.product_id, "") if lot.product_id else ""
+        thr = thresholds.get(lot.product_id) if lot.product_id else None
         writer.writerow([
-            item.id,
-            item.material_type,
-            item.category,
-            qty,
-            item.lot_batch_number,
-            item.storage_location,
-            item.last_updated.isoformat(),
-            thr is not None and qty <= thr,
+            lot.id,
+            pname,
+            lot.lot_number,
+            lot.status,
+            lot.quantity_on_hand,
+            lot.storage_location,
+            thr is not None and lot.quantity_on_hand <= thr,
         ])
 
     return output.getvalue()

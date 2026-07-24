@@ -51,7 +51,7 @@ class MaterialAllocation(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     work_order_material_id = Column(Integer, ForeignKey("work_order_materials.id", ondelete="CASCADE"), nullable=False)
-    inventory_id = Column(Integer, ForeignKey("inventory_items.id"), nullable=False)
+    inventory_id = Column(Integer, ForeignKey("inventory_lots.id"), nullable=False)
     lot_batch_number = Column(String(100), nullable=False)
     quantity_allocated = Column(Numeric(12, 3), nullable=False)
     allocated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())

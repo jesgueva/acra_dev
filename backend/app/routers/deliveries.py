@@ -1,4 +1,3 @@
-from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
@@ -63,8 +62,8 @@ async def list_deliveries(
     supplier: Optional[str] = Query(None),
     carrier: Optional[str] = Query(None),
     bol_reference: Optional[str] = Query(None),
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     current_user: TokenUser = Depends(require_privilege("deliveries.view")),

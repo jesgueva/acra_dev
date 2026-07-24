@@ -97,6 +97,7 @@ function makeAuth(
     },
     token: "test-token",
     isAuthenticated: true,
+    authResolved: true,
     login: jest.fn(),
     logout: jest.fn(),
     hasPrivilege: jest.fn((p: string) => privileges.includes(p)),

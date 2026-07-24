@@ -14,7 +14,8 @@ from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app
 from app.models.delivery import Delivery, DeliveryItem
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryLot as InventoryItem
+from app.models.product import Product
 from app.models.user import User
 from tests.conftest import _make_session, _override
 
@@ -67,51 +68,60 @@ def _make_login_session(user: User):
 def _make_mock_delivery(delivery_id: int = 1) -> Delivery:
     d = Delivery()
     d.id = delivery_id
-    d.supplier = "Acme Metals"
-    d.carrier = "Fast Freight"
-    d.delivery_date = date(2026, 1, 15)
+    d.contact_id = None
+    d.carrier_id = None
+    d.delivery_date = "2026-01-15"
     d.bol_reference = f"BOL-2026-{delivery_id:03d}"
+    d.notes = None
     d.created_by = 1
     d.created_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
     return d
+
+
+def _make_mock_product(product_id: int = 1) -> Product:
+    p = Product()
+    p.id = product_id
+    p.name = "Steel Rod"
+    return p
 
 
 def _make_mock_delivery_item(item_id: int = 10, delivery_id: int = 1, inv_id: int = 100) -> DeliveryItem:
     di = DeliveryItem()
     di.id = item_id
     di.delivery_id = delivery_id
-    di.material_type = "Steel Rod"
-    di.quantity = 50.0
-    di.lot_batch_number = "LOT-STEEL-001"
-    di.storage_location = "RACK-A1"
-    di.inventory_item_id = inv_id
+    di.product_id = 1
+    di.description = "Steel Rod"
+    di.quantity = 5000        # 50.00 units × 100
+    di.pallets = None
+    di.units_per_pallet = None
+    di.leftover = None
+    di.inventory_lot_id = inv_id
     return di
 
 
 def _make_mock_inventory_item(item_id: int = 100) -> InventoryItem:
     inv = InventoryItem()
     inv.id = item_id
-    inv.material_type = "Steel Rod"
-    inv.category = "raw"
-    inv.quantity_on_hand = 50.0
-    inv.lot_batch_number = "LOT-STEEL-001"
+    inv.product_id = 1
+    inv.product_name = "Steel Rod"
+    inv.lot_number = "LOT-STEEL-001"
+    inv.status = "in_storage"
+    inv.quantity_on_hand = 5000       # 50.00 units × 100
     inv.storage_location = "RACK-A1"
     inv.source_delivery_item_id = 10
-    inv.last_updated = datetime(2026, 1, 15, tzinfo=timezone.utc)
     return inv
 
 
 _VALID_DELIVERY_BODY = {
-    "supplier": "Acme Metals",
-    "carrier": "Fast Freight",
+    "contact_id": None,
+    "carrier_id": None,
     "delivery_date": "2026-01-15",
     "bol_reference": "BOL-2026-001",
     "items": [
         {
-            "material_type": "Steel Rod",
-            "quantity": 50.0,
-            "lot_batch_number": "LOT-STEEL-001",
-            "storage_location": "RACK-A1",
+            "product_id": 1,
+            "quantity": 5000,    # 50.00 units × 100
+            "description": "Steel Rod",
         }
     ],
     "force": False,
@@ -157,7 +167,11 @@ async def test_create_delivery_creates_inventory_items():
     def h_bol_check(r):
         r.scalar_one_or_none.return_value = None  # no duplicate
 
-    session = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_bol_check])
+    product = _make_mock_product()
+
+    def h_products(r): r.scalars.return_value.all.return_value = [product]
+
+    session = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_bol_check, h_products])
 
     # Wire flush to assign IDs
     async def _flush():
@@ -168,7 +182,7 @@ async def test_create_delivery_creates_inventory_items():
         for idx, item in enumerate(added.get("delivery_items", [])):
             if item.id is None:
                 item.id = 10 + idx
-        for idx, inv in enumerate(added.get("inventory_items", [])):
+        for idx, inv in enumerate(added.get("inventory_lots", [])):
             if inv.id is None:
                 inv.id = 100 + idx
 
@@ -186,11 +200,9 @@ async def test_create_delivery_creates_inventory_items():
         assert resp.status_code == 201
         body = resp.json()
         assert body["bol_reference"] == "BOL-2026-001"
-        assert body["supplier"] == "Acme Metals"
         assert len(body["items"]) == 1
-        # inventory_item_id is linked back
-        assert body["items"][0]["inventory_item_id"] == 100
-        assert body["items"][0]["lot_batch_number"] == "LOT-STEEL-001"
+        assert body["items"][0]["inventory_lot_id"] == 100
+        assert body["items"][0]["quantity"] == 5000
     finally:
         app.dependency_overrides.pop(get_db, None)
 
@@ -205,11 +217,14 @@ async def test_inventory_shows_received_items():
     token = create_access_token(user_id=1)
     inv = _make_mock_inventory_item()
 
+    product = _make_mock_product()
+
     def h_count(r): r.scalar.return_value = 1
     def h_items(r): r.scalars.return_value.all.return_value = [inv]
     def h_alerts(r): r.scalars.return_value.all.return_value = []
+    def h_product_names(r): r.scalars.return_value.all.return_value = [product]
 
-    session = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_count, h_items, h_alerts])
+    session = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_count, h_items, h_alerts, h_product_names])
     app.dependency_overrides[get_db] = _override(session)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
@@ -221,10 +236,10 @@ async def test_inventory_shows_received_items():
         body = resp.json()
         assert body["total"] == 1
         item = body["results"][0]
-        assert item["material_type"] == "Steel Rod"
-        assert item["category"] == "raw"
-        assert item["quantity_on_hand"] == 50.0
-        assert item["lot_batch_number"] == "LOT-STEEL-001"
+        assert item["product_name"] == "Steel Rod"
+        assert item["status"] == "in_storage"
+        assert item["quantity_on_hand"] == 5000
+        assert item["lot_number"] == "LOT-STEEL-001"
         assert item["source_delivery_item_id"] == 10
         assert item["is_triggered"] is False
     finally:
@@ -242,11 +257,17 @@ async def test_list_deliveries_with_supplier_filter():
     delivery = _make_mock_delivery()
     item = _make_mock_delivery_item()
 
+    product = _make_mock_product()
+
     def h_count(r): r.scalar.return_value = 1
     def h_deliveries(r): r.scalars.return_value.all.return_value = [delivery]
     def h_items(r): r.scalars.return_value.all.return_value = [item]
+    def h_products(r): r.scalars.return_value.all.return_value = [product]
 
-    session = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_count, h_deliveries, h_items])
+    session = _make_session(
+        user, ["receiving_clerk"], CLERK_PRIVS,
+        [h_count, h_deliveries, h_items, h_products],
+    )
     app.dependency_overrides[get_db] = _override(session)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
@@ -260,10 +281,10 @@ async def test_list_deliveries_with_supplier_filter():
         assert body["total"] == 1
         assert body["page"] == 1
         result = body["results"][0]
-        assert result["supplier"] == "Acme Metals"
         assert result["bol_reference"] == "BOL-2026-001"
         assert len(result["items"]) == 1
-        assert result["items"][0]["lot_batch_number"] == "LOT-STEEL-001"
+        assert result["items"][0]["product_name"] == "Steel Rod"
+        assert result["items"][0]["inventory_lot_id"] == 100
     finally:
         app.dependency_overrides.pop(get_db, None)
 
@@ -299,10 +320,13 @@ async def test_duplicate_bol_rejected_then_forced():
     # Attempt 2: force=True → 201 despite duplicate
     added = defaultdict(list)
 
+    product2 = _make_mock_product()
+
     def h_bol_exists_again(r):
         r.scalar_one_or_none.return_value = existing_delivery
+    def h_products2(r): r.scalars.return_value.all.return_value = [product2]
 
-    session2 = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_bol_exists_again])
+    session2 = _make_session(user, ["receiving_clerk"], CLERK_PRIVS, [h_bol_exists_again, h_products2])
 
     async def _flush():
         for d in added.get("deliveries", []):
@@ -312,7 +336,7 @@ async def test_duplicate_bol_rejected_then_forced():
         for idx, i in enumerate(added.get("delivery_items", [])):
             if i.id is None:
                 i.id = 20 + idx
-        for idx, inv in enumerate(added.get("inventory_items", [])):
+        for idx, inv in enumerate(added.get("inventory_lots", [])):
             if inv.id is None:
                 inv.id = 200 + idx
 
