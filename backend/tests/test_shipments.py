@@ -20,7 +20,7 @@ from app.schemas.shipment import (
     ShipmentListResponse,
     ShipmentResponse,
 )
-from tests.conftest import _make_rbac_session, _override
+from tests.conftest import _nested_transaction_mock, _make_rbac_session, _override
 
 BASE_URL = "http://test"
 
@@ -274,6 +274,7 @@ async def test_service_create_shipment_deducts_stock():
     session.add = MagicMock(side_effect=_side_effect)
     session.flush = _flush
     session.commit = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
 
     body = ShipmentCreate(
         contact_id=10,
@@ -416,6 +417,7 @@ async def test_service_lot_status_set_to_shipped_when_zero():
     session.add = MagicMock(side_effect=_side_effect)
     session.flush = _flush
     session.commit = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
 
     body = ShipmentCreate(
         contact_id=10,

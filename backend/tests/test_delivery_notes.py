@@ -16,7 +16,12 @@ from app.core.security import create_access_token
 from app.main import app
 from app.models.delivery_note import DeliveryNote, DeliveryNoteType
 from app.schemas.delivery_note import DeliveryNoteCreate
-from tests.conftest import _make_session, _make_user, _override
+from tests.conftest import (
+    _make_session,
+    _make_user,
+    _nested_transaction_mock,
+    _override,
+)
 
 BASE_URL = "http://test"
 _CREATED_AT = datetime(2026, 7, 23, tzinfo=timezone.utc)
@@ -339,6 +344,7 @@ def _session_returning(scalar_value=None, scalars_list=None):
     session.add = MagicMock(side_effect=added.append)
     session.flush = AsyncMock()
     session.commit = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
     session.added = added
     return session
 
@@ -421,65 +427,111 @@ async def test_dedupe_skips_to_the_next_free_suffix():
 
 
 # ---------------------------------------------------------------------------
-# Service — create_note rejects a duplicate (type, document_number)
+# Service — add_document_note, the shared inbound/outbound creation path
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_create_note_conflicts_on_duplicate_document_number():
-    from fastapi import HTTPException
+async def test_add_document_note_sets_the_document_facts():
+    from app.services.delivery_note_service import add_document_note
 
-    from app.services.delivery_note_service import create_note
+    session = _session_returning(scalars_list=[])
+    note = await add_document_note(
+        session,
+        note_type="direct_customer",
+        document_number="AV26-9",
+        document_date="2026-07-23",
+        partner_id=4,
+        source="SC",
+        uploaded=False,
+        created_by=3,
+    )
 
-    session = AsyncMock()
-
-    async def _execute(query, *a, **kw):
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = _make_note()
-        return result
-
-    session.execute = _execute
-    session.add = MagicMock()
-    session.flush = AsyncMock()
-
-    with pytest.raises(HTTPException) as exc:
-        await create_note(
-            session,
-            DeliveryNoteCreate(
-                type=DeliveryNoteType.INBOUND,
-                document_number="BOL-2026-001",
-                document_date="2026-07-23",
-            ),
-            user_id=1,
-        )
-    assert exc.value.status_code == 409
+    assert note.type == "direct_customer"
+    assert note.document_number == "AV26-9"
+    assert note.source == "SC"
+    assert note.partner_id == 4
+    assert note.created_by == 3
+    # The caller owns the transaction so the note lands with its header.
+    assert session.commit.called is False
 
 
 @pytest.mark.asyncio
-async def test_create_note_persists_when_number_is_free():
-    from app.services.delivery_note_service import create_note
+async def test_add_document_note_dedupes_a_taken_number():
+    from app.services.delivery_note_service import add_document_note
+
+    session = _session_returning(scalars_list=["BOL-1"])
+    note = await add_document_note(
+        session,
+        note_type="inbound",
+        document_number="BOL-1",
+        document_date="2026-07-23",
+        created_by=1,
+        uploaded=True,
+    )
+    assert note.document_number == "BOL-1 (2)"
+
+
+@pytest.mark.asyncio
+async def test_insert_retries_when_a_racing_transaction_takes_the_number():
+    """A concurrent caller can claim the same number between the read and the write."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.services.delivery_note_service import _insert_with_free_number
+
+    numbers = iter(["INT-1", "INT-2"])
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.begin_nested = _nested_transaction_mock()
+    # First flush loses the race; the second succeeds.
+    session.flush = AsyncMock(
+        side_effect=[IntegrityError("insert", {}, Exception("duplicate key")), None]
+    )
+
+    async def _next() -> str:
+        return next(numbers)
+
+    note = await _insert_with_free_number(
+        session,
+        next_number=_next,
+        build=lambda number: DeliveryNote(
+            type="internal",
+            document_number=number,
+            document_date="2026-07-23",
+            uploaded=False,
+            created_by=1,
+        ),
+    )
+
+    assert note.document_number == "INT-2"
+    assert session.flush.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_insert_gives_up_after_repeated_collisions():
+    from sqlalchemy.exc import IntegrityError
+
+    from app.services.delivery_note_service import _insert_with_free_number
 
     session = AsyncMock()
-
-    async def _execute(query, *a, **kw):
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = None
-        return result
-
-    added: list = []
-    session.execute = _execute
-    session.add = MagicMock(side_effect=added.append)
-    session.flush = AsyncMock()
-
-    note = await create_note(
-        session,
-        DeliveryNoteCreate(
-            type=DeliveryNoteType.DIRECT_CUSTOMER,
-            document_number="AV26-9",
-            document_date="2026-07-23",
-            source="SC",
-        ),
-        user_id=3,
+    session.add = MagicMock()
+    session.begin_nested = _nested_transaction_mock()
+    session.flush = AsyncMock(
+        side_effect=IntegrityError("insert", {}, Exception("duplicate key"))
     )
-    assert note.type == "direct_customer"
-    assert note.source == "SC"
-    assert note.created_by == 3
-    assert added == [note]
+
+    async def _next() -> str:
+        return "INT-STUCK"
+
+    with pytest.raises(IntegrityError):
+        await _insert_with_free_number(
+            session,
+            next_number=_next,
+            build=lambda number: DeliveryNote(
+                type="internal",
+                document_number=number,
+                document_date="2026-07-23",
+                uploaded=False,
+                created_by=1,
+            ),
+            attempts=3,
+        )
+    assert session.flush.await_count == 3

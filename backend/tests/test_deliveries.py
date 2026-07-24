@@ -21,7 +21,7 @@ from app.schemas.delivery import (
     DeliveryResponse,
 )
 from app.schemas.auth import TokenUser
-from tests.conftest import _make_rbac_session, _override
+from tests.conftest import _nested_transaction_mock, _make_rbac_session, _override
 
 BASE_URL = "http://test"
 
@@ -132,6 +132,7 @@ def _make_seq_session(handlers, added, flush_fn=None):
     )
     session.flush = flush_fn or AsyncMock()
     session.commit = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
     return session
 
 
@@ -298,6 +299,7 @@ async def test_service_create_delivery_atomic():
     )
     session.flush = _make_flush(added, delivery_id=1, item_base=10, inv_base=100)
     session.commit = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
 
     body = DeliveryCreate(
         contact_id=1,
@@ -429,6 +431,7 @@ async def test_service_force_true_overrides_duplicate():
         added, delivery_id=2, item_base=20, inv_base=200,
         created_at=datetime(2026, 1, 20, tzinfo=timezone.utc),
     )
+    session.begin_nested = _nested_transaction_mock()
     session.commit = AsyncMock()
 
     body = DeliveryCreate(
@@ -599,6 +602,7 @@ async def test_service_transfer_carrier_sets_internal_supplier():
     )
     session.flush = _make_flush(added, delivery_id=5, item_base=50, inv_base=500, contact_id_base=50)
     session.commit = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
 
     body = DeliveryCreate(
         contact_id=1,

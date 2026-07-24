@@ -1,16 +1,16 @@
 """Delivery Note reads, plus the internal-note generator production depends on."""
 
 from datetime import date
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contact import Contact
 from app.models.delivery_note import DeliveryNote, DeliveryNoteType
 from app.schemas.delivery_note import (
-    DeliveryNoteCreate,
     DeliveryNoteListResponse,
     DeliveryNoteResponse,
 )
@@ -99,6 +99,34 @@ async def dedupe_document_number(
     return f"{document_number} ({n})"
 
 
+async def _insert_with_free_number(
+    db: AsyncSession,
+    *,
+    next_number: Callable[[], Awaitable[str]],
+    build: Callable[[str], DeliveryNote],
+    attempts: int = 5,
+) -> DeliveryNote:
+    """Insert a note, re-deriving its document number if a racing transaction takes it first.
+
+    Both number sources read the table and then write, so two concurrent callers can pick the
+    same string and one loses to `uq_delivery_notes_type_document_number`. That is a live risk
+    for the flows this serves — concurrent worksheet approvals (ACR-31) and two clerks forcing
+    the same BoL — so retry inside a SAVEPOINT, which rolls back only the failed INSERT and
+    leaves the caller's transaction usable.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            async with db.begin_nested():
+                note = build(await next_number())
+                db.add(note)
+                await db.flush()
+            return note
+        except IntegrityError:
+            if attempt == attempts:
+                raise
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 async def generate_internal_note(
     db: AsyncSession,
     *,
@@ -113,55 +141,51 @@ async def generate_internal_note(
     approval.
     """
     today = on or date.today()
-    note = DeliveryNote(
-        type=DeliveryNoteType.INTERNAL.value,
-        source=None,
-        partner_id=None,          # production consumes from ourselves; no counterparty
-        document_number=await _next_internal_number(db, today),
-        document_date=today.isoformat(),
-        uploaded=False,           # §4.2 — system-generated
-        notes=reason,
-        created_by=user_id,
+    return await _insert_with_free_number(
+        db,
+        next_number=lambda: _next_internal_number(db, today),
+        build=lambda number: DeliveryNote(
+            type=DeliveryNoteType.INTERNAL.value,
+            source=None,
+            partner_id=None,      # production consumes from ourselves; no counterparty
+            document_number=number,
+            document_date=today.isoformat(),
+            uploaded=False,       # §4.2 — system-generated
+            notes=reason,
+            created_by=user_id,
+        ),
     )
-    db.add(note)
-    await db.flush()
-    return note
 
 
-async def create_note(
-    db: AsyncSession, data: DeliveryNoteCreate, user_id: int
+async def add_document_note(
+    db: AsyncSession,
+    *,
+    note_type: str,
+    document_number: str,
+    document_date: str,
+    created_by: int,
+    partner_id: Optional[int] = None,
+    source: Optional[str] = None,
+    uploaded: bool = False,
 ) -> DeliveryNote:
-    """Create a note from a validated payload. Does not commit."""
-    existing = (
-        await db.execute(
-            select(DeliveryNote).where(
-                DeliveryNote.type == data.type.value,
-                DeliveryNote.document_number == data.document_number,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"A {data.type.value} delivery note with document number "
-                f"'{data.document_number}' already exists."
-            ),
-        )
+    """Create the note behind an inbound delivery or an outbound shipment.
 
-    note = DeliveryNote(
-        type=data.type.value,
-        source=data.source,
-        partner_id=data.partner_id,
-        document_number=data.document_number,
-        document_date=data.document_date,
-        uploaded=data.uploaded,
-        notes=data.notes,
-        created_by=user_id,
+    The requested `document_number` is de-duplicated if it is already taken. Does not commit —
+    the note and the header it belongs to land in one transaction.
+    """
+    return await _insert_with_free_number(
+        db,
+        next_number=lambda: dedupe_document_number(db, note_type, document_number),
+        build=lambda number: DeliveryNote(
+            type=note_type,
+            source=source,
+            partner_id=partner_id,
+            document_number=number,
+            document_date=document_date,
+            uploaded=uploaded,
+            created_by=created_by,
+        ),
     )
-    db.add(note)
-    await db.flush()
-    return note
 
 
 async def list_notes(

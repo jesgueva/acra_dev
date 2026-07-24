@@ -9,7 +9,8 @@ Safe to re-run:
 - demo deliveries are skipped if their BOL already exists
 - demo work orders are skipped if their product already exists
 
-Schema: deliveries reference contacts; delivery_items and inventory_lots reference products;
+Schema: deliveries and shipments hang off delivery_notes, which carry the partner, document
+number and date; delivery_items and inventory_lots reference products;
 quantities are integer ×100 where applicable (inventory, delivery lines, low-stock thresholds).
 """
 

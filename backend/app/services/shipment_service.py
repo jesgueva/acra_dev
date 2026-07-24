@@ -125,19 +125,16 @@ async def create_shipment(
 
     # §4.1/§4.3 — the shipment's document is a system-generated note of the transfer or
     # direct-customer flavour, and it owns the client, BoL number, date and `source`.
-    note = DeliveryNote(
-        type=body.type,
-        source=body.source,
-        partner_id=body.contact_id,
-        document_number=await delivery_note_service.dedupe_document_number(
-            db, body.type, body.bol_number
-        ),
+    note = await delivery_note_service.add_document_note(
+        db,
+        note_type=body.type,
+        document_number=body.bol_number,
         document_date=body.shipment_date,
+        partner_id=body.contact_id,
+        source=body.source,
         uploaded=False,
         created_by=current_user.user_id,
     )
-    db.add(note)
-    await db.flush()
 
     shipment = Shipment(
         delivery_note_id=note.id,

@@ -100,19 +100,15 @@ async def create_delivery(
     # §4.1/§4.2 — the paper document that arrived with the goods is an uploaded INBOUND note, and
     # it owns the partner, reference and date. `force=true` reaches here with a reference that is
     # already taken, so the number is de-duplicated rather than rejected.
-    note = DeliveryNote(
-        type=DeliveryNoteType.INBOUND.value,
-        source=None,
-        partner_id=contact_id,
-        document_number=await delivery_note_service.dedupe_document_number(
-            db, DeliveryNoteType.INBOUND.value, body.bol_reference
-        ),
+    note = await delivery_note_service.add_document_note(
+        db,
+        note_type=DeliveryNoteType.INBOUND.value,
+        document_number=body.bol_reference,
         document_date=body.delivery_date,
+        partner_id=contact_id,
         uploaded=True,
         created_by=current_user.user_id,
     )
-    db.add(note)
-    await db.flush()
 
     delivery = Delivery(
         delivery_note_id=note.id,
