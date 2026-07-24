@@ -72,17 +72,30 @@ test.describe("T21 Flow 1 — authentication", () => {
   }) => {
     await login(page, USERS.admin);
 
-    // AuthForm sends an authenticated user to /receiving.
-    await expect(page).toHaveURL(/\/en\/receiving/);
+    // AuthForm sends an authenticated user to the dashboard — the one module every role can see.
+    await expect(page).toHaveURL(/\/en\/dashboard/);
     await expect(page.getByRole("complementary", { name: "sidebar" })).toBeVisible();
 
     await page.reload();
-    await expect(page).toHaveURL(/\/en\/receiving/);
+    await expect(page).toHaveURL(/\/en\/dashboard/);
     await expect(page.getByRole("complementary", { name: "sidebar" })).toBeVisible();
 
     // A fresh navigation, not just a reload — proves the cookie, not in-memory React state.
     await page.goto("/en/inventory");
     await expect(page.getByTestId("inventory-table")).toBeVisible();
+  });
+
+  test("every role lands somewhere it is allowed to be", async ({ page }) => {
+    // Login used to send everyone to /receiving, which production_supervisor and machine_operator
+    // have no privilege for — so a correct login dropped them straight onto a denied page.
+    for (const user of [USERS.admin, USERS.supervisor, USERS.clerk, USERS.operator]) {
+      await login(page, user);
+      await expect(page.getByTestId("privilege-denied"), `${user.username} was denied its landing page`).toHaveCount(0);
+      await expect(page.getByRole("complementary", { name: "sidebar" })).toBeVisible();
+
+      await page.getByRole("button", { name: "logout" }).click();
+      await page.waitForURL(/\/login/);
+    }
   });
 
   test("logout ends the session and protected routes stop rendering", async ({ page }) => {

@@ -16,18 +16,24 @@ export interface Credentials {
 }
 
 /**
- * The seeded demo accounts (`backend/scripts/seed_fake_data.py`), with the privileges that make
- * each one interesting to a test. The negative cases matter as much as the positive ones: a flow
- * that only ever logs in as ADMIN cannot tell "authorized" from "unguarded".
+ * The seeded demo accounts, with the privileges that make each one interesting to a test. The
+ * negative cases matter as much as the positive ones: a flow that only ever logs in as ADMIN cannot
+ * tell "authorized" from "unguarded".
+ *
+ * These privilege sets are the ones the API actually returns, read back from
+ * `POST /auth/login` — **not** the `ROLE_DEFINITIONS` literal in `seed_fake_data.py`. The two
+ * disagree: migration `002_role_privilege_assignments` grants a wider set, and the seed script only
+ * ever adds grants, never revokes them, so the effective set is the union of the two. Trusting the
+ * seed script alone would have this suite asserting denials that do not happen.
  */
 export const USERS = {
-  /** company_admin — everything, including inventory.adjust and users.manage. */
+  /** company_admin — everything, including inventory.adjust, users.manage, audit.view. */
   admin: { username: "admin", password: "admin123" },
-  /** production_supervisor — inventory.view + all work_orders.*, but no users/audit. */
+  /** production_supervisor — inventory.view + all work_orders.*; no receiving, users or audit. */
   supervisor: { username: "supervisor1", password: "demo123" },
-  /** receiving_clerk — deliveries only. No inventory.view, no work_orders.view. */
+  /** receiving_clerk — receiving + deliveries + inventory.view; no work_orders.view. */
   clerk: { username: "clerk1", password: "demo123" },
-  /** machine_operator — work_orders.view alone. The most restricted seeded account. */
+  /** machine_operator — `authenticated` and `work_orders.view` only. The most restricted account. */
   operator: { username: "operator1", password: "demo123" },
 } as const satisfies Record<string, Credentials>;
 

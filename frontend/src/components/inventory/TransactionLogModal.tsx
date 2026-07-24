@@ -61,7 +61,7 @@ export function TransactionLogModal({ lotId, onClose }: TransactionLogModalProps
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-xl" data-testid="transaction-log-modal">
         <DialogHeader>
           <DialogTitle>
             {lotId !== null
@@ -86,7 +86,11 @@ export function TransactionLogModal({ lotId, onClose }: TransactionLogModalProps
         {data && data.length > 0 && (
           <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
             {data.map((txn) => (
-              <div key={txn.id} className="flex items-start gap-3 rounded-md border p-3 text-sm">
+              <div
+                key={txn.id}
+                className="flex items-start gap-3 rounded-md border p-3 text-sm"
+                data-testid={`txn-row-${txn.id}`}
+              >
                 <Badge variant={TYPE_VARIANT[txn.transaction_type] ?? "outline"} className="shrink-0">
                   {txnTypeLabel(txn.transaction_type)}
                 </Badge>

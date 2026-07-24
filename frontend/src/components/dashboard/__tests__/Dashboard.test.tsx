@@ -59,27 +59,41 @@ function makeAuth(roles: string[]): AuthContextValue {
   };
 }
 
-// useQuery is called up to 5 times in Dashboard (alerts, inventory, deliveries,
-// work-orders, users). Return sensible defaults for each call.
+// useQuery is called 4 times in Dashboard, in this order: alerts, deliveries, work-orders, users.
+// The inventory chart is derived from the alerts payload rather than fetched separately, because
+// alerts is the only endpoint that carries `threshold`.
 function setupQueries({
   alerts = [],
-  inventoryItems = [],
   deliveryCount = 0,
   workOrderCount = 0,
   userCount = 0,
 }: {
   alerts?: object[];
-  inventoryItems?: object[];
   deliveryCount?: number;
   workOrderCount?: number;
   userCount?: number;
 } = {}) {
   mockUseQuery
     .mockReturnValueOnce({ data: alerts, isLoading: false, error: null } as ReturnType<typeof useQuery>)
-    .mockReturnValueOnce({ data: inventoryItems, isLoading: false, error: null } as ReturnType<typeof useQuery>)
     .mockReturnValueOnce({ data: deliveryCount, isLoading: false, error: null } as ReturnType<typeof useQuery>)
     .mockReturnValueOnce({ data: workOrderCount, isLoading: false, error: null } as ReturnType<typeof useQuery>)
     .mockReturnValueOnce({ data: userCount, isLoading: false, error: null } as ReturnType<typeof useQuery>);
+}
+
+/** An alert row exactly as `GET /inventory/alerts` returns it. */
+function alertRow(overrides: Partial<{
+  id: number; product_id: number; product_name: string;
+  current_quantity: number; threshold: number; is_triggered: boolean;
+}> = {}) {
+  return {
+    id: 1,
+    product_id: 1,
+    product_name: "Steel",
+    current_quantity: 5,
+    threshold: 10,
+    is_triggered: true,
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
@@ -105,8 +119,8 @@ test("shows alert banner when low-stock alerts are triggered (admin)", () => {
   mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
   setupQueries({
     alerts: [
-      { material_name: "Steel", quantity: 5, threshold: 10, is_triggered: true },
-      { material_name: "Copper", quantity: 2, threshold: 8, is_triggered: true },
+      alertRow({ product_name: "Steel" }),
+      alertRow({ id: 2, product_id: 2, product_name: "Copper", current_quantity: 2, threshold: 8 }),
     ],
   });
 
@@ -120,9 +134,7 @@ test("shows alert banner when low-stock alerts are triggered (admin)", () => {
 test("hides alert banner for non-admin users", () => {
   mockUseAuth.mockReturnValue(makeAuth([ROLES.SUPERVISOR]));
   setupQueries({
-    alerts: [
-      { material_name: "Steel", quantity: 5, threshold: 10, is_triggered: true },
-    ],
+    alerts: [alertRow()],
   });
 
   render(<Dashboard />);
@@ -133,9 +145,9 @@ test("hides alert banner for non-admin users", () => {
 test("renders inventory level chart for admin", () => {
   mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
   setupQueries({
-    inventoryItems: [
-      { material_name: "Steel", quantity: 100, threshold: 20 },
-      { material_name: "Copper", quantity: 50, threshold: 10 },
+    alerts: [
+      alertRow({ product_name: "Steel", current_quantity: 100, threshold: 20 }),
+      alertRow({ id: 2, product_id: 2, product_name: "Copper", current_quantity: 50, threshold: 10 }),
     ],
   });
 
@@ -165,4 +177,56 @@ test("renders role-specific quick action links", () => {
   expect(nav).toHaveTextContent("Receiving");
   expect(nav).not.toHaveTextContent("Users");
   expect(nav).not.toHaveTextContent("Audit Log");
+});
+
+// ── Regression: the alerts queryFn (ACR-21) ──────────────────────────────────
+// The tests above mock useQuery wholesale, so the real queryFn never ran — which is exactly how
+// `GET /inventory/alerts` returning `{ alerts: [...] }` instead of a bare array reached production
+// and crashed the dashboard with "TypeError: filter is not a function". These run it for real.
+
+jest.mock("@/src/lib/api-client", () => ({
+  apiClient: { get: jest.fn() },
+}));
+
+import { apiClient } from "@/src/lib/api-client";
+
+const mockGet = apiClient.get as jest.MockedFunction<typeof apiClient.get>;
+
+/** Render, then pull the queryFn the component handed to the first useQuery call (alerts). */
+async function runAlertsQueryFn() {
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
+  setupQueries();
+  render(<Dashboard />);
+
+  const options = mockUseQuery.mock.calls[0][0] as { queryFn: () => Promise<unknown> };
+  return options.queryFn();
+}
+
+test("the alerts query unwraps the API's { alerts: [...] } envelope", async () => {
+  const row = alertRow();
+  mockGet.mockResolvedValueOnce({ data: { alerts: [row] } } as never);
+
+  await expect(runAlertsQueryFn()).resolves.toEqual([row]);
+  expect(mockGet).toHaveBeenCalledWith("/inventory/alerts");
+});
+
+test("the alerts query yields an array when the envelope is empty", async () => {
+  mockGet.mockResolvedValueOnce({ data: {} } as never);
+
+  // Must be an array: the caller does `alerts.filter(...)` and `alerts.map(...)` unconditionally.
+  await expect(runAlertsQueryFn()).resolves.toEqual([]);
+});
+
+test("the chart is built from the alert rows, carrying their thresholds", () => {
+  mockUseAuth.mockReturnValue(makeAuth([ROLES.ADMIN]));
+  setupQueries({
+    alerts: [alertRow({ product_name: "Steel", current_quantity: 100, threshold: 20 })],
+  });
+
+  render(<Dashboard />);
+
+  // The previous implementation fetched `/inventory?category=raw` and read a `items` key that the
+  // endpoint never returns, so the chart was permanently empty.
+  expect(screen.getByTestId("bar-chart")).toBeInTheDocument();
+  expect(mockUseQuery).toHaveBeenCalledTimes(4);
 });

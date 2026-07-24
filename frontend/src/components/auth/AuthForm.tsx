@@ -31,7 +31,10 @@ export default function AuthForm() {
     setLoading(true);
     try {
       await login({ username, password });
-      router.push(`/${locale}/receiving`);
+      // Dashboard, not /receiving: it is the one module every role can see (its panels are chosen
+      // by role), whereas production_supervisor and machine_operator hold no `receiving.view` and
+      // would land on an access-denied page immediately after a successful login.
+      router.push(`/${locale}/dashboard`);
     } catch (err) {
       const statusErr = err as Error & { status?: number };
       if (statusErr.status === 401) {
