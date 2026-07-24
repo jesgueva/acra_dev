@@ -51,6 +51,7 @@ from app.routers.audit import router as audit_router  # noqa: E402
 from app.routers.auth import router as auth_router  # noqa: E402
 from app.routers.contacts import router as contacts_router  # noqa: E402
 from app.routers.deliveries import router as deliveries_router  # noqa: E402
+from app.routers.delivery_notes import router as delivery_notes_router  # noqa: E402
 from app.routers.inventory import router as inventory_router  # noqa: E402
 from app.routers.products import router as products_router  # noqa: E402
 from app.routers.roles import router as roles_router  # noqa: E402
@@ -63,6 +64,7 @@ app.include_router(audit_router)
 app.include_router(auth_router)
 app.include_router(contacts_router)
 app.include_router(deliveries_router)
+app.include_router(delivery_notes_router)
 app.include_router(inventory_router)
 app.include_router(products_router)
 app.include_router(roles_router)

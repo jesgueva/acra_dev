@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.models.contact import Contact
+from app.models.delivery_note import DeliveryNote
 from app.models.inventory import InventoryLot, InventoryTransaction
 from app.models.product import Product
 from app.models.shipment import Shipment, ShipmentItem
@@ -16,6 +17,7 @@ from app.schemas.shipment import (
     ShipmentListResponse,
     ShipmentResponse,
 )
+from app.services import delivery_note_service
 
 
 def _item_response(
@@ -45,23 +47,34 @@ def _shipment_response(
     contacts_by_id: dict[int, Contact],
     lots_by_id: dict[int, InventoryLot],
     products_by_id: dict[int, Product],
+    note: Optional[DeliveryNote] = None,
 ) -> ShipmentResponse:
-    contact_obj = contacts_by_id.get(s.contact_id) if s.contact_id else None
+    partner_id = note.partner_id if note else None
+    contact_obj = contacts_by_id.get(partner_id) if partner_id else None
     carrier_obj = contacts_by_id.get(s.carrier_id) if s.carrier_id else None
     return ShipmentResponse(
         id=s.id,
-        contact_id=s.contact_id,
+        delivery_note_id=s.delivery_note_id,
+        contact_id=partner_id,
         contact_name=contact_obj.name if contact_obj else None,
         carrier_id=s.carrier_id,
         carrier_name=carrier_obj.name if carrier_obj else None,
-        bol_number=s.bol_number,
-        shipment_date=s.shipment_date,
+        bol_number=note.document_number if note else "",
+        shipment_date=note.document_date if note else "",
         notes=s.notes,
-        type=s.type,
+        type=note.type if note else "",
+        source=note.source if note else None,
         created_by=s.created_by,
         created_at=s.created_at,
         items=[_item_response(it, lots_by_id, products_by_id) for it in items],
     )
+
+
+async def _load_notes(db: AsyncSession, ids: set[int]) -> dict[int, DeliveryNote]:
+    if not ids:
+        return {}
+    res = await db.execute(select(DeliveryNote).where(DeliveryNote.id.in_(ids)))
+    return {n.id: n for n in res.scalars().all()}
 
 
 async def _load_contacts(db: AsyncSession, ids: set[int]) -> dict[int, Contact]:
@@ -110,13 +123,26 @@ async def create_shipment(
                 ),
             )
 
-    shipment = Shipment(
-        contact_id=body.contact_id,
-        carrier_id=body.carrier_id,
-        bol_number=body.bol_number,
-        shipment_date=body.shipment_date,
-        notes=body.notes,
+    # §4.1/§4.3 — the shipment's document is a system-generated note of the transfer or
+    # direct-customer flavour, and it owns the client, BoL number, date and `source`.
+    note = DeliveryNote(
         type=body.type,
+        source=body.source,
+        partner_id=body.contact_id,
+        document_number=await delivery_note_service.dedupe_document_number(
+            db, body.type, body.bol_number
+        ),
+        document_date=body.shipment_date,
+        uploaded=False,
+        created_by=current_user.user_id,
+    )
+    db.add(note)
+    await db.flush()
+
+    shipment = Shipment(
+        delivery_note_id=note.id,
+        carrier_id=body.carrier_id,
+        notes=body.notes,
         created_by=current_user.user_id,
     )
     db.add(shipment)
@@ -164,7 +190,9 @@ async def create_shipment(
     product_ids = {lot.product_id for lot in lots_by_id.values() if lot.product_id}
     products_by_id = await _load_products(db, product_ids)
 
-    return _shipment_response(shipment, shipment_items, contacts_by_id, lots_by_id, products_by_id)
+    return _shipment_response(
+        shipment, shipment_items, contacts_by_id, lots_by_id, products_by_id, note
+    )
 
 
 async def list_shipments(
@@ -175,13 +203,16 @@ async def list_shipments(
     page: int = 1,
     page_size: int = 20,
 ) -> ShipmentListResponse:
-    base = select(Shipment)
+    # Client and date live on the linked note, so both filters read through the join.
+    base = select(Shipment).join(
+        DeliveryNote, Shipment.delivery_note_id == DeliveryNote.id
+    )
     if contact_id:
-        base = base.where(Shipment.contact_id == contact_id)
+        base = base.where(DeliveryNote.partner_id == contact_id)
     if date_from:
-        base = base.where(Shipment.shipment_date >= date_from)
+        base = base.where(DeliveryNote.document_date >= date_from)
     if date_to:
-        base = base.where(Shipment.shipment_date <= date_to)
+        base = base.where(DeliveryNote.document_date <= date_to)
 
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
 
@@ -206,12 +237,15 @@ async def list_shipments(
         for it in items_rows:
             items_map.setdefault(it.shipment_id, []).append(it)
 
-        contact_ids: set[int] = {
-            cid
-            for s in rows
-            for cid in (s.contact_id, s.carrier_id)
-            if cid
-        }
+        notes_by_id = await _load_notes(db, {s.delivery_note_id for s in rows})
+
+        contact_ids: set[int] = set()
+        for s in rows:
+            note = notes_by_id.get(s.delivery_note_id)
+            for cid in ((note.partner_id if note else None), s.carrier_id):
+                if cid:
+                    contact_ids.add(cid)
+
         contacts_by_id = await _load_contacts(db, contact_ids)
 
         lot_ids = {it.lot_id for it in items_rows}
@@ -220,7 +254,14 @@ async def list_shipments(
         products_by_id = await _load_products(db, product_ids)
 
         results = [
-            _shipment_response(s, items_map.get(s.id, []), contacts_by_id, lots_by_id, products_by_id)
+            _shipment_response(
+                s,
+                items_map.get(s.id, []),
+                contacts_by_id,
+                lots_by_id,
+                products_by_id,
+                notes_by_id.get(s.delivery_note_id),
+            )
             for s in rows
         ]
 
@@ -243,7 +284,15 @@ async def get_shipment(db: AsyncSession, shipment_id: int) -> ShipmentResponse:
         )
     ).scalars().all()
 
-    contact_ids = {cid for cid in (shipment.contact_id, shipment.carrier_id) if cid}
+    note = (await _load_notes(db, {shipment.delivery_note_id})).get(
+        shipment.delivery_note_id
+    )
+
+    contact_ids = {
+        cid
+        for cid in ((note.partner_id if note else None), shipment.carrier_id)
+        if cid
+    }
     contacts_by_id = await _load_contacts(db, contact_ids)
 
     lot_ids = {it.lot_id for it in items_rows}
@@ -251,4 +300,6 @@ async def get_shipment(db: AsyncSession, shipment_id: int) -> ShipmentResponse:
     product_ids = {lot.product_id for lot in lots_by_id.values() if lot.product_id}
     products_by_id = await _load_products(db, product_ids)
 
-    return _shipment_response(shipment, list(items_rows), contacts_by_id, lots_by_id, products_by_id)
+    return _shipment_response(
+        shipment, list(items_rows), contacts_by_id, lots_by_id, products_by_id, note
+    )

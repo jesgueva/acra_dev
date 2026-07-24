@@ -32,7 +32,7 @@ _VALID_BODY = {
     "carrier_id": 20,
     "bol_number": "AV26-0001",
     "shipment_date": "2026-04-09",
-    "type": "customer_order",
+    "type": "direct_customer",
     "items": [_VALID_ITEM],
 }
 
@@ -96,7 +96,7 @@ def _make_mock_shipment_response():
         bol_number="AV26-0001",
         shipment_date="2026-04-09",
         notes=None,
-        type="customer_order",
+        type="direct_customer",
         created_by=1,
         created_at=_CREATED_AT,
         items=[
@@ -217,10 +217,13 @@ async def test_service_create_shipment_deducts_stock():
     added_txns = []
     added_audits = []
 
+    added_notes = []
+
     def _side_effect(obj):
         from app.models.shipment import Shipment, ShipmentItem
         from app.models.inventory import InventoryTransaction
         from app.models.audit import AuditLog
+        from app.models.delivery_note import DeliveryNote
 
         if isinstance(obj, Shipment):
             added_shipments.append(obj)
@@ -230,6 +233,8 @@ async def test_service_create_shipment_deducts_stock():
             added_txns.append(obj)
         elif isinstance(obj, AuditLog):
             added_audits.append(obj)
+        elif isinstance(obj, DeliveryNote):
+            added_notes.append(obj)
 
     session = AsyncMock()
     call_no = {"n": 0}
@@ -242,14 +247,21 @@ async def test_service_create_shipment_deducts_stock():
         if n == 0:
             scalars.all.return_value = [lot]
         elif n == 1:
+            # dedupe_document_number — nothing taken
+            scalars.all.return_value = []
+        elif n == 2:
             # _load_contacts — batch query for client + carrier
             scalars.all.return_value = [client_contact, carrier_contact]
-        elif n == 2:
+        elif n == 3:
             scalars.all.return_value = [product]
         result.scalars.return_value = scalars
         return result
 
     async def _flush():
+        for note in added_notes:
+            if note.id is None:
+                note.id = 900
+                note.created_at = _CREATED_AT
         for s in added_shipments:
             if s.id is None:
                 s.id = 1
@@ -475,16 +487,25 @@ async def test_service_list_shipments_returns_paginated():
     from app.services.shipment_service import list_shipments
     from app.models.shipment import Shipment as ShipmentModel
 
+    from app.models.delivery_note import DeliveryNote
+
     mock_shipment = ShipmentModel()
     mock_shipment.id = 1
-    mock_shipment.contact_id = None
+    mock_shipment.delivery_note_id = 900
     mock_shipment.carrier_id = None
-    mock_shipment.bol_number = "AV26-0001"
-    mock_shipment.shipment_date = "2026-04-09"
     mock_shipment.notes = None
-    mock_shipment.type = "customer_order"
     mock_shipment.created_by = 1
     mock_shipment.created_at = _CREATED_AT
+
+    # The client, BoL number, date and flavour now live on the linked note.
+    mock_note = DeliveryNote()
+    mock_note.id = 900
+    mock_note.type = "direct_customer"
+    mock_note.partner_id = None
+    mock_note.source = None
+    mock_note.document_number = "AV26-0001"
+    mock_note.document_date = "2026-04-09"
+    mock_note.uploaded = False
 
     session = AsyncMock()
     call_no = {"n": 0}
@@ -498,6 +519,11 @@ async def test_service_list_shipments_returns_paginated():
         elif n == 2:
             scalars = MagicMock()
             scalars.all.return_value = [mock_shipment]
+            result.scalars.return_value = scalars
+        elif n == 4:
+            # _load_notes
+            scalars = MagicMock()
+            scalars.all.return_value = [mock_note]
             result.scalars.return_value = scalars
         else:
             scalars = MagicMock()

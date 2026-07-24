@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app
 from app.models.delivery import Delivery, DeliveryItem
+from app.models.delivery_note import DeliveryNote
 from app.models.inventory import InventoryLot as InventoryItem
 from app.models.product import Product
 from app.models.user import User
@@ -68,14 +69,26 @@ def _make_login_session(user: User):
 def _make_mock_delivery(delivery_id: int = 1) -> Delivery:
     d = Delivery()
     d.id = delivery_id
-    d.contact_id = None
+    d.delivery_note_id = 900 + delivery_id
     d.carrier_id = None
-    d.delivery_date = "2026-01-15"
-    d.bol_reference = f"BOL-2026-{delivery_id:03d}"
     d.notes = None
     d.created_by = 1
     d.created_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
     return d
+
+
+def _make_mock_note(delivery_id: int = 1) -> DeliveryNote:
+    """The inbound note carrying the supplier, reference and date for a mock delivery."""
+    n = DeliveryNote()
+    n.id = 900 + delivery_id
+    n.type = "inbound"
+    n.partner_id = None
+    n.document_number = f"BOL-2026-{delivery_id:03d}"
+    n.document_date = "2026-01-15"
+    n.uploaded = True
+    n.created_by = 1
+    n.created_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
+    return n
 
 
 def _make_mock_product(product_id: int = 1) -> Product:
@@ -259,14 +272,17 @@ async def test_list_deliveries_with_supplier_filter():
 
     product = _make_mock_product()
 
+    note = _make_mock_note()
+
     def h_count(r): r.scalar.return_value = 1
     def h_deliveries(r): r.scalars.return_value.all.return_value = [delivery]
     def h_items(r): r.scalars.return_value.all.return_value = [item]
+    def h_notes(r): r.scalars.return_value.all.return_value = [note]
     def h_products(r): r.scalars.return_value.all.return_value = [product]
 
     session = _make_session(
         user, ["receiving_clerk"], CLERK_PRIVS,
-        [h_count, h_deliveries, h_items, h_products],
+        [h_count, h_deliveries, h_items, h_notes, h_products],
     )
     app.dependency_overrides[get_db] = _override(session)
     try:

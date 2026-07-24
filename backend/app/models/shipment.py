@@ -1,28 +1,27 @@
-from sqlalchemy import CheckConstraint, Column, ForeignKey, Integer, String, Text, TIMESTAMP
+from sqlalchemy import CheckConstraint, Column, ForeignKey, Integer, Text, TIMESTAMP
 from sqlalchemy.sql import func
 
 from app.core.database import Base
 
 
 class Shipment(Base):
+    """Outbound shipment header.
+
+    The document facts — client, BoL number, date, and the transfer/direct-customer flavour — live
+    on the linked :class:`~app.models.delivery_note.DeliveryNote`, not here. This row keeps only
+    what is specific to shipping: the carrier and the lot-level line items.
+    """
+
     __tablename__ = "shipments"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)   # client
+    delivery_note_id = Column(
+        Integer, ForeignKey("delivery_notes.id"), nullable=False, unique=True
+    )
     carrier_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
-    bol_number = Column(String(100), nullable=False)
-    shipment_date = Column(String(20), nullable=False)
     notes = Column(Text, nullable=True)
-    type = Column(String(30), nullable=False, server_default="customer_order")
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
-
-    __table_args__ = (
-        CheckConstraint(
-            "type IN ('customer_order', 'transfer_out')",
-            name="ck_shipments_type",
-        ),
-    )
 
 
 class ShipmentItem(Base):
