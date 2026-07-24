@@ -1,8 +1,12 @@
 """Phase 2 — StockMovement ledger model (skeleton).
 
 Realigns inventory from lot-centric rows (``InventoryLot``) to an **append-only ledger** keyed by
-``(item, state)``: on-hand is the sum of signed movement quantities, and every operator surface
-(receiving, production close, shipment) records movements instead of mutating rows.
+``(item, state, location)``: on-hand is the sum of signed movement quantities, and every operator
+surface (receiving, production close, shipment) records movements instead of mutating rows.
+
+The skeleton signatures in ``stock_movement_service`` key on ``(item, state)`` only — the
+``location`` dimension arrives with the ``Location`` table, which the target schema specifies but
+ACR-26 does not build. Treat that contract as incomplete rather than as the final shape.
 
 This is an intentional skeleton for the Sprint I baseline. The movement-type / stock-state
 vocabulary is fixed here so dependent code can reference it, but the concrete ORM table and its

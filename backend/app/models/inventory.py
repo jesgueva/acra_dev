@@ -14,16 +14,27 @@ class LotStatus(str, Enum):
     ``IN_STORAGE`` *and* raw material at the same time. Conflating them was the ACR-26 defect —
     see ``acra_docs/reference/target_schema.md`` §2.
 
-    This axis is what the lot-centric model actually stores today, so lot queries and reservations
-    (ACR-27) key on it. The Sprint II ledger migration converts lot statuses and reservation states
-    to the material axis **together**; until then, code that reads ``inventory_lots`` uses this
-    enum and code that describes the future ledger uses ``StockState``.
+    This axis is what the lot-centric model actually stores today. It is the source of truth for
+    ``InventoryLot.status`` — the column default and its check constraint are both derived from the
+    members below, so the enum and the database can no longer disagree. Service-layer queries still
+    compare against string literals (``allocation_service``, ``work_order_service``,
+    ``shipment_service``, ``delivery_service``); migrating those to this enum is follow-up work, and
+    ACR-27 reservations should key on it rather than re-declaring the vocabulary.
+
+    The Sprint II ledger migration converts lot statuses and reservation states to the material axis
+    **together**; until then, code that reads ``inventory_lots`` uses this enum and code that
+    describes the future ledger uses ``StockState``.
     """
 
     IN_STORAGE = "in_storage"
     IN_PRODUCTION = "in_production"
     SHIPPED = "shipped"
     CONSUMED = "consumed"
+
+    @classmethod
+    def values(cls) -> tuple[str, ...]:
+        """Member values in declaration order — for defaults and check constraints."""
+        return tuple(member.value for member in cls)
 
 
 class InventoryLot(Base):
@@ -33,7 +44,7 @@ class InventoryLot(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
     lot_number = Column(String(100), nullable=True)
     storage_location = Column(String(100), nullable=True)
-    status = Column(String(20), nullable=False, server_default="in_storage")
+    status = Column(String(20), nullable=False, server_default=LotStatus.IN_STORAGE.value)
     quantity_on_hand = Column(Integer, nullable=False, server_default="0")
     source_delivery_item_id = Column(
         Integer,
@@ -44,7 +55,7 @@ class InventoryLot(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('in_storage', 'in_production', 'shipped', 'consumed')",
+            "status IN ({})".format(", ".join(f"'{v}'" for v in LotStatus.values())),
             name="ck_inventory_lots_status",
         ),
         CheckConstraint("quantity_on_hand >= 0", name="ck_inventory_lots_qty"),
