@@ -101,6 +101,47 @@ Sprint I baseline includes **skeleton stubs** for this module (model/service/rou
 the design before behavior is implemented. See [`RISK_LOG.md`](RISK_LOG.md) RSK-01/RSK-02 for the
 load-bearing risks (concurrency-safe close; reversible migration).
 
+### ADR-02 — worksheet-close concurrency (decided, ACR-30)
+
+**Context.** RSK-01: a production-worksheet close has a lost-update path when several closes race
+on the same worksheet or on the same stock. It had to be de-risked before ACR-31 builds the real
+close.
+
+**Decision.** The close runs at **Read Committed** (the Postgres default) and executes, in order:
+
+1. `SELECT … FOR UPDATE` on the parent worksheet row — this also fixes the lock order for step 3,
+   so two closes cannot deadlock against each other.
+2. **One conditional UPDATE** claims the worksheet:
+   `SET status='closed', version=version+1 WHERE id=:id AND version=:expected AND status<>'closed'`.
+   `rowcount != 1` → **409**. The winner of a race is decided atomically by the database, never by
+   a read-then-check — and this happens *before* any stock is touched.
+3. `SELECT … FOR UPDATE … ORDER BY id ASC` on the candidate lots — the same order for every caller.
+4. Availability check, then a FIFO draw in integer arithmetic, one `consume` transaction per lot.
+
+**SERIALIZABLE was rejected.** `allocation_service.py:22` sets it, but under N-way parallelism it
+raises `could not serialize access due to concurrent update`, which reaches the operator as a
+**500** rather than a 409 they can act on, and it needs a retry loop to be usable at all.
+
+**Evidence.** `backend/tests/integration/test_worksheet_close_concurrency.py` (TC-02) runs against
+real Postgres with each closer on its own connection — a mocked session cannot exhibit a lost
+update. 8 closers × 5 rounds by default; also verified at 16 × 20. Exactly one winner every run;
+competing worksheets never oversell and never drive on-hand negative; opposing-order multi-lot
+closes do not deadlock. A **negative control** implements the unguarded read-modify-write close and
+asserts that it *does* lose updates (10000 − 3000 − 3000 → 7000, not 4000). If that control ever
+passes, the suite has gone blind and every other assertion in it is worthless.
+
+**Carry-forward for ACR-31 — the one place this does not transfer.** `FOR UPDATE` over **zero rows
+locks nothing**. That is benign against `inventory_lots` (no lots ⇒ no stock ⇒ 409 regardless), but
+it will **not** be benign for the append-only ledger, where on-hand is an aggregate over
+`(item, state)` and a fresh key legitimately has no rows to lock — two closes could then both read
+"nothing reserved" and both proceed. The ledger close will need `pg_advisory_xact_lock(hashtext(…))`
+on the `(item, state)` key, or a per-`(item, state)` balance anchor row to lock instead.
+
+**Also settled here:** the close writes Issue-at-actual per line and nothing else — the
+`actual − planned` delta is computed from the worksheet line, never written as an adjustment
+movement (`client_domain_model.md` §7.1). TC-02 asserts this on movement *kind and count*, because
+a compensating pair of rows nets to the right total while still being wrong.
+
 ## Verified version snapshot
 
 Pinned/verified for the `v0.2.0-sprint1-baseline` tag (see `submissions` evidence in the docs
