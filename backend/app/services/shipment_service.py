@@ -34,6 +34,7 @@ def _item_response(
         shipment_id=si.shipment_id,
         lot_id=si.lot_id,
         quantity=si.quantity,
+        unit_price=si.unit_price,
         product_name=product_name,
         lot_number=lot.lot_number if lot else None,
     )
@@ -58,6 +59,7 @@ def _shipment_response(
         shipment_date=s.shipment_date,
         notes=s.notes,
         type=s.type,
+        source=s.source,
         created_by=s.created_by,
         created_at=s.created_at,
         items=[_item_response(it, lots_by_id, products_by_id) for it in items],
@@ -117,6 +119,7 @@ async def create_shipment(
         shipment_date=body.shipment_date,
         notes=body.notes,
         type=body.type,
+        source=body.source,
         created_by=current_user.user_id,
     )
     db.add(shipment)
@@ -130,6 +133,7 @@ async def create_shipment(
             shipment_id=shipment.id,
             lot_id=item_data.lot_id,
             quantity=item_data.quantity,
+            unit_price=item_data.unit_price,
         )
         db.add(si)
 
