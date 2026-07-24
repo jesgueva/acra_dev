@@ -28,7 +28,7 @@ const NAV_ITEMS = [
   { key: "receiving" as const, path: "receiving", icon: Truck, privilege: PRIVILEGES.RECEIVING_VIEW },
   { key: "inventory" as const, path: "inventory", icon: Boxes, privilege: PRIVILEGES.INVENTORY_VIEW },
   // { key: "workOrders" as const, path: "work-orders", icon: ClipboardList, privilege: PRIVILEGES.RECEIVING_VIEW },
-  // { key: "shippingNav" as const, path: "shipping", icon: PackageCheck, privilege: PRIVILEGES.RECEIVING_VIEW },
+  { key: "shippingNav" as const, path: "shipping", icon: PackageCheck, privilege: PRIVILEGES.SHIPPING_VIEW },
   { key: "contacts" as const, path: "master-data/contacts", icon: Database, privilege: PRIVILEGES.RECEIVING_VIEW },
   { key: "users" as const, path: "users", icon: Users, privilege: PRIVILEGES.USERS_MANAGE },
   { key: "audit" as const, path: "audit", icon: ScrollText, privilege: PRIVILEGES.AUDIT_VIEW },
