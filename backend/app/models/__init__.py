@@ -1,5 +1,6 @@
 from app.models.audit import AuditLog
 from app.models.delivery import Delivery, DeliveryItem
+from app.models.delivery_note import DeliveryNote, DeliveryNoteType
 from app.models.inventory import (
     InventoryItem,
     InventoryLot,
@@ -20,6 +21,8 @@ __all__ = [
     "RolePrivilegeAssignment",
     "Delivery",
     "DeliveryItem",
+    "DeliveryNote",
+    "DeliveryNoteType",
     "InventoryItem",
     "InventoryLot",
     "InventoryTransaction",

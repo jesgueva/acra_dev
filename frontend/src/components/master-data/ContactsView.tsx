@@ -62,6 +62,8 @@ const TYPE_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
   client: "default",
   provider: "secondary",
   carrier: "outline",
+  // §4.3 — transfer partners (e.g. San Cayetano).
+  transfer: "secondary",
 };
 
 export function ContactsView() {
@@ -185,6 +187,7 @@ export function ContactsView() {
             <SelectItem value="client">{t("client")}</SelectItem>
             <SelectItem value="provider">{t("provider")}</SelectItem>
             <SelectItem value="carrier">{t("carrier")}</SelectItem>
+            <SelectItem value="transfer">{t("transfer")}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -293,6 +296,7 @@ export function ContactsView() {
                   <SelectItem value="client">{t("client")}</SelectItem>
                   <SelectItem value="provider">{t("provider")}</SelectItem>
                   <SelectItem value="carrier">{t("carrier")}</SelectItem>
+                  <SelectItem value="transfer">{t("transfer")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

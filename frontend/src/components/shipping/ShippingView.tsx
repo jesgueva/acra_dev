@@ -52,6 +52,7 @@ interface ShipmentItem {
 
 interface Shipment {
   id: number;
+  delivery_note_id: number | null;
   contact_id: number | null;
   contact_name: string | null;
   carrier_id: number | null;
@@ -60,6 +61,8 @@ interface Shipment {
   shipment_date: string;
   notes: string | null;
   type: string;
+  /** §4.3 — originating stock location, direct-customer shipments only. */
+  source: string | null;
   created_by: number;
   created_at: string;
   items: ShipmentItem[];
@@ -79,9 +82,13 @@ interface LineItem {
 
 const EMPTY_LINE: LineItem = { lot_id: "", quantity: "" };
 
+// §4.3 — the two outbound delivery-note flavours. These are `delivery_notes.type` values.
+const DIRECT_CUSTOMER = "direct_customer";
+const TRANSFER = "transfer";
+
 const TYPE_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
-  customer_order: "default",
-  transfer_out: "secondary",
+  [DIRECT_CUSTOMER]: "default",
+  [TRANSFER]: "secondary",
 };
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -102,7 +109,8 @@ export function ShippingView() {
     carrier_id: "",
     bol_number: "",
     shipment_date: "",
-    type: "customer_order",
+    type: DIRECT_CUSTOMER,
+    source: "",
     notes: "",
   });
   const [lines, setLines] = useState<LineItem[]>([{ ...EMPTY_LINE }]);
@@ -153,13 +161,18 @@ export function ShippingView() {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
+  function typeLabel(type: string) {
+    return type === TRANSFER ? t("transfer") : t("directCustomer");
+  }
+
   function resetForm() {
     setForm({
       contact_id: "",
       carrier_id: "",
       bol_number: "",
       shipment_date: "",
-      type: "customer_order",
+      type: DIRECT_CUSTOMER,
+      source: "",
       notes: "",
     });
     setLines([{ ...EMPTY_LINE }]);
@@ -215,6 +228,10 @@ export function ShippingView() {
     if (form.contact_id) body.contact_id = parseInt(form.contact_id, 10);
     if (form.carrier_id) body.carrier_id = parseInt(form.carrier_id, 10);
     if (form.notes) body.notes = form.notes;
+    // §4.3 — only a direct-customer note carries a source.
+    if (form.type === DIRECT_CUSTOMER && form.source.trim()) {
+      body.source = form.source.trim();
+    }
 
     createMutation.mutate(body);
   }
@@ -309,9 +326,7 @@ export function ShippingView() {
                           variant={TYPE_VARIANTS[s.type] ?? "outline"}
                           className="capitalize"
                         >
-                          {s.type === "customer_order"
-                            ? t("customerOrder")
-                            : t("transferOut")}
+                          {typeLabel(s.type)}
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right text-muted-foreground">
@@ -428,20 +443,41 @@ export function ShippingView() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="type">{t("type")}</Label>
-              <Select
-                value={form.type}
-                onValueChange={(v) => setForm({ ...form, type: v })}
-              >
-                <SelectTrigger id="type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="customer_order">{t("customerOrder")}</SelectItem>
-                  <SelectItem value="transfer_out">{t("transferOut")}</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="type">{t("type")}</Label>
+                <Select
+                  value={form.type}
+                  onValueChange={(v) =>
+                    // Clear a stale source when switching away from direct customer,
+                    // which the API rejects (§4.3).
+                    setForm({
+                      ...form,
+                      type: v,
+                      source: v === DIRECT_CUSTOMER ? form.source : "",
+                    })
+                  }
+                >
+                  <SelectTrigger id="type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={DIRECT_CUSTOMER}>{t("directCustomer")}</SelectItem>
+                    <SelectItem value={TRANSFER}>{t("transfer")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="source">{t("source")}</Label>
+                <Input
+                  id="source"
+                  value={form.source}
+                  onChange={(e) => setForm({ ...form, source: e.target.value })}
+                  disabled={form.type !== DIRECT_CUSTOMER}
+                  maxLength={50}
+                  placeholder={t("sourcePlaceholder")}
+                />
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -572,11 +608,15 @@ export function ShippingView() {
                     variant={TYPE_VARIANTS[detailShipment.type] ?? "outline"}
                     className="capitalize"
                   >
-                    {detailShipment.type === "customer_order"
-                      ? t("customerOrder")
-                      : t("transferOut")}
+                    {typeLabel(detailShipment.type)}
                   </Badge>
                 </div>
+                {detailShipment.source && (
+                  <div>
+                    <p className="text-muted-foreground">{t("source")}</p>
+                    <p className="font-medium">{detailShipment.source}</p>
+                  </div>
+                )}
               </div>
               {detailShipment.notes && (
                 <p className="text-muted-foreground">{detailShipment.notes}</p>

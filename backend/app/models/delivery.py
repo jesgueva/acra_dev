@@ -1,17 +1,24 @@
-from sqlalchemy import Column, ForeignKey, Integer, String, Text, TIMESTAMP
+from sqlalchemy import Column, ForeignKey, Integer, Text, TIMESTAMP
 from sqlalchemy.sql import func
 
 from app.core.database import Base
 
 
 class Delivery(Base):
+    """Inbound receiving header.
+
+    The document facts — partner, BoL reference, date — live on the linked
+    :class:`~app.models.delivery_note.DeliveryNote` (type ``inbound``), not here. This row keeps
+    only what is specific to receiving: the carrier and the transcribed line items.
+    """
+
     __tablename__ = "deliveries"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
+    delivery_note_id = Column(
+        Integer, ForeignKey("delivery_notes.id"), nullable=False, unique=True
+    )
     carrier_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
-    delivery_date = Column(String(20), nullable=False)
-    bol_reference = Column(String(100), nullable=False)
     notes = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
