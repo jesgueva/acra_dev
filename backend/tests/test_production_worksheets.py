@@ -434,6 +434,20 @@ async def test_service_create_worksheet_persists_lines():
 
 
 @pytest.mark.asyncio
+async def test_service_create_worksheet_unknown_product_raises_422():
+    """An unknown product_id must not fall through to the FK constraint as a 500."""
+    session = _FakeSession(products=[])  # nothing resolves
+    body = WorksheetCreate(lines=[WorksheetLineCreate(product_id=4242, planned_quantity=100)])
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.create_worksheet(db=session, body=body, current_user=_user())
+
+    assert exc.value.status_code == 422
+    assert "4242" in exc.value.detail
+    assert session.committed is False
+
+
+@pytest.mark.asyncio
 async def test_service_get_worksheet_missing_raises_404():
     session = _FakeSession(worksheet=None)
     with pytest.raises(HTTPException) as exc:

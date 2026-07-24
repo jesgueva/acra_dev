@@ -83,6 +83,17 @@ async def create_worksheet(
     current_user: TokenUser,
 ) -> WorksheetResponse:
     """Create a draft worksheet with its material lines. Stock is untouched until close."""
+    # Resolve the products up front: without this an unknown product_id reaches the FK
+    # constraint and surfaces as a 500 rather than something the operator can act on.
+    requested = {line.product_id for line in body.lines}
+    known = set((await _load_product_names(db, requested)).keys())
+    missing = sorted(requested - known)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown product_id(s): {', '.join(str(p) for p in missing)}.",
+        )
+
     ws = ProductionWorksheet(
         work_order_id=body.work_order_id,
         production_line=body.production_line,
