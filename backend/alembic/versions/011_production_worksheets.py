@@ -11,15 +11,15 @@ Deliberately narrow — ACR-29 (create-from-WO + reserve) extends these tables a
 replacing them. No ``state`` column on lines: stock is drawn from ``inventory_lots`` by product, so
 the spike stays clear of the ``StockState`` vocabulary ACR-26 is still reconciling.
 
-Revision ID: 010
-Revises: 009
+Revision ID: 011
+Revises: 010
 Create Date: 2026-07-23
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "010"
-down_revision = "009"
+revision = "011"
+down_revision = "010"
 branch_labels = None
 depends_on = None
 

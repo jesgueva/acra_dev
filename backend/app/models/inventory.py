@@ -1,7 +1,26 @@
+from enum import Enum
+
 from sqlalchemy import CheckConstraint, Column, ForeignKey, Integer, String, TIMESTAMP
 from sqlalchemy.sql import func
 
 from app.core.database import Base
+
+
+class LotStatus(str, Enum):
+    """Where a lot sits in its lifecycle — mirrors the ``inventory_lots.status`` constraint below.
+
+    Reservations (ACR-27) key on this axis because it is what the lot-centric model actually
+    stores today. It is deliberately independent of ``app.models.stock_movement.StockState``:
+    that enum describes the not-yet-built Phase 2 ledger and is being re-keyed onto a material
+    axis by ACR-26, so coupling reservations to it would make them churn with an unshipped
+    redesign. The Sprint II ledger migration converts lot statuses and reservation states
+    together.
+    """
+
+    IN_STORAGE = "in_storage"
+    IN_PRODUCTION = "in_production"
+    SHIPPED = "shipped"
+    CONSUMED = "consumed"
 
 
 class InventoryLot(Base):
