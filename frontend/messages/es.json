@@ -277,7 +277,22 @@
     "directCustomer": "Cliente Directo",
     "transfer": "Transferencia",
     "source": "Origen",
-    "sourcePlaceholder": "p. ej. SC (solo cliente directo)"
+    "sourcePlaceholder": "p. ej. SC",
+    "sourceHint": "Ubicación de stock de origen. Solo para envíos a Cliente Directo.",
+    "unitPrice": "Precio Unitario",
+    "invoice": "Factura",
+    "generateInvoice": "Generar Factura",
+    "invoiceNumber": "N.º de Factura",
+    "invoiceDate": "Fecha de Factura",
+    "invoiceSubtotal": "Subtotal",
+    "invoiceTax": "Impuestos",
+    "invoiceTotal": "Total",
+    "invoiceGenerated": "Factura generada.",
+    "noInvoice": "Aún no se ha generado ninguna factura para este envío.",
+    "invoiceExists": "Este envío ya tiene una factura.",
+    "lineTotal": "Total de Línea",
+    "description": "Descripción",
+    "noValidLines": "Se requiere al menos una línea con lote y cantidad."
   },
   "common": {
     "save": "Guardar",

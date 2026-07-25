@@ -547,6 +547,10 @@ async def test_close_worksheet_draws_fifo_across_multiple_lots():
     assert resp.status_code == 200, resp.text
     assert [lot.quantity_on_hand for lot in lots] == [0, 0, 4000]
 
+    # A lot drawn to zero leaves the shelf; a part-drawn lot stays drawable. Without this the
+    # emptied lots would keep advertising themselves as `in_storage` on the Inventory page.
+    assert [lot.status for lot in lots] == ["consumed", "consumed", "in_storage"]
+
     movements = [obj for obj in session.added if isinstance(obj, InventoryTransaction)]
     assert [(m.lot_id, m.quantity) for m in movements] == [(1, -2500), (2, -2500), (3, -1000)]
     assert sum(-m.quantity for m in movements) == 6000

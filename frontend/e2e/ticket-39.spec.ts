@@ -269,7 +269,7 @@ test.describe("ACR-39 delivery notes", () => {
     expect([403, 422]).toContain(status);
   });
 
-  test("the shipping form disables source for a transfer", async ({ page }) => {
+  test("the shipping form hides source for a transfer", async ({ page }) => {
     await login(page, USERS.admin);
     await page.goto("/en/shipping");
 
@@ -281,7 +281,9 @@ test.describe("ACR-39 delivery notes", () => {
     await page.getByRole("combobox", { name: "Type" }).click();
     await page.getByRole("option", { name: "Transfer" }).click();
 
-    await expect(page.getByLabel("Source")).toBeDisabled();
+    // ACR-33 hides the field outright rather than disabling it, so an operator is never shown
+    // a dead control. Either way it is unreachable on a transfer, which is the rule §4.3 states.
+    await expect(page.getByLabel("Source")).toBeHidden();
   });
 
   test("a user without the privilege is blocked, not merely unlinked", async ({

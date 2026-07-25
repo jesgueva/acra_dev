@@ -5,6 +5,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { apiClient } from "@/src/lib/api-client";
 import { errorDetailText } from "@/src/lib/api-error";
+import { useAuth } from "@/src/contexts/AuthContext";
+import { PRIVILEGES } from "@/src/lib/privileges";
 import { PageHeader } from "@/src/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,7 +29,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import { Plus, Trash2, PackageCheck } from "lucide-react";
+import { Plus, Trash2, PackageCheck, FileText } from "lucide-react";
 import { toDisplay, toStore } from "@/src/lib/qty";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -47,6 +49,7 @@ interface ShipmentItem {
   id: number;
   lot_id: number;
   quantity: number;
+  unit_price: number | null;
   product_name: string | null;
   lot_number: string | null;
 }
@@ -76,20 +79,44 @@ interface ShipmentListResponse {
   results: Shipment[];
 }
 
+interface InvoiceLine {
+  id: number;
+  shipment_item_id: number;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+}
+
+interface Invoice {
+  id: number;
+  shipment_id: number;
+  invoice_number: string;
+  invoice_date: string;
+  currency: string;
+  subtotal_amount: number;
+  tax_amount: number;
+  total_amount: number;
+  status: string;
+  lines: InvoiceLine[];
+}
+
 interface LineItem {
   lot_id: string;
   quantity: string;
+  unit_price: string;
 }
 
-const EMPTY_LINE: LineItem = { lot_id: "", quantity: "" };
+const EMPTY_LINE: LineItem = { lot_id: "", quantity: "", unit_price: "" };
 
-// §4.3 — the two outbound delivery-note flavours. These are `delivery_notes.type` values.
-const DIRECT_CUSTOMER = "direct_customer";
-const TRANSFER = "transfer";
+// Domain model §4.3 — the two outbound delivery-note flavours. These are `delivery_notes.type`
+// values: the shipment projects its note's type rather than storing one of its own.
+const TYPE_TRANSFER = "transfer";
+const TYPE_DIRECT_CUSTOMER = "direct_customer";
 
 const TYPE_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
-  [DIRECT_CUSTOMER]: "default",
-  [TRANSFER]: "secondary",
+  [TYPE_DIRECT_CUSTOMER]: "default",
+  [TYPE_TRANSFER]: "secondary",
 };
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -98,19 +125,25 @@ export function ShippingView() {
   const t = useTranslations("shipping");
   const tc = useTranslations("common");
   const queryClient = useQueryClient();
+  const { hasPrivilege } = useAuth();
+
+  // `shipping.view` and `shipping.create` are granted separately (ACR-35) — the supervisor reads
+  // the log but cannot book a shipment, so don't offer them a button that would 403 on submit.
+  const canCreate = hasPrivilege(PRIVILEGES.SHIPPING_CREATE);
 
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailShipment, setDetailShipment] = useState<Shipment | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     contact_id: "",
     carrier_id: "",
     bol_number: "",
     shipment_date: "",
-    type: DIRECT_CUSTOMER,
+    type: TYPE_DIRECT_CUSTOMER,
     source: "",
     notes: "",
   });
@@ -144,6 +177,21 @@ export function ShippingView() {
     enabled: dialogOpen,
   });
 
+  // A shipment either has an invoice or it does not — a 404 is the answer, not a failure.
+  const { data: invoice, isLoading: invoiceLoading } = useQuery<Invoice | null>({
+    queryKey: ["invoice", detailShipment?.id],
+    queryFn: () =>
+      apiClient
+        .get(`/shipments/${detailShipment!.id}/invoice`)
+        .then((r) => r.data)
+        .catch((err) => {
+          if (err?.response?.status === 404) return null;
+          throw err;
+        }),
+    enabled: detailOpen && detailShipment != null,
+    retry: false,
+  });
+
   // ── Mutations ──────────────────────────────────────────────────────────────
 
   const createMutation = useMutation({
@@ -158,11 +206,22 @@ export function ShippingView() {
     },
   });
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  const invoiceMutation = useMutation({
+    mutationFn: (shipmentId: number) =>
+      apiClient.post(`/shipments/${shipmentId}/invoice`).then((r) => r.data),
+    onSuccess: (created: Invoice) => {
+      queryClient.setQueryData(["invoice", created.shipment_id], created);
+      setInvoiceError(null);
+    },
+    onError: (err: unknown) => {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      setInvoiceError(
+        status === 409 ? t("invoiceExists") : errorDetailText(err, tc("error"))
+      );
+    },
+  });
 
-  function typeLabel(type: string) {
-    return type === TRANSFER ? t("transfer") : t("directCustomer");
-  }
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   function resetForm() {
     setForm({
@@ -170,7 +229,7 @@ export function ShippingView() {
       carrier_id: "",
       bol_number: "",
       shipment_date: "",
-      type: DIRECT_CUSTOMER,
+      type: TYPE_DIRECT_CUSTOMER,
       source: "",
       notes: "",
     });
@@ -185,6 +244,7 @@ export function ShippingView() {
 
   function openDetail(s: Shipment) {
     setDetailShipment(s);
+    setInvoiceError(null);
     setDetailOpen(true);
   }
 
@@ -211,10 +271,11 @@ export function ShippingView() {
       .map((l) => ({
         lot_id: parseInt(l.lot_id, 10),
         quantity: toStore(parseFloat(l.quantity)),
+        ...(l.unit_price ? { unit_price: toStore(parseFloat(l.unit_price)) } : {}),
       }));
 
     if (items.length === 0) {
-      setFormError("At least one valid lot line is required.");
+      setFormError(t("noValidLines"));
       return;
     }
 
@@ -228,11 +289,15 @@ export function ShippingView() {
     if (form.carrier_id) body.carrier_id = parseInt(form.carrier_id, 10);
     if (form.notes) body.notes = form.notes;
     // §4.3 — only a direct-customer note carries a source.
-    if (form.type === DIRECT_CUSTOMER && form.source.trim()) {
+    if (form.type === TYPE_DIRECT_CUSTOMER && form.source.trim()) {
       body.source = form.source.trim();
     }
 
     createMutation.mutate(body);
+  }
+
+  function typeLabel(type: string) {
+    return type === TYPE_TRANSFER ? t("transfer") : t("directCustomer");
   }
 
   const totalPages = data ? Math.ceil(data.total / data.page_size) : 1;
@@ -242,10 +307,12 @@ export function ShippingView() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader title={t("title")} description={t("subtitle")}>
-        <Button onClick={openCreate}>
-          <Plus className="mr-2 h-4 w-4" />
-          {t("newShipment")}
-        </Button>
+        {canCreate && (
+          <Button onClick={openCreate} data-testid="new-shipment-button">
+            <Plus className="mr-2 h-4 w-4" />
+            {t("newShipment")}
+          </Button>
+        )}
       </PageHeader>
 
       {isLoading && (
@@ -264,8 +331,8 @@ export function ShippingView() {
 
       {!isLoading && !isError && data && (
         <>
-          <div className="rounded-md border border-border">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-md border border-border">
+            <table className="w-full text-sm" data-testid="shipment-table">
               <thead>
                 <tr className="border-b border-border bg-muted/40">
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">
@@ -283,6 +350,9 @@ export function ShippingView() {
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">
                     {t("type")}
                   </th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">
+                    {t("source")}
+                  </th>
                   <th className="px-4 py-3 text-right font-medium text-muted-foreground">
                     {t("items")}
                   </th>
@@ -292,7 +362,7 @@ export function ShippingView() {
                 {data.results.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-4 py-10 text-center text-muted-foreground"
                     >
                       <div className="flex flex-col items-center gap-2">
@@ -305,6 +375,7 @@ export function ShippingView() {
                   data.results.map((s) => (
                     <tr
                       key={s.id}
+                      data-testid={`shipment-row-${s.id}`}
                       className="cursor-pointer border-b border-border last:border-0 hover:bg-muted/20"
                       onClick={() => openDetail(s)}
                     >
@@ -327,6 +398,9 @@ export function ShippingView() {
                         >
                           {typeLabel(s.type)}
                         </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {s.source ?? "—"}
                       </td>
                       <td className="px-4 py-3 text-right text-muted-foreground">
                         {s.items.length}
@@ -384,6 +458,7 @@ export function ShippingView() {
                 <Label htmlFor="bol_number">{t("bolNumber")} *</Label>
                 <Input
                   id="bol_number"
+                  data-testid="bol-input"
                   value={form.bol_number}
                   onChange={(e) => setForm({ ...form, bol_number: e.target.value })}
                   required
@@ -395,6 +470,7 @@ export function ShippingView() {
                 <Label htmlFor="shipment_date">{t("shipmentDate")} *</Label>
                 <Input
                   id="shipment_date"
+                  data-testid="date-input"
                   type="date"
                   value={form.shipment_date}
                   onChange={(e) => setForm({ ...form, shipment_date: e.target.value })}
@@ -448,35 +524,40 @@ export function ShippingView() {
                 <Select
                   value={form.type}
                   onValueChange={(v) =>
-                    // Clear a stale source when switching away from direct customer,
-                    // which the API rejects (§4.3).
                     setForm({
+                      // `source` is meaningless on a Transfer note and the API rejects it (§4.3),
+                      // so drop it as the type changes rather than failing the submit later.
                       ...form,
                       type: v,
-                      source: v === DIRECT_CUSTOMER ? form.source : "",
+                      source: v === TYPE_DIRECT_CUSTOMER ? form.source : "",
                     })
                   }
                 >
-                  <SelectTrigger id="type">
+                  <SelectTrigger id="type" data-testid="type-select">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={DIRECT_CUSTOMER}>{t("directCustomer")}</SelectItem>
-                    <SelectItem value={TRANSFER}>{t("transfer")}</SelectItem>
+                    <SelectItem value={TYPE_DIRECT_CUSTOMER}>
+                      {t("directCustomer")}
+                    </SelectItem>
+                    <SelectItem value={TYPE_TRANSFER}>{t("transfer")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="source">{t("source")}</Label>
-                <Input
-                  id="source"
-                  value={form.source}
-                  onChange={(e) => setForm({ ...form, source: e.target.value })}
-                  disabled={form.type !== DIRECT_CUSTOMER}
-                  maxLength={50}
-                  placeholder={t("sourcePlaceholder")}
-                />
-              </div>
+              {form.type === TYPE_DIRECT_CUSTOMER && (
+                <div className="space-y-2">
+                  <Label htmlFor="source">{t("source")}</Label>
+                  <Input
+                    id="source"
+                    data-testid="source-input"
+                    value={form.source}
+                    onChange={(e) => setForm({ ...form, source: e.target.value })}
+                    maxLength={50}
+                    placeholder={t("sourcePlaceholder")}
+                  />
+                  <p className="text-xs text-muted-foreground">{t("sourceHint")}</p>
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -500,7 +581,7 @@ export function ShippingView() {
                 </Button>
               </div>
 
-              <div className="rounded-md border border-border">
+              <div className="overflow-x-auto rounded-md border border-border">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/40">
@@ -509,6 +590,9 @@ export function ShippingView() {
                       </th>
                       <th className="px-3 py-2 text-left font-medium text-muted-foreground">
                         {t("quantity")}
+                      </th>
+                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                        {t("unitPrice")}
                       </th>
                       <th className="w-10" />
                     </tr>
@@ -524,6 +608,8 @@ export function ShippingView() {
                             onChange={(e) => updateLine(idx, "lot_id", e.target.value)}
                             placeholder="Lot ID"
                             className="h-8"
+                            data-testid={`lot-input-${idx}`}
+                            aria-label={`${t("lotId")} ${idx + 1}`}
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -535,6 +621,23 @@ export function ShippingView() {
                             onChange={(e) => updateLine(idx, "quantity", e.target.value)}
                             placeholder="0.00"
                             className="h-8"
+                            data-testid={`qty-input-${idx}`}
+                            aria-label={`${t("quantity")} ${idx + 1}`}
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={line.unit_price}
+                            onChange={(e) =>
+                              updateLine(idx, "unit_price", e.target.value)
+                            }
+                            placeholder="0.00"
+                            className="h-8"
+                            data-testid={`price-input-${idx}`}
+                            aria-label={`${t("unitPrice")} ${idx + 1}`}
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -572,7 +675,7 @@ export function ShippingView() {
               >
                 {tc("cancel")}
               </Button>
-              <Button type="submit" disabled={createMutation.isPending}>
+              <Button type="submit" data-testid="submit-shipment" disabled={createMutation.isPending}>
                 {createMutation.isPending ? tc("loading") : t("submit")}
               </Button>
             </DialogFooter>
@@ -582,7 +685,7 @@ export function ShippingView() {
 
       {/* ── Shipment Detail Dialog ──────────────────────────────────────── */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{detailShipment?.bol_number}</DialogTitle>
           </DialogHeader>
@@ -621,7 +724,7 @@ export function ShippingView() {
                 <p className="text-muted-foreground">{detailShipment.notes}</p>
               )}
               <Separator />
-              <div className="rounded-md border border-border">
+              <div className="overflow-x-auto rounded-md border border-border">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/40">
@@ -633,6 +736,9 @@ export function ShippingView() {
                       </th>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground">
                         {t("quantity")}
+                      </th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">
+                        {t("unitPrice")}
                       </th>
                     </tr>
                   </thead>
@@ -649,10 +755,101 @@ export function ShippingView() {
                         <td className="px-3 py-2 text-right font-medium">
                           {toDisplay(item.quantity)}
                         </td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">
+                          {item.unit_price == null ? "—" : toDisplay(item.unit_price)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+
+              <Separator />
+
+              {/* ── Invoice ──────────────────────────────────────────── */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>{t("invoice")}</Label>
+                  {!invoice && !invoiceLoading && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      data-testid="generate-invoice"
+                      onClick={() => invoiceMutation.mutate(detailShipment.id)}
+                      disabled={invoiceMutation.isPending}
+                    >
+                      <FileText className="mr-1 h-3.5 w-3.5" />
+                      {invoiceMutation.isPending
+                        ? tc("loading")
+                        : t("generateInvoice")}
+                    </Button>
+                  )}
+                </div>
+
+                {invoiceLoading && <Skeleton className="h-16 w-full" />}
+
+                {!invoiceLoading && !invoice && !invoiceError && (
+                  <p className="text-muted-foreground">{t("noInvoice")}</p>
+                )}
+
+                {invoiceError && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{invoiceError}</AlertDescription>
+                  </Alert>
+                )}
+
+                {invoice && (
+                  <div
+                    className="space-y-2 rounded-md border border-border p-3"
+                    data-testid="invoice-panel"
+                  >
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-muted-foreground">{t("invoiceNumber")}</p>
+                        <p className="font-mono font-medium" data-testid="invoice-number">
+                          {invoice.invoice_number}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">{t("invoiceDate")}</p>
+                        <p className="font-medium">{invoice.invoice_date}</p>
+                      </div>
+                    </div>
+                    <Separator />
+                    <div className="space-y-1">
+                      {invoice.lines.map((line) => (
+                        <div
+                          key={line.id}
+                          className="flex justify-between gap-3 text-xs"
+                        >
+                          <span className="text-muted-foreground">
+                            {line.description}
+                          </span>
+                          <span className="font-medium">
+                            {toDisplay(line.line_total)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <Separator />
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">
+                        {t("invoiceSubtotal")}
+                      </span>
+                      <span>{toDisplay(invoice.subtotal_amount)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">{t("invoiceTax")}</span>
+                      <span>{toDisplay(invoice.tax_amount)}</span>
+                    </div>
+                    <div className="flex justify-between font-medium">
+                      <span>{t("invoiceTotal")}</span>
+                      <span data-testid="invoice-total">
+                        {toDisplay(invoice.total_amount)} {invoice.currency}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

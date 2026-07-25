@@ -1,12 +1,20 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.models.delivery_note import DeliveryNoteType
+
+# Domain model §4.3 — Transfer note vs Direct Customer note. These are `delivery_notes.type`
+# values: since the unified note landed, the shipment stores no type of its own and projects
+# its note's.
+ShipmentType = Literal["transfer", "direct_customer"]
+
 
 class ShipmentItemCreate(BaseModel):
-    lot_id: int
-    quantity: int = Field(..., gt=0)  # integer ×100
+    lot_id: int = Field(..., gt=0)
+    quantity: int = Field(..., gt=0)                    # integer ×100
+    unit_price: Optional[int] = Field(None, ge=0)       # integer ×100, price snapshot
 
 
 class ShipmentItemResponse(BaseModel):
@@ -16,13 +24,9 @@ class ShipmentItemResponse(BaseModel):
     shipment_id: int
     lot_id: int
     quantity: int                          # ×100
+    unit_price: Optional[int] = None       # ×100
     product_name: Optional[str] = None    # denormalized
     lot_number: Optional[str] = None      # denormalized
-
-
-#: §4.3 — the two outbound delivery-note flavours. These are the `delivery_notes.type` values;
-#: the shipment no longer stores a type of its own.
-SHIPMENT_TYPES = ("transfer", "direct_customer")
 
 
 class ShipmentCreate(BaseModel):
@@ -31,28 +35,29 @@ class ShipmentCreate(BaseModel):
     bol_number: str = Field(..., min_length=1, max_length=100)
     shipment_date: str = Field(..., min_length=1, max_length=20)
     notes: Optional[str] = None
-    type: str = Field(default="direct_customer")
-    # §4.3 — originating stock location, e.g. "SC". Direct-customer shipments only.
+    type: ShipmentType = DeliveryNoteType.DIRECT_CUSTOMER.value
+    # §4.3 — originating stock location, e.g. "SC". Direct Customer notes only.
     source: Optional[str] = Field(None, max_length=50)
     items: List[ShipmentItemCreate] = Field(..., min_length=1)
 
     @field_validator("bol_number", "shipment_date", "source")
     @classmethod
-    def _not_blank(cls, v: Optional[str]) -> Optional[str]:
-        """Whitespace-only is not a value; an empty `source` normalizes to None."""
+    def _reject_blank(cls, v: Optional[str]) -> Optional[str]:
+        """Reject blank strings and trim the rest — " SC " and "SC" are the same source.
+
+        An omitted `source` is None and stays None; an explicitly blank one is a mistake worth
+        reporting rather than silently coercing.
+        """
         if v is None:
             return None
         stripped = v.strip()
-        return stripped or None
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
 
     @model_validator(mode="after")
-    def _check(self) -> "ShipmentCreate":
-        for name in ("bol_number", "shipment_date"):
-            if not getattr(self, name):
-                raise ValueError(f"{name} must not be blank")
-        if self.type not in SHIPMENT_TYPES:
-            raise ValueError(f"type must be one of {', '.join(SHIPMENT_TYPES)}")
-        if self.source is not None and self.type != "direct_customer":
+    def _source_is_direct_customer_only(self) -> "ShipmentCreate":
+        if self.source is not None and self.type != DeliveryNoteType.DIRECT_CUSTOMER.value:
             raise ValueError("source is only valid on a direct_customer shipment")
         return self
 
@@ -63,7 +68,7 @@ class ShipmentResponse(BaseModel):
     id: int
     delivery_note_id: Optional[int] = None
     # `contact_id`, `bol_number`, `shipment_date`, `type` and `source` are projected from the
-    # linked delivery note, their only storage location since migration 011.
+    # linked delivery note, their only storage location since migration 012.
     contact_id: Optional[int] = None
     contact_name: Optional[str] = None    # denormalized
     carrier_id: Optional[int] = None

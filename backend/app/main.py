@@ -53,6 +53,7 @@ from app.routers.contacts import router as contacts_router  # noqa: E402
 from app.routers.deliveries import router as deliveries_router  # noqa: E402
 from app.routers.delivery_notes import router as delivery_notes_router  # noqa: E402
 from app.routers.inventory import router as inventory_router  # noqa: E402
+from app.routers.invoices import router as invoices_router  # noqa: E402
 from app.routers.production_worksheets import router as production_worksheets_router  # noqa: E402
 from app.routers.products import router as products_router  # noqa: E402
 from app.routers.reservations import router as reservations_router  # noqa: E402
@@ -68,6 +69,7 @@ app.include_router(contacts_router)
 app.include_router(deliveries_router)
 app.include_router(delivery_notes_router)
 app.include_router(inventory_router)
+app.include_router(invoices_router)
 app.include_router(production_worksheets_router)
 app.include_router(products_router)
 app.include_router(reservations_router)

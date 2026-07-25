@@ -8,7 +8,6 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 480
     gemini_api_key: str = ""
     anthropic_api_key: str = ""
-
     # Browser origins allowed to call this API, comma-separated. The default is the frontend's
     # documented dev port; override it to run the stack anywhere else (a second worktree, an e2e
     # run on a free port, a deployed environment) without editing code.

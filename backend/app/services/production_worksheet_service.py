@@ -25,6 +25,9 @@ from app.schemas.production_worksheet import (
 
 # Lots in any other status are not on the shelf and must not be drawn from.
 _DRAWABLE_LOT_STATUS = "in_storage"
+# A lot drawn to zero has left the shelf for good. Mirrors the terminal transition
+# ``shipment_service`` already makes ("shipped"); see ``LotStatus`` for the lifecycle axis.
+_DEPLETED_LOT_STATUS = "consumed"
 
 
 async def _load_products(db: AsyncSession, ids: set[int]) -> dict[int, Product]:
@@ -307,6 +310,8 @@ async def close_worksheet(
                 break
             taken = min(remaining, lot.quantity_on_hand)
             lot.quantity_on_hand -= taken
+            if lot.quantity_on_hand == 0:
+                lot.status = _DEPLETED_LOT_STATUS
             db.add(
                 InventoryTransaction(
                     lot_id=lot.id,

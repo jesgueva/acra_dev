@@ -46,3 +46,9 @@ Last reviewed: **2026-06-23** (Hard Stop 3 validation review) · Owner role key:
   extraction layout-sensitive). Added issues ISS-03 (received lots lack `lot_number`), ISS-04
   (shipping privileges unseeded), ISS-05 (OCR layout sensitivity), all surfaced by the validation
   run (`scripts/validation-run.sh`) and documented in `KNOWN_ISSUES.md` (KI-07…KI-09).
+- **2026-07-23** — ACR-30 concurrency spike. RSK-01 Open → **Mitigating**: the close protocol is
+  decided (ADR-02 in `architecture.md`) and proven by TC-02 against real Postgres. It stays
+  Mitigating rather than Resolved because the guarantee is proven for the **lot-centric** model;
+  the zero-row `FOR UPDATE` gap means the append-only ledger needs an advisory lock or balance
+  anchor before ACR-31 can inherit it. The spike also fixed two contention-only defects in the
+  close path (ORM attributes read after `rollback()` expired them, which surfaced as 500s).

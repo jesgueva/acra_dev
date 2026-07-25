@@ -38,7 +38,10 @@ export function errorDetailText(err: unknown, fallback: string): string {
       .filter(isValidationDetail)
       .map((entry) => {
         const field = Array.isArray(entry.loc) ? entry.loc[entry.loc.length - 1] : undefined;
-        const msg = typeof entry.msg === "string" ? entry.msg : "";
+        // Pydantic prefixes anything raised by a custom validator with "Value error, ", which
+        // means nothing to an operator reading it in an alert.
+        const msg =
+          typeof entry.msg === "string" ? entry.msg.replace(/^Value error,\s*/, "") : "";
         if (!msg) return "";
         // "quantity_required: Input should be greater than 0" reads better than the bare message,
         // which on its own gives no clue which field was rejected.

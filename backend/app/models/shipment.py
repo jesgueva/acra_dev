@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Integer, Text, TIMESTAMP
+from sqlalchemy import CheckConstraint, Column, ForeignKey, Integer, Text, TIMESTAMP
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -7,9 +7,9 @@ from app.core.database import Base
 class Shipment(Base):
     """Outbound shipment header.
 
-    The document facts — client, BoL number, date, and the transfer/direct-customer flavour — live
-    on the linked :class:`~app.models.delivery_note.DeliveryNote`, not here. This row keeps only
-    what is specific to shipping: the carrier and the lot-level line items.
+    The document facts — client, BoL number, date, the transfer/direct-customer flavour and §4.3
+    ``source`` — live on the linked :class:`~app.models.delivery_note.DeliveryNote`, not here. This
+    row keeps only what is specific to shipping: the carrier and the lot-level line items.
     """
 
     __tablename__ = "shipments"
@@ -37,3 +37,12 @@ class ShipmentItem(Base):
         nullable=False,
     )
     quantity = Column(Integer, nullable=False)  # ×100
+    # Price snapshot taken at ship time — `products` carries no price. ×100.
+    unit_price = Column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "unit_price IS NULL OR unit_price >= 0",
+            name="ck_shipment_items_unit_price",
+        ),
+    )
