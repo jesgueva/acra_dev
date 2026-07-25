@@ -29,9 +29,8 @@ const NAV_ITEMS = [
   { key: "receiving" as const, path: "receiving", icon: Truck, privilege: PRIVILEGES.RECEIVING_VIEW },
   { key: "inventory" as const, path: "inventory", icon: Boxes, privilege: PRIVILEGES.INVENTORY_VIEW },
   // { key: "workOrders" as const, path: "work-orders", icon: ClipboardList, privilege: PRIVILEGES.RECEIVING_VIEW },
-  // { key: "shippingNav" as const, path: "shipping", icon: PackageCheck, privilege: PRIVILEGES.RECEIVING_VIEW },
-  // Gated on deliveries.view to match the API. Not shipping.view — that is granted
-  // to no role until ACR-35, so it would hide the link from everyone.
+  { key: "shippingNav" as const, path: "shipping", icon: PackageCheck, privilege: PRIVILEGES.SHIPPING_VIEW },
+  // Gated on deliveries.view to match the API it reads, not shipping.view.
   { key: "deliveryNotes" as const, path: "delivery-notes", icon: FileText, privilege: PRIVILEGES.DELIVERIES_VIEW },
   { key: "contacts" as const, path: "master-data/contacts", icon: Database, privilege: PRIVILEGES.RECEIVING_VIEW },
   { key: "users" as const, path: "users", icon: Users, privilege: PRIVILEGES.USERS_MANAGE },
