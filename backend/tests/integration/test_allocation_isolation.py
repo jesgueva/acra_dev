@@ -10,6 +10,7 @@ raised `ActiveSQLTransactionError` and every allocation returned 500.
 (see its `_noop` handler). Only a live connection reproduces it, which is what this does.
 """
 import os
+import uuid
 from contextlib import asynccontextmanager
 from datetime import date
 
@@ -40,11 +41,23 @@ async def seeded_work_order():
     """A `created` work order needing one material, with stock to satisfy it."""
     engine = create_async_engine(DATABASE_URL)
     session = AsyncSession(engine, expire_on_commit=False)
-    product_id = wo_id = None
+    product_id = wo_id = user_id = None
     try:
-        user_id = (
-            await session.execute(select(User.id).order_by(User.id).limit(1))
-        ).scalar()
+        # `work_orders.created_by` is NOT NULL and an FK to `users.id`, so the fixture has to own a
+        # real user row. Reading whatever user happens to exist would pass locally on a seeded
+        # database and fail on a freshly-migrated CI one, where `users` is empty and the read
+        # returns None. Seeding our own (uuid-suffixed for the UNIQUE username, torn down below)
+        # makes the fixture independent of what is already in the database.
+        user = User(
+            username=f"acr21_alloc_{uuid.uuid4().hex[:12]}",
+            password_hash="not-a-real-hash",
+            full_name="ACR-21 Allocation Fixture",
+            preferred_language="en",
+            status="active",
+        )
+        session.add(user)
+        await session.flush()
+        user_id = user.id
 
         product = Product(name=MATERIAL_NAME, category="raw")
         session.add(product)
@@ -118,6 +131,11 @@ async def seeded_work_order():
                 delete(InventoryLot).where(InventoryLot.product_id == product_id)
             )
             await session.execute(delete(Product).where(Product.id == product_id))
+        if user_id is not None:
+            # Last: audit_logs.user_id and work_orders.created_by both reference this row, and
+            # both are deleted above.
+            await session.execute(delete(AuditLog).where(AuditLog.user_id == user_id))
+            await session.execute(delete(User).where(User.id == user_id))
         await session.commit()
         await session.close()
         await engine.dispose()
