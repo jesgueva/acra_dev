@@ -1,6 +1,6 @@
 """shipment invoices + the price snapshot they are billed from
 
-ACR-33. Two changes to the outbound side, plus the privilege grant that makes it reachable:
+ACR-33. Two changes to the outbound side:
 
 1. **``shipment_items.unit_price``** — a price snapshot taken at ship time (``products`` has no
    price column and none is planned), which the invoice is billed from.
@@ -11,19 +11,21 @@ ticket's too, but ACR-39 (migration 012) moved every document fact off ``shipmen
 unified ``delivery_notes`` row, where both now live with their own CHECK constraints. Nothing is
 left for this revision to do there.
 
-The ``shipping.view`` / ``shipping.create`` grant to ``company_admin`` is a one-role slice of
-ACR-35: those privileges are granted to no role in ``002``, so every shipment endpoint 403s and
-the module is unreachable. ACR-35 keeps the wider role matrix.
+This revision also used to grant ``shipping.view`` / ``shipping.create`` to ``company_admin`` — a
+one-role stopgap, because ``002`` grants them to nobody and every shipment endpoint 403s without
+them. ACR-35 (migration 013) now seeds the full role matrix for exactly those two privileges, and
+the invoice endpoints reuse them rather than introducing any of their own, so the grant is gone
+from here and 013 is its single owner. Seeding it in both places would double-insert.
 
-Revision ID: 013
-Revises: 012
+Revision ID: 014
+Revises: 013
 Create Date: 2026-07-23
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "013"
-down_revision = "012"
+revision = "014"
+down_revision = "013"
 branch_labels = None
 depends_on = None
 
@@ -95,31 +97,8 @@ def upgrade():
     op.create_index("ix_invoices_shipment_id", "invoices", ["shipment_id"])
     op.create_index("ix_invoice_lines_invoice_id", "invoice_lines", ["invoice_id"])
 
-    # ── 3. Make shipping reachable (ACR-35 slice) ───────────────────────────
-    op.execute(
-        """
-        INSERT INTO role_privilege_assignments (role_id, privilege_name)
-        SELECT r.id, p.privilege_name
-        FROM roles r
-        CROSS JOIN (VALUES
-            ('shipping.view'),
-            ('shipping.create')
-        ) AS p(privilege_name)
-        WHERE r.role_name = 'company_admin'
-        ON CONFLICT DO NOTHING
-        """
-    )
-
 
 def downgrade():
-    op.execute(
-        """
-        DELETE FROM role_privilege_assignments
-        WHERE privilege_name IN ('shipping.view', 'shipping.create')
-          AND role_id IN (SELECT id FROM roles WHERE role_name = 'company_admin')
-        """
-    )
-
     op.drop_index("ix_invoice_lines_invoice_id", table_name="invoice_lines")
     op.drop_index("ix_invoices_shipment_id", table_name="invoices")
     op.drop_table("invoice_lines")
