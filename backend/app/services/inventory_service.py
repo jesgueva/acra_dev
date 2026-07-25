@@ -40,7 +40,12 @@ def _build_lot_query(
                 InventoryLot.storage_location.ilike(f"%{search}%"),
             )
         )
-    return q
+    # A total order, because this query is paginated with LIMIT/OFFSET. Without one Postgres may
+    # return rows in a different order for each page request, so paging the list can show a row
+    # twice and skip another entirely — silent data loss for anyone reading past page 1, and it
+    # only becomes reachable once the table outgrows a single page. Lot id is stable and unique;
+    # it is also the order the FIFO draw in production_worksheet_service uses.
+    return q.order_by(InventoryLot.id.asc())
 
 
 async def _fetch_alert_thresholds(db: AsyncSession) -> dict[int, int]:
