@@ -101,8 +101,10 @@ test.describe("ACR-35 shipping privileges", () => {
     await expect(dialog).toBeVisible();
     await dialog.locator("#bol_number").fill(`${bol}-BAD`);
     await dialog.locator("#shipment_date").fill("2026-07-24");
-    await dialog.locator('input[placeholder="Lot ID"]').fill("999999");
-    await dialog.locator('input[placeholder="0.00"]').fill("5");
+    // By test id, not placeholder: ACR-33 added a unit-price field that also placeholders "0.00",
+    // so the old selector matches both it and the quantity.
+    await dialog.getByTestId("lot-input-0").fill("999999");
+    await dialog.getByTestId("qty-input-0").fill("5");
     await dialog.getByRole("button", { name: /Create Shipment/i }).click();
 
     await expect(dialog.getByRole("alert")).toContainText(/not found/i);
@@ -110,8 +112,8 @@ test.describe("ACR-35 shipping privileges", () => {
 
     // ── valid lot → 201, dialog closes, row appears ───────────────────────────
     await dialog.locator("#bol_number").fill(bol);
-    await dialog.locator('input[placeholder="Lot ID"]').fill("2");
-    await dialog.locator('input[placeholder="0.00"]').fill("3");
+    await dialog.getByTestId("lot-input-0").fill("2");
+    await dialog.getByTestId("qty-input-0").fill("3");
     await dialog.getByRole("button", { name: /Create Shipment/i }).click();
 
     await expect(dialog).toBeHidden();

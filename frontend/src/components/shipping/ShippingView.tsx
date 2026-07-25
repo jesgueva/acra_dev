@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { apiClient } from "@/src/lib/api-client";
+import { errorDetailText } from "@/src/lib/api-error";
 import { useAuth } from "@/src/contexts/AuthContext";
 import { PRIVILEGES } from "@/src/lib/privileges";
 import { PageHeader } from "@/src/components/layout/PageHeader";
@@ -201,7 +202,7 @@ export function ShippingView() {
       resetForm();
     },
     onError: (err: unknown) => {
-      setFormError(errorDetail(err) ?? tc("error"));
+      setFormError(errorDetailText(err, tc("error")));
     },
   });
 
@@ -215,26 +216,12 @@ export function ShippingView() {
     onError: (err: unknown) => {
       const status = (err as { response?: { status?: number } })?.response?.status;
       setInvoiceError(
-        status === 409 ? t("invoiceExists") : errorDetail(err) ?? tc("error")
+        status === 409 ? t("invoiceExists") : errorDetailText(err, tc("error"))
       );
     },
   });
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-
-  function errorDetail(err: unknown): string | null {
-    const detail = (
-      err as { response?: { data?: { detail?: unknown } } }
-    )?.response?.data?.detail;
-    if (typeof detail === "string") return detail;
-    // FastAPI returns validation errors as a list of {loc, msg, …}; Pydantic prefixes messages
-    // raised by a custom validator with "Value error, ", which means nothing to an operator.
-    if (Array.isArray(detail)) {
-      const first = detail[0] as { msg?: string } | undefined;
-      if (first?.msg) return first.msg.replace(/^Value error,\s*/, "");
-    }
-    return null;
-  }
 
   function resetForm() {
     setForm({

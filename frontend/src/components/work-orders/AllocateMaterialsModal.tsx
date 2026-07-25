@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/src/lib/api-client";
+import { errorDetailText } from "@/src/lib/api-error";
 
 interface AllocateMaterialsModalProps {
   open: boolean;
@@ -37,7 +38,7 @@ export function AllocateMaterialsModal({
       onClose();
     } catch (err: unknown) {
       if (axios.isAxiosError(err) && err.response?.status === 409) {
-        setError(err.response.data?.detail ?? "Insufficient stock");
+        setError(errorDetailText(err, "Insufficient stock"));
       } else {
         setError("Allocation failed. Please try again.");
       }

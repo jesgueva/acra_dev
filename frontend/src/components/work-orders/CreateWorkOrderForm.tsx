@@ -28,6 +28,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { apiClient } from "@/src/lib/api-client";
+import { errorDetailText } from "@/src/lib/api-error";
 import type { MaterialAvailability, WorkOrderCreateResponse } from "./types";
 
 interface MaterialRow {
@@ -94,7 +95,7 @@ export function CreateWorkOrderForm({
       onCreated?.();
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
-        setError(err.response?.data?.detail ?? "Failed to create work order.");
+        setError(errorDetailText(err, "Failed to create work order."));
       } else {
         setError("Failed to create work order.");
       }

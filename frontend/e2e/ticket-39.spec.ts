@@ -1,10 +1,12 @@
 import { test, expect, Page } from "@playwright/test";
+import { API, USERS, login } from "./helpers/auth";
 
 /**
  * ACR-39 — Unified Delivery Note document model, end to end against a live stack.
  *
- * Run against a seeded database with the backend on :8000 and a production
- * frontend build on :3000 (NOT `next dev` — see KI-02).
+ * Run against a seeded database with the backend and a production frontend build
+ * (NOT `next dev` — see KI-02). Both URLs come from E2E_BASE_URL / E2E_API_URL,
+ * so the spec works against a stack on non-default ports — see e2e/README.md.
  *
  * Covers §4.1 (every movement attaches to a note), §4.2 (uploaded vs
  * system-generated provenance) and §4.3 (transfer vs direct-customer, `source`).
@@ -14,19 +16,8 @@ import { test, expect, Page } from "@playwright/test";
  * absent, so this spec stays green on a stock seed.
  */
 
-const ADMIN = { username: "admin", password: "admin123" };
-const OPERATOR = { username: "operator1", password: "demo123" };
-
 // Unique per run so repeated runs against the same database do not collide.
 const RUN = Date.now().toString().slice(-6);
-
-async function login(page: Page, username: string, password: string) {
-  await page.goto("/en/login");
-  await page.locator("#username").fill(username);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: /sign in|iniciar|login/i }).click();
-  await page.waitForURL((url) => !url.pathname.endsWith("/login"));
-}
 
 /**
  * The bearer token the app is using.
@@ -47,9 +38,29 @@ function noteRow(page: Page, documentNumber: string) {
   return page.getByRole("row").filter({ hasText: documentNumber });
 }
 
+/**
+ * A document date belonging to this run alone.
+ *
+ * The table is ordered `document_date DESC, id DESC` and paginated at 20. These tests used to date
+ * every note `2026-07-23` and then look for it on page 1, which only worked while the database was
+ * young — the database is never reset, so each run buries the previous one's rows a little deeper.
+ * Dating each run differently, and filtering the page to that date, makes "did my note appear?"
+ * independent of how much else has accumulated.
+ */
+const RUN_DATE = new Date(Date.UTC(2030, 0, 1) + (Date.now() % 2000) * 86_400_000)
+  .toISOString()
+  .slice(0, 10);
+
+/** Open the module with the date filter narrowed to this run's notes. */
+async function openNotesForThisRun(page: Page) {
+  await page.goto("/en/delivery-notes");
+  await page.locator("#date-from").fill(RUN_DATE);
+  await page.locator("#date-to").fill(RUN_DATE);
+}
+
 test.describe("ACR-39 delivery notes", () => {
   test("admin reaches the Delivery Notes module from the nav", async ({ page }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
 
     await page.getByRole("link", { name: "Delivery Notes" }).click();
     await page.waitForURL(/\/en\/delivery-notes/);
@@ -65,22 +76,22 @@ test.describe("ACR-39 delivery notes", () => {
     page,
   }) => {
     const bol = `E2E-BOL-${RUN}`;
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
 
     // Drive the API for the delivery itself; this spec is about the note it
     // produces, and the receiving form is already covered elsewhere.
     const token = await apiToken(page);
-    const created = await page.evaluate(async ({ bolRef, token }) => {
+    const created = await page.evaluate(async ({ bolRef, token, api, date }) => {
       const contacts = await fetch(
-        "http://localhost:8000/api/v1/contacts?type=provider&page_size=1",
+        `${api}/api/v1/contacts?type=provider&page_size=1`,
         { headers: { Authorization: `Bearer ${token}` } }
       ).then((r) => r.json());
       const products = await fetch(
-        "http://localhost:8000/api/v1/products?page_size=1",
+        `${api}/api/v1/products?page_size=1`,
         { headers: { Authorization: `Bearer ${token}` } }
       ).then((r) => r.json());
 
-      const res = await fetch("http://localhost:8000/api/v1/deliveries", {
+      const res = await fetch(`${api}/api/v1/deliveries`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -89,21 +100,21 @@ test.describe("ACR-39 delivery notes", () => {
         body: JSON.stringify({
           contact_id: contacts.results[0].id,
           bol_reference: bolRef,
-          delivery_date: "2026-07-23",
+          delivery_date: date,
           items: [
             { product_id: products.results[0].id, quantity: 1000, pallets: 1, units_per_pallet: 10 },
           ],
         }),
       });
       return { status: res.status, body: await res.json() };
-    }, { bolRef: bol, token });
+    }, { bolRef: bol, token, api: API, date: RUN_DATE });
 
     expect(created.status).toBe(201);
     // The delivery hangs off a note rather than owning the document facts.
     expect(created.body.delivery_note_id).toBeTruthy();
     expect(created.body.bol_reference).toBe(bol);
 
-    await page.goto("/en/delivery-notes");
+    await openNotesForThisRun(page);
     const row = noteRow(page, bol);
     await expect(row).toBeVisible();
     await expect(row).toContainText("Inbound");
@@ -114,21 +125,21 @@ test.describe("ACR-39 delivery notes", () => {
     page,
   }) => {
     const bol = `E2E-DUP-${RUN}`;
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
 
     const token = await apiToken(page);
-    const results = await page.evaluate(async ({ bolRef, token }) => {
+    const results = await page.evaluate(async ({ bolRef, token, api, date }) => {
       const contacts = await fetch(
-        "http://localhost:8000/api/v1/contacts?type=provider&page_size=1",
+        `${api}/api/v1/contacts?type=provider&page_size=1`,
         { headers: { Authorization: `Bearer ${token}` } }
       ).then((r) => r.json());
       const products = await fetch(
-        "http://localhost:8000/api/v1/products?page_size=1",
+        `${api}/api/v1/products?page_size=1`,
         { headers: { Authorization: `Bearer ${token}` } }
       ).then((r) => r.json());
 
       const post = (force: boolean) =>
-        fetch("http://localhost:8000/api/v1/deliveries", {
+        fetch(`${api}/api/v1/deliveries`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -137,7 +148,7 @@ test.describe("ACR-39 delivery notes", () => {
           body: JSON.stringify({
             contact_id: contacts.results[0].id,
             bol_reference: bolRef,
-            delivery_date: "2026-07-23",
+            delivery_date: date,
             force,
             items: [{ product_id: products.results[0].id, quantity: 1000 }],
           }),
@@ -152,7 +163,7 @@ test.describe("ACR-39 delivery notes", () => {
         forced: forced.status,
         forcedBody: await forced.json(),
       };
-    }, { bolRef: bol, token });
+    }, { bolRef: bol, token, api: API, date: RUN_DATE });
 
     expect(results.first).toBe(201);
     expect(results.conflict).toBe(409);
@@ -160,14 +171,14 @@ test.describe("ACR-39 delivery notes", () => {
     // Suffixed so the (type, document_number) uniqueness holds.
     expect(results.forcedBody.bol_reference).toBe(`${bol} (2)`);
 
-    await page.goto("/en/delivery-notes");
+    await openNotesForThisRun(page);
     await expect(noteRow(page, `${bol} (2)`)).toBeVisible();
   });
 
   test("the type filter narrows the table and empties cleanly", async ({
     page,
   }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
     await page.goto("/en/delivery-notes");
 
     await expect(page.getByRole("row").nth(1)).toBeVisible();
@@ -186,7 +197,7 @@ test.describe("ACR-39 delivery notes", () => {
   });
 
   test("a date range with no notes shows the empty state", async ({ page }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
     await page.goto("/en/delivery-notes");
 
     // By id: "To" also matches other labels on the page.
@@ -199,42 +210,42 @@ test.describe("ACR-39 delivery notes", () => {
   test("a shipment produces a system-generated note of the right flavour", async ({
     page,
   }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
 
     const token = await apiToken(page);
-    const out = await page.evaluate(async ({ run, token }) => {
+    const out = await page.evaluate(async ({ run, token, api, date }) => {
       const headers = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       };
-      const client = await fetch("http://localhost:8000/api/v1/contacts", {
+      const client = await fetch(`${api}/api/v1/contacts`, {
         method: "POST",
         headers,
         body: JSON.stringify({ name: `E2E Client ${run}`, type: "client" }),
       }).then((r) => r.json());
 
       const lots = await fetch(
-        "http://localhost:8000/api/v1/inventory?page_size=50",
+        `${api}/api/v1/inventory?page_size=50`,
         { headers: { Authorization: `Bearer ${token}` } }
       ).then((r) => r.json());
       const lot = lots.results.find(
         (l: { quantity_on_hand: number }) => l.quantity_on_hand > 500
       );
 
-      const res = await fetch("http://localhost:8000/api/v1/shipments", {
+      const res = await fetch(`${api}/api/v1/shipments`, {
         method: "POST",
         headers,
         body: JSON.stringify({
           contact_id: client.id,
           bol_number: `E2E-SHIP-${run}`,
-          shipment_date: "2026-07-23",
+          shipment_date: date,
           type: "direct_customer",
           source: "SC",
           items: [{ lot_id: lot.id, quantity: 100 }],
         }),
       });
       return { status: res.status, body: await res.json() };
-    }, { run: RUN, token });
+    }, { run: RUN, token, api: API, date: RUN_DATE });
 
     // shipping.create is granted to no role until ACR-35.
     test.skip(out.status === 403, "shipping.create not granted (ISS-04 / ACR-35)");
@@ -244,7 +255,7 @@ test.describe("ACR-39 delivery notes", () => {
     expect(out.body.source).toBe("SC"); // §4.3
     expect(out.body.delivery_note_id).toBeTruthy();
 
-    await page.goto("/en/delivery-notes");
+    await openNotesForThisRun(page);
     const row = noteRow(page, `E2E-SHIP-${RUN}`);
     await expect(row).toBeVisible();
     await expect(row).toContainText("Direct Customer");
@@ -253,11 +264,11 @@ test.describe("ACR-39 delivery notes", () => {
   });
 
   test("source is rejected on a transfer note", async ({ page }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
 
     const token = await apiToken(page);
-    const status = await page.evaluate(async ({ run, token }) => {
-      const res = await fetch("http://localhost:8000/api/v1/shipments", {
+    const status = await page.evaluate(async ({ run, token, api }) => {
+      const res = await fetch(`${api}/api/v1/shipments`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -272,14 +283,14 @@ test.describe("ACR-39 delivery notes", () => {
         }),
       });
       return res.status;
-    }, { run: RUN, token });
+    }, { run: RUN, token, api: API });
 
     // 422 from the schema rule; 403 if shipping.create is not granted yet.
     expect([403, 422]).toContain(status);
   });
 
-  test("the shipping form withdraws source for a transfer", async ({ page }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+  test("the shipping form hides source for a transfer", async ({ page }) => {
+    await login(page, USERS.admin);
     await page.goto("/en/shipping");
 
     await page.getByRole("button", { name: "New Shipment" }).click();
@@ -298,7 +309,7 @@ test.describe("ACR-39 delivery notes", () => {
   test("a user without the privilege is blocked, not merely unlinked", async ({
     page,
   }) => {
-    await login(page, OPERATOR.username, OPERATOR.password);
+    await login(page, USERS.operator);
 
     // The nav link is hidden …
     await expect(
@@ -312,7 +323,7 @@ test.describe("ACR-39 delivery notes", () => {
   });
 
   test("the module is localized in Spanish", async ({ page }) => {
-    await login(page, ADMIN.username, ADMIN.password);
+    await login(page, USERS.admin);
     await page.goto("/es/delivery-notes");
 
     await expect(page.getByRole("heading", { name: "Albaranes" })).toBeVisible();

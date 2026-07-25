@@ -8,7 +8,12 @@ import { test, expect, Page } from "@playwright/test";
  */
 
 const ADMIN = { username: "admin", password: "admin123" };
-const CLERK = { username: "clerk1", password: "demo123" };
+/**
+ * The only seeded account with no `shipping.view`. The clerk used to serve as the negative case,
+ * but ACR-35 granted receiving_clerk both `shipping.view` and `shipping.create`, so it now proves
+ * the opposite of what this file needs.
+ */
+const OPERATOR = { username: "operator1", password: "demo123" };
 
 // Unique per run so repeat runs against the same database do not collide on BOL.
 const RUN = Date.now().toString().slice(-6);
@@ -155,7 +160,7 @@ test.describe("ACR-33 — validation and permissions", () => {
   });
 
   test("a user without shipping privileges cannot reach shipping", async ({ page }) => {
-    await login(page, CLERK.username, CLERK.password);
+    await login(page, OPERATOR.username, OPERATOR.password);
 
     await expect(page.getByRole("link", { name: "Shipping" })).toHaveCount(0);
 

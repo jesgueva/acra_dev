@@ -16,17 +16,25 @@ function WorkOrderRow({ wo, onSelect }: WorkOrderRowProps) {
   return (
     <Button
       variant="ghost"
-      className="flex h-auto w-full items-center justify-between rounded-md border bg-white px-4 py-3 text-left shadow-sm hover:bg-muted/50"
+      // `bg-card`, not a hard-coded `bg-white`: the app is dark by default, so these rows rendered
+      // as white cards carrying near-white text — effectively unreadable. Surfacing this module in
+      // the nav made that reachable, so it is fixed here rather than left to be tripped over.
+      className="flex h-auto w-full items-center justify-between gap-3 rounded-md border bg-card px-4 py-3 text-left shadow-sm hover:bg-muted/50"
       onClick={() => onSelect(wo)}
       data-testid={`wo-row-${wo.id}`}
     >
-      <div className="flex items-center gap-3">
-        <span className="font-mono text-xs text-muted-foreground">
+      {/*
+        `min-w-0` + `truncate`: a flex item defaults to `min-width: auto`, so without this a long
+        product name refuses to shrink and pushes the priority/date group off the right edge —
+        a horizontal scroll at phone width, which NFR-010 forbids.
+      */}
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">
           {wo.wo_number}
         </span>
-        <span className="font-medium">{wo.product}</span>
+        <span className="truncate font-medium">{wo.product}</span>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <Badge variant={STATUS_BADGE_VARIANTS[wo.status] ?? "outline"}>
           {wo.priority}
         </Badge>

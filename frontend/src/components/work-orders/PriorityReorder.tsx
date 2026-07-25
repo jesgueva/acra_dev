@@ -41,7 +41,9 @@ function SortableItem({ wo }: SortableItemProps) {
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm shadow-sm"
+      // `bg-card` rather than a hard-coded white, so these rows are legible in the default dark
+      // theme — same fix as WorkOrderList.
+      className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-sm shadow-sm"
     >
       <Button
         variant="ghost"

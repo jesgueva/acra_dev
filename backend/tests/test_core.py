@@ -85,3 +85,36 @@ async def test_write_audit_adds_to_session():
     assert added.user_id == 7
     assert added.action == "login"
     assert added.entity_type == "user"
+
+
+# ---------------------------------------------------------------------------
+# 6. CORS origin parsing (ACR-21)
+# ---------------------------------------------------------------------------
+# The origin list used to be hard-coded to localhost:3000, which silently CORS-blocked every
+# browser XHR whenever the frontend ran anywhere else — a second worktree, or an e2e run on a
+# free port. These cover the parsing that replaced it.
+def test_cors_origin_list_splits_and_strips():
+    from app.core.config import Settings
+
+    settings = Settings(cors_origins="http://localhost:3000, http://localhost:3200")
+    assert settings.cors_origin_list == [
+        "http://localhost:3000",
+        "http://localhost:3200",
+    ]
+
+
+def test_cors_origin_list_defaults_to_the_documented_dev_port():
+    from app.core.config import Settings
+
+    # Assert the *declared* default rather than `Settings().cors_origins`: instantiating reads the
+    # developer's local .env, so the latter would pass or fail depending on whose machine ran it.
+    default = Settings.model_fields["cors_origins"].default
+    assert default == "http://localhost:3000"
+    assert Settings(cors_origins=default).cors_origin_list == ["http://localhost:3000"]
+
+
+def test_cors_origin_list_ignores_blank_entries():
+    from app.core.config import Settings
+
+    settings = Settings(cors_origins="http://a.test,, ,http://b.test,")
+    assert settings.cors_origin_list == ["http://a.test", "http://b.test"]

@@ -37,12 +37,15 @@ export function InventoryLevelChart({ data }: InventoryLevelChartProps) {
           {maxThreshold > 0 && (
             <ReferenceLine
               y={maxThreshold}
-              stroke="red"
+              stroke="var(--destructive)"
               strokeDasharray="4 2"
               label={{ value: "Threshold", position: "insideTopRight", fontSize: 11 }}
             />
           )}
-          <Bar dataKey="quantity" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+          {/* `var(--primary)`, not `hsl(var(--primary))`: the tokens in globals.css are complete
+              oklch() colours, so wrapping them in hsl() produced invalid CSS and the bars fell back
+              to near-black — invisible against the dark theme. */}
+          <Bar dataKey="quantity" fill="var(--primary)" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div>

@@ -1,9 +1,12 @@
 import { AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
+/** One row of `GET /inventory/alerts`. Field names mirror the API exactly. */
 export interface AlertItem {
-  material_name: string;
-  quantity: number;
+  id: number;
+  product_id: number;
+  product_name: string;
+  current_quantity: number;
   threshold: number;
   is_triggered: boolean;
 }
@@ -17,7 +20,7 @@ export function AlertBanner({ alerts }: AlertBannerProps) {
   if (triggered.length === 0) return null;
 
   const count = triggered.length;
-  const names = triggered.map((a) => a.material_name).join(", ");
+  const names = triggered.map((a) => a.product_name).join(", ");
 
   return (
     <Alert variant="destructive">

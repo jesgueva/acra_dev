@@ -101,7 +101,10 @@ test("disables submit button while login is in progress", async () => {
   });
 });
 
-test("redirects to the locale-prefixed receiving page after successful login", async () => {
+test("redirects to the locale-prefixed dashboard after successful login", async () => {
+  // Not /receiving: production_supervisor and machine_operator hold no `receiving.view`, so once
+  // that module went behind a PrivilegeGate they landed on an access-denied page immediately after
+  // a correct login. The dashboard is the one module every role may see.
   const mockLogin = jest.fn().mockResolvedValue(undefined);
   (useAuth as jest.Mock).mockReturnValue(makeAuth(mockLogin));
 
@@ -112,7 +115,7 @@ test("redirects to the locale-prefixed receiving page after successful login", a
   await userEvent.click(screen.getByRole("button", { name: "auth.loginButton" }));
 
   await waitFor(() => {
-    expect(mockPush).toHaveBeenCalledWith("/en/receiving");
+    expect(mockPush).toHaveBeenCalledWith("/en/dashboard");
   });
 });
 

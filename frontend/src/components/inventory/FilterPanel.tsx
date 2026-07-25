@@ -61,6 +61,12 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
 
   const handleClear = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    // Reset the input directly instead of waiting for `filters.search` to come back empty. When the
+    // user clears before the 300ms debounce has fired, the parent's search is still "" — unchanged
+    // — so the sync above never runs, and the box would keep showing text that is no longer
+    // filtering anything.
+    setSearch(DEFAULT_FILTERS.search);
+    setPrevSearch(DEFAULT_FILTERS.search);
     onChange(DEFAULT_FILTERS);
   }, [onChange]);
 

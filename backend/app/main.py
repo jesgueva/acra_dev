@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from jose import JWTError
 
-from app.core.config import settings  # noqa: F401 — ensures .env is loaded early
+from app.core.config import settings  # also ensures .env is loaded early
 
 logging.basicConfig(
     level=logging.INFO,

@@ -78,22 +78,25 @@ export function Dashboard() {
   const { data: alerts = [] } = useQuery<AlertItem[]>({
     queryKey: ["inventory-alerts"],
     queryFn: async () => {
-      const res = await apiClient.get<AlertItem[]>("/inventory/alerts");
-      return res.data;
+      // `GET /inventory/alerts` returns `{ alerts: [...] }`, not a bare array. Reading `res.data`
+      // handed a plain object to `alerts.filter(...)` below and crashed the whole dashboard with
+      // "TypeError: filter is not a function".
+      const res = await apiClient.get<{ alerts: AlertItem[] }>("/inventory/alerts");
+      return res.data.alerts ?? [];
     },
-    enabled: isAdmin,
-  });
-
-  const { data: inventoryItems = [] } = useQuery<InventoryChartItem[]>({
-    queryKey: ["inventory-top5"],
-    queryFn: async () => {
-      const res = await apiClient.get<{ items: InventoryChartItem[] }>(
-        "/inventory?category=raw&page_size=5"
-      );
-      return res.data.items ?? [];
-    },
+    // Needs inventory.view, which supervisors hold too — and the chart below is built from it.
     enabled: isAdmin || isSupervisor,
   });
+
+  // Built from the alerts response rather than a second request. The previous query asked
+  // `/inventory?category=raw&page_size=5` and read `res.data.items`: `category` is not a filter the
+  // endpoint supports, and the response key is `results`, so the chart was silently always empty.
+  // The alerts payload is also the only source that carries `threshold`, which the chart needs.
+  const inventoryItems: InventoryChartItem[] = alerts.map((alert) => ({
+    material_name: alert.product_name,
+    quantity: alert.current_quantity,
+    threshold: alert.threshold,
+  }));
 
   const { data: deliveryCount = 0 } = useQuery<number>({
     queryKey: ["deliveries-count"],
