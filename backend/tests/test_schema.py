@@ -11,7 +11,7 @@ import pytest
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/acra_db",
+    "postgresql+asyncpg://postgres:postgres@localhost:5434/acra_db",
 )
 PG_DSN = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
 

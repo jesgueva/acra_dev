@@ -94,12 +94,23 @@ operator surfaces.
 ## Phase 2 direction (where the next sprint lands)
 
 The realignment replaces the lot-centric inventory model with an **append-only `StockMovement`
-ledger** keyed by `(item, state)`, where on-hand is the sum of signed movements and every operator
-surface (receiving, production close, shipment) writes movements rather than mutating rows. The
-Sprint I baseline includes **skeleton stubs** for this module (model/service/router raising
+ledger** keyed by `(item, state, location)`, where on-hand is the sum of signed movements and every
+operator surface (receiving, production close, shipment) writes movements rather than mutating rows.
+The Sprint I baseline includes **skeleton stubs** for this module (model/service/router raising
 `NotImplementedError`) and a placeholder migration, so the structure is in place and aligned with
 the design before behavior is implemented. See [`RISK_LOG.md`](RISK_LOG.md) RSK-01/RSK-02 for the
 load-bearing risks (concurrency-safe close; reversible migration).
+
+**`state` is the material axis** — `RAW_MATERIAL | WORK_IN_PROGRESS | FINISHED_GOOD`, nullable for
+auxiliary items. It is not a lifecycle axis: shipping and consumption are negative movements, not
+destination states, and material on the line is WIP plus an active reservation. Lifecycle is
+carried by `MovementType` and `StockReservation` for the future ledger, and by
+`app.models.inventory.LotStatus` for the lot-centric model in place today.
+
+The authoritative build target — table shapes, the delete/add/migrate list from the ACR-25 decision
+gate, and which ticket owns each piece — is `acra_docs/reference/target_schema.md` (ACR-26).
+Alembic revisions `010` (stock reservations), `011` (production worksheets) and `012` (delivery
+notes) are taken; the next available revision is **`013`**.
 
 ### ADR-02 — worksheet-close concurrency (spiked in ACR-30)
 
@@ -134,6 +145,13 @@ append-only ledger:
 - **Rolling back expires ORM instances.** Reading an attribute off one afterwards triggers
   synchronous IO and raises `MissingGreenlet` on an async session, turning a clean 409 into a 500.
   Capture anything an error message needs *before* `await db.rollback()`.
+
+**Also settled here:** the close writes Issue-at-actual per line and nothing else — the
+`actual − planned` delta is computed from the worksheet line, never written as an adjustment
+movement (`client_domain_model.md` §7.1). The unit suite asserts this on movement *kind and count*,
+because a compensating pair of rows nets to the right total while still being wrong. A lot drawn to
+zero is moved to `LotStatus.CONSUMED`, mirroring the terminal transition `shipment_service` already
+makes; partially drawn lots stay `IN_STORAGE`.
 
 ## Verified version snapshot
 
