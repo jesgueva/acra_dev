@@ -26,21 +26,48 @@ _CREATED_AT = datetime(2026, 7, 23, tzinfo=timezone.utc)
 # ---------------------------------------------------------------------------
 
 
-def _make_shipment(shipment_id=1, shipment_date="2026-07-23", contact_id=10):
+def _make_shipment(shipment_id=1, delivery_note_id=900):
     from app.models.shipment import Shipment
 
     s = Shipment()
     s.id = shipment_id
-    s.contact_id = contact_id
+    s.delivery_note_id = delivery_note_id
     s.carrier_id = None
-    s.bol_number = "AV26-0001"
-    s.shipment_date = shipment_date
     s.notes = None
-    s.type = "direct_customer"
-    s.source = "SC"
     s.created_by = 1
     s.created_at = _CREATED_AT
     return s
+
+
+def _make_note(note_id=900, document_date="2026-07-23", partner_id=10):
+    """The delivery note carrying the shipment's document facts (§4.1) — client, BoL and date."""
+    from app.models.delivery_note import DeliveryNote
+
+    n = DeliveryNote()
+    n.id = note_id
+    n.type = "direct_customer"
+    n.source = "SC"
+    n.partner_id = partner_id
+    n.document_number = "AV26-0001"
+    n.document_date = document_date
+    n.uploaded = False
+    n.notes = None
+    n.created_by = 1
+    n.created_at = _CREATED_AT
+    return n
+
+
+def _h_shipment(shipment=None):
+    """`_get_shipment_or_404` reads the header, then batch-loads its note."""
+    return lambda r: setattr(
+        r.scalar_one_or_none, "return_value", _make_shipment() if shipment is None else shipment
+    )
+
+
+def _h_note(note=None):
+    return lambda r: setattr(
+        r.scalars.return_value.all, "return_value", [note or _make_note()]
+    )
 
 
 def _make_shipment_item(item_id=100, shipment_id=1, lot_id=1, quantity=5000, unit_price=250):
@@ -254,9 +281,6 @@ async def test_generate_invoice_service_computes_totals():
         _make_shipment_item(item_id=101, lot_id=2, quantity=200, unit_price=1000),  # 20.00
     ]
 
-    def h_shipment(result):
-        result.scalar_one_or_none.return_value = shipment
-
     def h_existing(result):
         result.scalar_one_or_none.return_value = None
 
@@ -269,7 +293,9 @@ async def test_generate_invoice_service_computes_totals():
     def h_contact(result):
         result.scalar_one_or_none.return_value = None
 
-    session = _flushing_session([h_shipment, h_existing, h_items, h_lots, h_contact])
+    session = _flushing_session(
+        [_h_shipment(shipment), _h_note(), h_existing, h_items, h_lots, h_contact]
+    )
 
     resp = await invoice_service.generate_invoice(
         1, _token_user(), session
@@ -294,7 +320,8 @@ async def test_generate_invoice_treats_null_unit_price_as_zero():
     ]
 
     handlers = [
-        lambda r: setattr(r.scalar_one_or_none, "return_value", _make_shipment()),
+        _h_shipment(),
+        _h_note(),
         lambda r: setattr(r.scalar_one_or_none, "return_value", None),
         lambda r: setattr(r.scalars.return_value.all, "return_value", items),
         lambda r: setattr(r.scalars.return_value.all, "return_value", []),
@@ -336,7 +363,8 @@ async def test_generate_invoice_twice_raises_409():
     from fastapi import HTTPException
 
     handlers = [
-        lambda r: setattr(r.scalar_one_or_none, "return_value", _make_shipment()),
+        _h_shipment(),
+        _h_note(),
         lambda r: setattr(r.scalar_one_or_none, "return_value", _make_invoice()),
     ]
     session = _make_service_session(handlers)
@@ -357,7 +385,8 @@ async def test_generate_invoice_with_no_items_raises_422():
     from fastapi import HTTPException
 
     handlers = [
-        lambda r: setattr(r.scalar_one_or_none, "return_value", _make_shipment()),
+        _h_shipment(),
+        _h_note(),
         lambda r: setattr(r.scalar_one_or_none, "return_value", None),
         lambda r: setattr(r.scalars.return_value.all, "return_value", []),
     ]
@@ -376,7 +405,8 @@ async def test_generate_invoice_with_no_items_raises_422():
 @pytest.mark.asyncio
 async def test_get_invoice_for_shipment_returns_lines():
     handlers = [
-        lambda r: setattr(r.scalar_one_or_none, "return_value", _make_shipment()),
+        _h_shipment(),
+        _h_note(),
         lambda r: setattr(r.scalar_one_or_none, "return_value", _make_invoice()),
         lambda r: setattr(r.scalars.return_value.all, "return_value", [_make_invoice_line()]),
         lambda r: setattr(r.scalar_one_or_none, "return_value", None),
@@ -399,7 +429,8 @@ async def test_get_invoice_for_shipment_without_invoice_raises_404():
     from fastapi import HTTPException
 
     handlers = [
-        lambda r: setattr(r.scalar_one_or_none, "return_value", _make_shipment()),
+        _h_shipment(),
+        _h_note(),
         lambda r: setattr(r.scalar_one_or_none, "return_value", None),
     ]
     session = _make_service_session(handlers)
@@ -430,13 +461,20 @@ def test_line_total_is_exact_integer_math(quantity, unit_price, expected):
 # Unit — invoice number is deterministic, and survives a junk date
 # ---------------------------------------------------------------------------
 def test_invoice_number_is_deterministic():
-    assert invoice_service._invoice_number(_make_shipment(shipment_id=7)) == "INV-2026-00007"
+    number = invoice_service._invoice_number(_make_shipment(shipment_id=7), _make_note())
+    assert number == "INV-2026-00007"
 
 
 @pytest.mark.parametrize("bad_date", ["", "not-a-date", None])
 def test_invoice_number_falls_back_on_unparseable_date(bad_date):
-    shipment = _make_shipment(shipment_id=42, shipment_date=bad_date)
-    assert invoice_service._invoice_number(shipment) == "INV-0000-00042"
+    shipment = _make_shipment(shipment_id=42)
+    note = _make_note(document_date=bad_date)
+    assert invoice_service._invoice_number(shipment, note) == "INV-0000-00042"
+
+
+def test_invoice_number_falls_back_when_the_note_is_missing():
+    """A shipment whose note cannot be loaded still gets a number, not an AttributeError."""
+    assert invoice_service._invoice_number(_make_shipment(shipment_id=42), None) == "INV-0000-00042"
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +494,8 @@ async def test_invoice_line_description_uses_product_and_lot():
     product.name = "Steel Rod"
 
     handlers = [
-        lambda r: setattr(r.scalar_one_or_none, "return_value", _make_shipment()),
+        _h_shipment(),
+        _h_note(),
         lambda r: setattr(r.scalar_one_or_none, "return_value", None),
         lambda r: setattr(r.scalars.return_value.all, "return_value", [_make_shipment_item()]),
         lambda r: setattr(r.scalars.return_value.all, "return_value", [lot]),
@@ -486,7 +525,8 @@ async def test_concurrent_generate_surfaces_409_not_500():
     from sqlalchemy.exc import IntegrityError
 
     handlers = [
-        lambda r: setattr(r.scalar_one_or_none, "return_value", _make_shipment()),
+        _h_shipment(),
+        _h_note(),
         lambda r: setattr(r.scalar_one_or_none, "return_value", None),  # no invoice yet — we race
         lambda r: setattr(r.scalars.return_value.all, "return_value", [_make_shipment_item()]),
         lambda r: setattr(r.scalars.return_value.all, "return_value", []),

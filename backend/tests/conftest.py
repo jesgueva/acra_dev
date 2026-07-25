@@ -21,6 +21,18 @@ def _make_user(
     return u
 
 
+def _nested_transaction_mock():
+    """Support `async with db.begin_nested():` on a mocked session.
+
+    Must be a plain MagicMock, not an AsyncMock: the real AsyncSession returns a context manager
+    directly, whereas an AsyncMock would return a coroutine, which `async with` rejects.
+    """
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=cm)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return MagicMock(return_value=cm)
+
+
 def _make_session(user, roles, privileges, service_handlers=None):
     """
     Build a mock AsyncSession.
@@ -53,6 +65,7 @@ def _make_session(user, roles, privileges, service_handlers=None):
     session.commit = AsyncMock()
     session.flush = AsyncMock()
     session.delete = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
     return session
 
 
@@ -85,6 +98,7 @@ def _make_service_session(handlers=None, assign_ids=False, created_at=None):
     session.added = added
     session.commit = AsyncMock()
     session.delete = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
 
     if assign_ids:
         next_id = itertools.count(1)
@@ -133,4 +147,5 @@ def _make_rbac_session(privileges=("deliveries.create", "deliveries.view")):
     session.add = MagicMock()
     session.flush = AsyncMock()
     session.commit = AsyncMock()
+    session.begin_nested = _nested_transaction_mock()
     return session

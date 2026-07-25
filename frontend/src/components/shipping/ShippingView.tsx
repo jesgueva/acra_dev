@@ -53,6 +53,7 @@ interface ShipmentItem {
 
 interface Shipment {
   id: number;
+  delivery_note_id: number | null;
   contact_id: number | null;
   contact_name: string | null;
   carrier_id: number | null;
@@ -61,6 +62,7 @@ interface Shipment {
   shipment_date: string;
   notes: string | null;
   type: string;
+  /** §4.3 — originating stock location, direct-customer shipments only. */
   source: string | null;
   created_by: number;
   created_at: string;
@@ -104,7 +106,8 @@ interface LineItem {
 
 const EMPTY_LINE: LineItem = { lot_id: "", quantity: "", unit_price: "" };
 
-// Domain model §4.3 — the two outbound delivery-note flavors.
+// Domain model §4.3 — the two outbound delivery-note flavours. These are `delivery_notes.type`
+// values: the shipment projects its note's type rather than storing one of its own.
 const TYPE_TRANSFER = "transfer";
 const TYPE_DIRECT_CUSTOMER = "direct_customer";
 
@@ -291,6 +294,7 @@ export function ShippingView() {
     if (form.contact_id) body.contact_id = parseInt(form.contact_id, 10);
     if (form.carrier_id) body.carrier_id = parseInt(form.carrier_id, 10);
     if (form.notes) body.notes = form.notes;
+    // §4.3 — only a direct-customer note carries a source.
     if (form.type === TYPE_DIRECT_CUSTOMER && form.source.trim()) {
       body.source = form.source.trim();
     }
@@ -392,7 +396,10 @@ export function ShippingView() {
                         {s.carrier_name ?? "—"}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant={TYPE_VARIANTS[s.type] ?? "outline"}>
+                        <Badge
+                          variant={TYPE_VARIANTS[s.type] ?? "outline"}
+                          className="capitalize"
+                        >
                           {typeLabel(s.type)}
                         </Badge>
                       </td>
@@ -522,8 +529,8 @@ export function ShippingView() {
                   value={form.type}
                   onValueChange={(v) =>
                     setForm({
-                      // `source` is meaningless on a Transfer note and the API rejects it, so
-                      // drop it as the type changes rather than failing the submit later.
+                      // `source` is meaningless on a Transfer note and the API rejects it (§4.3),
+                      // so drop it as the type changes rather than failing the submit later.
                       ...form,
                       type: v,
                       source: v === TYPE_DIRECT_CUSTOMER ? form.source : "",
@@ -703,7 +710,10 @@ export function ShippingView() {
                 </div>
                 <div>
                   <p className="text-muted-foreground">{t("type")}</p>
-                  <Badge variant={TYPE_VARIANTS[detailShipment.type] ?? "outline"}>
+                  <Badge
+                    variant={TYPE_VARIANTS[detailShipment.type] ?? "outline"}
+                    className="capitalize"
+                  >
                     {typeLabel(detailShipment.type)}
                   </Badge>
                 </div>

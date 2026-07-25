@@ -3,9 +3,11 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.shipment import SHIPMENT_TYPE_DIRECT_CUSTOMER
+from app.models.delivery_note import DeliveryNoteType
 
-# Domain model §4.3 — Transfer note vs Direct Customer note.
+# Domain model §4.3 — Transfer note vs Direct Customer note. These are `delivery_notes.type`
+# values: since the unified note landed, the shipment stores no type of its own and projects
+# its note's.
 ShipmentType = Literal["transfer", "direct_customer"]
 
 
@@ -33,7 +35,7 @@ class ShipmentCreate(BaseModel):
     bol_number: str = Field(..., min_length=1, max_length=100)
     shipment_date: str = Field(..., min_length=1, max_length=20)
     notes: Optional[str] = None
-    type: ShipmentType = SHIPMENT_TYPE_DIRECT_CUSTOMER
+    type: ShipmentType = DeliveryNoteType.DIRECT_CUSTOMER.value
     # §4.3 — originating stock location, e.g. "SC". Direct Customer notes only.
     source: Optional[str] = Field(None, max_length=50)
     items: List[ShipmentItemCreate] = Field(..., min_length=1)
@@ -55,7 +57,7 @@ class ShipmentCreate(BaseModel):
 
     @model_validator(mode="after")
     def _source_is_direct_customer_only(self) -> "ShipmentCreate":
-        if self.source is not None and self.type != SHIPMENT_TYPE_DIRECT_CUSTOMER:
+        if self.source is not None and self.type != DeliveryNoteType.DIRECT_CUSTOMER.value:
             raise ValueError("source is only valid on a direct_customer shipment")
         return self
 
@@ -64,6 +66,9 @@ class ShipmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    delivery_note_id: Optional[int] = None
+    # `contact_id`, `bol_number`, `shipment_date`, `type` and `source` are projected from the
+    # linked delivery note, their only storage location since migration 012.
     contact_id: Optional[int] = None
     contact_name: Optional[str] = None    # denormalized
     carrier_id: Optional[int] = None

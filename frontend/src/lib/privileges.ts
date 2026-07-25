@@ -1,5 +1,6 @@
 export const PRIVILEGES = {
   RECEIVING_VIEW: "receiving.view",
+  DELIVERIES_VIEW: "deliveries.view",
   INVENTORY_VIEW: "inventory.view",
   WORK_ORDERS_VIEW: "work_orders.view",
   WORK_ORDERS_CREATE: "work_orders.create",

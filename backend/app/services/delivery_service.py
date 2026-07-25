@@ -9,6 +9,7 @@ from sqlalchemy.orm import aliased
 from app.core.audit import write_audit
 from app.models.contact import Contact
 from app.models.delivery import Delivery, DeliveryItem
+from app.models.delivery_note import DeliveryNote, DeliveryNoteType
 from app.models.user import User
 from app.models.inventory import InventoryLot, InventoryTransaction
 from app.models.product import Product
@@ -19,6 +20,7 @@ from app.schemas.delivery import (
     DeliveryListResponse,
     DeliveryResponse,
 )
+from app.services import delivery_note_service
 
 logger = logging.getLogger("acra.delivery")
 
@@ -30,9 +32,12 @@ def _is_transfer(name: str) -> bool:
 
 
 def _apply_filters(query, supplier, carrier, bol_reference, date_from, date_to):
+    # The supplier, BoL reference and date now live on the linked delivery note, so every filter
+    # except `carrier` reads through the join.
+    query = query.join(DeliveryNote, Delivery.delivery_note_id == DeliveryNote.id)
     if supplier:
         sc = aliased(Contact)
-        query = query.join(sc, Delivery.contact_id == sc.id).where(
+        query = query.join(sc, DeliveryNote.partner_id == sc.id).where(
             sc.name.ilike(f"%{supplier}%")
         )
     if carrier:
@@ -41,11 +46,11 @@ def _apply_filters(query, supplier, carrier, bol_reference, date_from, date_to):
             cc.name.ilike(f"%{carrier}%")
         )
     if bol_reference:
-        query = query.where(Delivery.bol_reference.ilike(f"%{bol_reference}%"))
+        query = query.where(DeliveryNote.document_number.ilike(f"%{bol_reference}%"))
     if date_from:
-        query = query.where(Delivery.delivery_date >= date_from)
+        query = query.where(DeliveryNote.document_date >= date_from)
     if date_to:
-        query = query.where(Delivery.delivery_date <= date_to)
+        query = query.where(DeliveryNote.document_date <= date_to)
     return query
 
 
@@ -55,7 +60,12 @@ async def create_delivery(
     db: AsyncSession,
 ) -> DeliveryResponse:
     existing = (
-        await db.execute(select(Delivery).where(Delivery.bol_reference == body.bol_reference))
+        await db.execute(
+            select(DeliveryNote).where(
+                DeliveryNote.type == DeliveryNoteType.INBOUND.value,
+                DeliveryNote.document_number == body.bol_reference,
+            )
+        )
     ).scalar_one_or_none()
     if existing:
         if not body.force:
@@ -87,11 +97,22 @@ async def create_delivery(
     products_res = await db.execute(select(Product).where(Product.id.in_(product_ids)))
     products_by_id = {p.id: p for p in products_res.scalars().all()}
 
+    # §4.1/§4.2 — the paper document that arrived with the goods is an uploaded INBOUND note, and
+    # it owns the partner, reference and date. `force=true` reaches here with a reference that is
+    # already taken, so the number is de-duplicated rather than rejected.
+    note = await delivery_note_service.add_document_note(
+        db,
+        note_type=DeliveryNoteType.INBOUND.value,
+        document_number=body.bol_reference,
+        document_date=body.delivery_date,
+        partner_id=contact_id,
+        uploaded=True,
+        created_by=current_user.user_id,
+    )
+
     delivery = Delivery(
-        contact_id=contact_id,
+        delivery_note_id=note.id,
         carrier_id=body.carrier_id,
-        delivery_date=body.delivery_date,
-        bol_reference=body.bol_reference,
         notes=body.notes,
         created_by=current_user.user_id,
     )
@@ -157,7 +178,7 @@ async def create_delivery(
             quantity=item.quantity,
             reference_type="delivery",
             reference_id=delivery.id,
-            reason=f"Received via delivery {delivery.bol_reference}",
+            reason=f"Received via delivery {note.document_number}",
             created_by=current_user.user_id,
         ))
 
@@ -185,8 +206,9 @@ async def create_delivery(
         contact_name=contact_name,
         carrier_id=body.carrier_id,
         carrier_name=carrier_name,
-        delivery_date=delivery.delivery_date,
-        bol_reference=delivery.bol_reference,
+        delivery_note_id=note.id,
+        delivery_date=note.document_date,
+        bol_reference=note.document_number,
         notes=delivery.notes,
         created_by=delivery.created_by,
         created_by_name=current_user.full_name,
@@ -242,12 +264,17 @@ async def list_deliveries(
         for it in items_rows:
             items_map.setdefault(it.delivery_id, []).append(it)
 
-        contact_ids: set[int] = {
-            cid
-            for d in rows
-            for cid in (d.contact_id, d.carrier_id)
-            if cid
-        }
+        notes_by_id = await delivery_note_service.load_by_ids(
+            db, {d.delivery_note_id for d in rows}
+        )
+
+        contact_ids: set[int] = set()
+        for d in rows:
+            note = notes_by_id.get(d.delivery_note_id)
+            for cid in ((note.partner_id if note else None), d.carrier_id):
+                if cid:
+                    contact_ids.add(cid)
+
         contacts_by_id: dict[int, Contact] = {}
         if contact_ids:
             contacts_res = await db.execute(
@@ -270,18 +297,21 @@ async def list_deliveries(
             creators_by_id = {u.id: u for u in creators_res.scalars().all()}
 
         for d in rows:
-            contact_obj = contacts_by_id.get(d.contact_id) if d.contact_id else None
+            note = notes_by_id.get(d.delivery_note_id)
+            partner_id = note.partner_id if note else None
+            contact_obj = contacts_by_id.get(partner_id) if partner_id else None
             carrier_obj = contacts_by_id.get(d.carrier_id) if d.carrier_id else None
             d_items = items_map.get(d.id, [])
             results.append(
                 DeliveryResponse(
                     id=d.id,
-                    contact_id=d.contact_id,
+                    delivery_note_id=d.delivery_note_id,
+                    contact_id=partner_id,
                     contact_name=contact_obj.name if contact_obj else None,
                     carrier_id=d.carrier_id,
                     carrier_name=carrier_obj.name if carrier_obj else None,
-                    delivery_date=d.delivery_date,
-                    bol_reference=d.bol_reference,
+                    delivery_date=note.document_date if note else "",
+                    bol_reference=note.document_number if note else "",
                     notes=d.notes,
                     created_by=d.created_by,
                     created_by_name=(

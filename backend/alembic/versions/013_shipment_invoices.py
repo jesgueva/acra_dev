@@ -1,54 +1,35 @@
-"""shipment invoices + Transfer/Direct Customer vocabulary + source
+"""shipment invoices + the price snapshot they are billed from
 
-ACR-33. Three changes to the outbound side, plus the privilege grant that makes it reachable:
+ACR-33. Two changes to the outbound side, plus the privilege grant that makes it reachable:
 
-1. **Vocabulary** — ``shipments.type`` moves from ``customer_order | transfer_out`` to the domain
-   model's ``direct_customer | transfer`` (§4.3). Data-preserving and reversible.
-2. **``shipments.source``** — nullable, names the originating stock location on a Direct Customer
-   note (e.g. ``SC``). Assigned to this ticket by ``reference/target_schema.md`` §4. Legal only on
-   a Direct Customer note, enforced by CHECK.
-3. **Invoices** — ``invoices`` + ``invoice_lines``, priced off a ``shipment_items.unit_price``
-   snapshot taken at ship time (``products`` has no price column and none is planned).
+1. **``shipment_items.unit_price``** — a price snapshot taken at ship time (``products`` has no
+   price column and none is planned), which the invoice is billed from.
+2. **Invoices** — ``invoices`` + ``invoice_lines``, priced off that snapshot.
+
+The §4.3 vocabulary (``direct_customer`` / ``transfer``) and ``source`` were originally this
+ticket's too, but ACR-39 (migration 012) moved every document fact off ``shipments`` and onto the
+unified ``delivery_notes`` row, where both now live with their own CHECK constraints. Nothing is
+left for this revision to do there.
 
 The ``shipping.view`` / ``shipping.create`` grant to ``company_admin`` is a one-role slice of
 ACR-35: those privileges are granted to no role in ``002``, so every shipment endpoint 403s and
 the module is unreachable. ACR-35 keeps the wider role matrix.
 
-Revision ID: 011
-Revises: 010
+Revision ID: 013
+Revises: 012
 Create Date: 2026-07-23
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "011"
-down_revision = "010"
+revision = "013"
+down_revision = "012"
 branch_labels = None
 depends_on = None
 
 
 def upgrade():
-    # ── 1. Type vocabulary → domain model §4.3 ──────────────────────────────
-    # Drop the constraint first: the UPDATEs below violate it while in flight.
-    op.drop_constraint("ck_shipments_type", "shipments", type_="check")
-    op.execute("UPDATE shipments SET type = 'direct_customer' WHERE type = 'customer_order'")
-    op.execute("UPDATE shipments SET type = 'transfer' WHERE type = 'transfer_out'")
-    op.alter_column("shipments", "type", server_default="direct_customer")
-    op.create_check_constraint(
-        "ck_shipments_type",
-        "shipments",
-        "type IN ('transfer', 'direct_customer')",
-    )
-
-    # ── 2. §4.3 source ──────────────────────────────────────────────────────
-    op.add_column("shipments", sa.Column("source", sa.String(50), nullable=True))
-    op.create_check_constraint(
-        "ck_shipments_source_direct_only",
-        "shipments",
-        "source IS NULL OR type = 'direct_customer'",
-    )
-
-    # ── 3. Price snapshot on the shipment line ──────────────────────────────
+    # ── 1. Price snapshot on the shipment line ──────────────────────────────
     op.add_column("shipment_items", sa.Column("unit_price", sa.Integer(), nullable=True))
     op.create_check_constraint(
         "ck_shipment_items_unit_price",
@@ -56,7 +37,7 @@ def upgrade():
         "unit_price IS NULL OR unit_price >= 0",
     )
 
-    # ── 4. Invoices ─────────────────────────────────────────────────────────
+    # ── 2. Invoices ─────────────────────────────────────────────────────────
     op.create_table(
         "invoices",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
@@ -114,7 +95,7 @@ def upgrade():
     op.create_index("ix_invoices_shipment_id", "invoices", ["shipment_id"])
     op.create_index("ix_invoice_lines_invoice_id", "invoice_lines", ["invoice_id"])
 
-    # ── 5. Make shipping reachable (ACR-35 slice) ───────────────────────────
+    # ── 3. Make shipping reachable (ACR-35 slice) ───────────────────────────
     op.execute(
         """
         INSERT INTO role_privilege_assignments (role_id, privilege_name)
@@ -146,16 +127,3 @@ def downgrade():
 
     op.drop_constraint("ck_shipment_items_unit_price", "shipment_items", type_="check")
     op.drop_column("shipment_items", "unit_price")
-
-    op.drop_constraint("ck_shipments_source_direct_only", "shipments", type_="check")
-    op.drop_column("shipments", "source")
-
-    op.drop_constraint("ck_shipments_type", "shipments", type_="check")
-    op.execute("UPDATE shipments SET type = 'customer_order' WHERE type = 'direct_customer'")
-    op.execute("UPDATE shipments SET type = 'transfer_out' WHERE type = 'transfer'")
-    op.alter_column("shipments", "type", server_default="customer_order")
-    op.create_check_constraint(
-        "ck_shipments_type",
-        "shipments",
-        "type IN ('customer_order', 'transfer_out')",
-    )

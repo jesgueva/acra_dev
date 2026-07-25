@@ -8,7 +8,8 @@
     "contacts": "Contactos",
     "shippingNav": "Expedición",
     "language": "Idioma",
-    "logout": "Cerrar Sesión"
+    "logout": "Cerrar Sesión",
+    "deliveryNotes": "Albaranes"
   },
   "auth": {
     "login": "Iniciar Sesión",
@@ -232,7 +233,8 @@
     "provider": "Proveedor",
     "carrier": "Transportista",
     "noContacts": "No se encontraron contactos.",
-    "deleteConfirm": "¿Está seguro de que desea eliminar este contacto?"
+    "deleteConfirm": "¿Está seguro de que desea eliminar este contacto?",
+    "transfer": "Socio de Transferencia"
   },
   "products": {
     "title": "Productos",
@@ -272,8 +274,8 @@
     "items": "Artículos",
     "productName": "Producto",
     "lotNumber": "Lote #",
-    "transfer": "Traspaso",
     "directCustomer": "Cliente Directo",
+    "transfer": "Transferencia",
     "source": "Origen",
     "sourcePlaceholder": "p. ej. SC",
     "sourceHint": "Ubicación de stock de origen. Solo para envíos a Cliente Directo.",
@@ -303,6 +305,30 @@
     "dateFormat": "DD/MM/YYYY",
     "comingSoon": "Próximamente",
     "underDevelopment": "Este módulo está en desarrollo activo.",
-    "accessDenied": "No tiene permiso para ver esta página."
+    "accessDenied": "No tiene permiso para ver esta página.",
+    "previous": "Anterior",
+    "next": "Siguiente"
+  },
+  "deliveryNotes": {
+    "title": "Albaranes",
+    "subtitle": "Todo movimiento de stock se adjunta a un albarán.",
+    "documentNumber": "N.º de Documento",
+    "documentDate": "Fecha",
+    "partner": "Socio",
+    "type": "Tipo",
+    "provenance": "Procedencia",
+    "source": "Origen",
+    "inbound": "Entrada",
+    "transfer": "Transferencia",
+    "directCustomer": "Cliente Directo",
+    "internal": "Interno",
+    "uploaded": "Subido",
+    "systemGenerated": "Sistema",
+    "allTypes": "Todos los tipos",
+    "filterType": "Filtrar por tipo",
+    "dateFrom": "Desde",
+    "dateTo": "Hasta",
+    "clearFilters": "Limpiar filtros",
+    "noNotes": "No se encontraron albaranes."
   }
 }

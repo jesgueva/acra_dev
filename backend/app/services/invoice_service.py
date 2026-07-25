@@ -14,12 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.models.contact import Contact
+from app.models.delivery_note import DeliveryNote
 from app.models.inventory import InventoryLot
 from app.models.invoice import INVOICE_STATUS_ISSUED, Invoice, InvoiceLine
 from app.models.product import Product
 from app.models.shipment import Shipment, ShipmentItem
 from app.schemas.auth import TokenUser
 from app.schemas.invoice import InvoiceLineResponse, InvoiceResponse
+from app.services import delivery_note_service
 
 # No tax model exists anywhere in the domain docs (ACR-33 D4). The column is carried so the shape
 # is right when one does; until then every invoice is untaxed.
@@ -31,13 +33,13 @@ def _line_total(quantity: int, unit_price: int) -> int:
     return (quantity * unit_price) // 100
 
 
-def _invoice_number(shipment: Shipment) -> str:
+def _invoice_number(shipment: Shipment, note: Optional[DeliveryNote]) -> str:
     """Deterministic from the shipment, so there is no sequence for concurrent callers to race on.
 
-    ``shipment_date`` is a ``YYYY-MM-DD`` string; anything unparseable falls back to ``0000`` rather
-    than failing invoice generation over a cosmetic field.
+    The shipment date lives on the linked delivery note (§4.1) as a ``YYYY-MM-DD`` string; anything
+    unparseable falls back to ``0000`` rather than failing invoice generation over a cosmetic field.
     """
-    year = (shipment.shipment_date or "")[:4]
+    year = ((note.document_date if note else None) or "")[:4]
     if not year.isdigit():
         year = "0000"
     return f"INV-{year}-{shipment.id:05d}"
@@ -58,7 +60,7 @@ def _line_response(line: InvoiceLine) -> InvoiceLineResponse:
 def _invoice_response(
     invoice: Invoice,
     lines: list[InvoiceLine],
-    shipment: Shipment,
+    note: Optional[DeliveryNote],
     contact: Optional[Contact],
 ) -> InvoiceResponse:
     return InvoiceResponse(
@@ -73,7 +75,7 @@ def _invoice_response(
         status=invoice.status,
         created_by=invoice.created_by,
         created_at=invoice.created_at,
-        bol_number=shipment.bol_number,
+        bol_number=note.document_number if note else None,
         contact_name=contact.name if contact else None,
         lines=[_line_response(line) for line in lines],
     )
@@ -87,7 +89,13 @@ def _already_invoiced(shipment_id: int, invoice_number: Optional[str] = None) ->
     )
 
 
-async def _get_shipment_or_404(db: AsyncSession, shipment_id: int) -> Shipment:
+async def _get_shipment_or_404(
+    db: AsyncSession, shipment_id: int
+) -> tuple[Shipment, Optional[DeliveryNote]]:
+    """Load the shipment together with the delivery note carrying its document facts (§4.1).
+
+    Client, BoL number and date are the note's, so an invoice cannot be described without it.
+    """
     shipment = (
         await db.execute(select(Shipment).where(Shipment.id == shipment_id))
     ).scalar_one_or_none()
@@ -96,7 +104,10 @@ async def _get_shipment_or_404(db: AsyncSession, shipment_id: int) -> Shipment:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Shipment {shipment_id} not found",
         )
-    return shipment
+    notes = await delivery_note_service.load_by_ids(
+        db, {shipment.delivery_note_id} if shipment.delivery_note_id else set()
+    )
+    return shipment, notes.get(shipment.delivery_note_id)
 
 
 async def _load_contact(db: AsyncSession, contact_id: Optional[int]) -> Optional[Contact]:
@@ -146,7 +157,7 @@ async def generate_invoice(
     db: AsyncSession,
 ) -> InvoiceResponse:
     """Raise the invoice for a shipment. Invoices are immutable — a second call is a 409."""
-    shipment = await _get_shipment_or_404(db, shipment_id)
+    shipment, note = await _get_shipment_or_404(db, shipment_id)
 
     existing = (
         await db.execute(select(Invoice).where(Invoice.shipment_id == shipment_id))
@@ -169,8 +180,8 @@ async def generate_invoice(
 
     invoice = Invoice(
         shipment_id=shipment.id,
-        invoice_number=_invoice_number(shipment),
-        invoice_date=shipment.shipment_date,
+        invoice_number=_invoice_number(shipment, note),
+        invoice_date=(note.document_date if note else ""),
         currency="USD",
         subtotal_amount=0,
         tax_amount=_TAX_AMOUNT,
@@ -227,15 +238,15 @@ async def generate_invoice(
         await db.rollback()
         raise _already_invoiced(shipment_id) from None
 
-    contact = await _load_contact(db, shipment.contact_id)
-    return _invoice_response(invoice, lines, shipment, contact)
+    contact = await _load_contact(db, note.partner_id if note else None)
+    return _invoice_response(invoice, lines, note, contact)
 
 
 async def get_invoice_for_shipment(
     shipment_id: int,
     db: AsyncSession,
 ) -> InvoiceResponse:
-    shipment = await _get_shipment_or_404(db, shipment_id)
+    _, note = await _get_shipment_or_404(db, shipment_id)
 
     invoice = (
         await db.execute(select(Invoice).where(Invoice.shipment_id == shipment_id))
@@ -252,5 +263,5 @@ async def get_invoice_for_shipment(
         )
     ).scalars().all()
 
-    contact = await _load_contact(db, shipment.contact_id)
-    return _invoice_response(invoice, list(lines), shipment, contact)
+    contact = await _load_contact(db, note.partner_id if note else None)
+    return _invoice_response(invoice, list(lines), note, contact)

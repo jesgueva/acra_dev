@@ -8,7 +8,8 @@
     "contacts": "Contacts",
     "shippingNav": "Shipping",
     "language": "Language",
-    "logout": "Logout"
+    "logout": "Logout",
+    "deliveryNotes": "Delivery Notes"
   },
   "auth": {
     "login": "Login",
@@ -232,7 +233,8 @@
     "provider": "Provider",
     "carrier": "Carrier",
     "noContacts": "No contacts found.",
-    "deleteConfirm": "Are you sure you want to delete this contact?"
+    "deleteConfirm": "Are you sure you want to delete this contact?",
+    "transfer": "Transfer Partner"
   },
   "products": {
     "title": "Products",
@@ -272,8 +274,8 @@
     "items": "Items",
     "productName": "Product",
     "lotNumber": "Lot #",
-    "transfer": "Transfer",
     "directCustomer": "Direct Customer",
+    "transfer": "Transfer",
     "source": "Source",
     "sourcePlaceholder": "e.g. SC",
     "sourceHint": "Originating stock location. Direct Customer shipments only.",
@@ -303,6 +305,30 @@
     "dateFormat": "MM/DD/YYYY",
     "comingSoon": "Coming Soon",
     "underDevelopment": "This module is under active development.",
-    "accessDenied": "You do not have permission to view this page."
+    "accessDenied": "You do not have permission to view this page.",
+    "previous": "Previous",
+    "next": "Next"
+  },
+  "deliveryNotes": {
+    "title": "Delivery Notes",
+    "subtitle": "Every stock movement attaches to a delivery note.",
+    "documentNumber": "Document #",
+    "documentDate": "Date",
+    "partner": "Partner",
+    "type": "Type",
+    "provenance": "Provenance",
+    "source": "Source",
+    "inbound": "Inbound",
+    "transfer": "Transfer",
+    "directCustomer": "Direct Customer",
+    "internal": "Internal",
+    "uploaded": "Uploaded",
+    "systemGenerated": "System",
+    "allTypes": "All types",
+    "filterType": "Filter by type",
+    "dateFrom": "From",
+    "dateTo": "To",
+    "clearFilters": "Clear filters",
+    "noNotes": "No delivery notes found."
   }
 }

@@ -44,6 +44,10 @@ class DeliveryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    delivery_note_id: Optional[int] = None
+    # `contact_id`, `delivery_date` and `bol_reference` are projected from the linked delivery
+    # note, which is their only storage location since migration 011. Kept flat here so the
+    # shipped receiving UI and its API contract are unchanged.
     contact_id: Optional[int] = None
     contact_name: Optional[str] = None   # denormalized
     carrier_id: Optional[int] = None
