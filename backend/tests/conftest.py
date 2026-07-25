@@ -1,8 +1,28 @@
 import itertools
+import os
 from unittest.mock import AsyncMock, MagicMock
+
+import asyncpg
+import pytest
 
 from app.core.security import hash_password
 from app.models.user import User
+
+# Live-DB tests (schema, seeded privileges) read the same connection the app does. Defaults to the
+# port backend/.env uses locally, since pytest does not load that file; export DATABASE_URL when
+# Postgres is elsewhere (KI-01).
+PG_DSN = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5434/acra_db",
+).replace("postgresql+asyncpg://", "postgresql://")
+
+
+@pytest.fixture
+async def conn():
+    """asyncpg connection to a database with migrations applied."""
+    connection = await asyncpg.connect(PG_DSN)
+    yield connection
+    await connection.close()
 
 
 def _make_user(

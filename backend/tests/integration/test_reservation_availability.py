@@ -33,7 +33,7 @@ from app.services import reservation_service
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/acra_db",
+    "postgresql+asyncpg://postgres:postgres@localhost:5434/acra_db",
 )
 
 # RSK-04 — the availability aggregation must stay cheap at volume.

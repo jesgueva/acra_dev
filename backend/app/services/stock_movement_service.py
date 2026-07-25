@@ -1,8 +1,12 @@
 """Phase 2 — stock-movement ledger service (skeleton).
 
 Defines the service interface the ledger will expose; behavior lands in Sprint II. Keeping the
-signatures here lets dependent surfaces (receiving, production close, shipment) be wired against a
-stable contract before the implementation exists.
+signatures here lets dependent surfaces (receiving, production close, shipment) be wired up before
+the implementation exists.
+
+These signatures key on ``(item, state)``, but the ledger's real key is ``(item, state, location)``
+— ``location`` lands with the ``Location`` table in Sprint II, so expect one more required argument
+here. Callers written against the current shape will need updating.
 """
 
 from app.models.stock_movement import MovementType, StockState

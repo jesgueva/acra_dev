@@ -35,6 +35,7 @@ Last reviewed: **2026-06-23** (Hard Stop 3 validation review) · Owner role key:
 | ISS-03 | `POST /api/v1/deliveries` creates inventory lots without a `lot_number`, so `GET /api/v1/inventory/trace/{lot_number}` cannot resolve API-received lots (storage-layer provenance via `source_delivery_item_id` is intact). | Med | Assign a lot number on receipt in `delivery_service.create_delivery`; documented as KI-07. | Lead Dev | Open | 2026-06-23 | 2026-06-23 |
 | ISS-04 | `shipping.*` privileges are seeded to no role (migration `002`), so the implemented shipment endpoints return 403 for all users — the shipping backend is RBAC-orphaned. | Med | Add `shipping.create`/`shipping.view` to the role-privilege seed; documented as KI-08. | Lead Dev | Open | 2026-06-23 | 2026-06-23 |
 | ISS-05 | OCR line-item extraction is layout-sensitive (1/3 rows on a cramped table, 3/3 on a gridded one); header-field extraction is robust. | Low | Validate against real client BOLs under the RSK-03 accuracy gate; documented as KI-09. | Lead Dev | Monitoring | 2026-06-23 | 2026-06-23 |
+| ISS-06 | Three divergent stock-drawdown implementations. ACR-30's negative control demonstrates in CI that the unguarded read-modify-write shape loses updates — and that is the shape `inventory_service.adjust_quantity` and `shipment_service.create_shipment` still use, while `allocation_service` uses the SERIALIZABLE approach ADR-02 rejects. Only the worksheet close is guarded. | Med | Apply the ADR-02 protocol to the remaining drawdown paths, or converge them on one helper when the ledger lands (ACR-31). | Lead Dev | Open | 2026-07-23 | 2026-07-23 |
 
 ## Change log for this register
 - **2026-06-16** — Register created at the Sprint I baseline. Seeded design risks RSK-01…RSK-06
@@ -45,3 +46,9 @@ Last reviewed: **2026-06-23** (Hard Stop 3 validation review) · Owner role key:
   extraction layout-sensitive). Added issues ISS-03 (received lots lack `lot_number`), ISS-04
   (shipping privileges unseeded), ISS-05 (OCR layout sensitivity), all surfaced by the validation
   run (`scripts/validation-run.sh`) and documented in `KNOWN_ISSUES.md` (KI-07…KI-09).
+- **2026-07-23** — ACR-30 concurrency spike. RSK-01 Open → **Mitigating**: the close protocol is
+  decided (ADR-02 in `architecture.md`) and proven by TC-02 against real Postgres. It stays
+  Mitigating rather than Resolved because the guarantee is proven for the **lot-centric** model;
+  the zero-row `FOR UPDATE` gap means the append-only ledger needs an advisory lock or balance
+  anchor before ACR-31 can inherit it. The spike also fixed two contention-only defects in the
+  close path (ORM attributes read after `rollback()` expired them, which surfaced as 500s).

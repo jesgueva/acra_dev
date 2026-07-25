@@ -7,20 +7,37 @@ from app.core.database import Base
 
 
 class LotStatus(str, Enum):
-    """Where a lot sits in its lifecycle — mirrors the ``inventory_lots.status`` constraint below.
+    """Where a lot sits in its lifecycle — the *lifecycle* axis.
 
-    Reservations (ACR-27) key on this axis because it is what the lot-centric model actually
-    stores today. It is deliberately independent of ``app.models.stock_movement.StockState``:
-    that enum describes the not-yet-built Phase 2 ledger and is being re-keyed onto a material
-    axis by ACR-26, so coupling reservations to it would make them churn with an unshipped
-    redesign. The Sprint II ledger migration converts lot statuses and reservation states
-    together.
+    Distinct from :class:`app.models.stock_movement.StockState`, which is the *material* axis
+    (RAW_MATERIAL → WORK_IN_PROGRESS → FINISHED_GOOD). The two are orthogonal: a lot is
+    ``IN_STORAGE`` *and* raw material at the same time. Conflating them was the ACR-26 defect —
+    see ``acra_docs/reference/target_schema.md`` §2.
+
+    This axis is what the lot-centric model actually stores today. It is the source of truth for
+    ``InventoryLot.status`` — the column default and its check constraint are both derived from the
+    members below, so the enum and the database can no longer disagree. Service-layer queries still
+    compare against string literals (``allocation_service``, ``work_order_service``,
+    ``shipment_service``, ``delivery_service``); migrating those to this enum is follow-up work.
+
+    Reservations (ACR-27) key on this axis rather than re-declaring the vocabulary, and
+    deliberately not on ``StockState``: that enum describes the not-yet-built Phase 2 ledger, so
+    coupling reservations to it would make them churn with an unshipped redesign.
+
+    The Sprint II ledger migration converts lot statuses and reservation states to the material axis
+    **together**; until then, code that reads ``inventory_lots`` uses this enum and code that
+    describes the future ledger uses ``StockState``.
     """
 
     IN_STORAGE = "in_storage"
     IN_PRODUCTION = "in_production"
     SHIPPED = "shipped"
     CONSUMED = "consumed"
+
+    @classmethod
+    def values(cls) -> tuple[str, ...]:
+        """Member values in declaration order — for defaults and check constraints."""
+        return tuple(member.value for member in cls)
 
 
 class InventoryLot(Base):
@@ -30,7 +47,7 @@ class InventoryLot(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
     lot_number = Column(String(100), nullable=True)
     storage_location = Column(String(100), nullable=True)
-    status = Column(String(20), nullable=False, server_default="in_storage")
+    status = Column(String(20), nullable=False, server_default=LotStatus.IN_STORAGE.value)
     quantity_on_hand = Column(Integer, nullable=False, server_default="0")
     source_delivery_item_id = Column(
         Integer,
@@ -41,7 +58,7 @@ class InventoryLot(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('in_storage', 'in_production', 'shipped', 'consumed')",
+            "status IN ({})".format(", ".join(f"'{v}'" for v in LotStatus.values())),
             name="ck_inventory_lots_status",
         ),
         CheckConstraint("quantity_on_hand >= 0", name="ck_inventory_lots_qty"),

@@ -69,6 +69,11 @@ ROLE_DEFINITIONS: dict[str, dict[str, object]] = {
             "users.manage",
             "audit.view",
             "master_data.manage",
+            "production.worksheet.view",
+            "production.worksheet.create",
+            "production.worksheet.close",
+            "shipping.view",
+            "shipping.create",
         },
     },
     "receiving_clerk": {
@@ -78,6 +83,8 @@ ROLE_DEFINITIONS: dict[str, dict[str, object]] = {
             "receiving.view",
             "deliveries.create",
             "deliveries.view",
+            "shipping.view",
+            "shipping.create",
         },
     },
     "production_supervisor": {
@@ -85,12 +92,16 @@ ROLE_DEFINITIONS: dict[str, dict[str, object]] = {
         "privileges": {
             "authenticated",
             "inventory.view",
+            "shipping.view",
             "work_orders.view",
             "work_orders.create",
             "work_orders.assign",
             "work_orders.status_update",
             "work_orders.sequence",
             "work_orders.allocate",
+            "production.worksheet.view",
+            "production.worksheet.create",
+            "production.worksheet.close",
         },
     },
     "machine_operator": {

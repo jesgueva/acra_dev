@@ -1,6 +1,8 @@
 import React from "react";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useAuth } from "@/src/contexts/AuthContext";
+import { PRIVILEGES } from "@/src/lib/privileges";
 import { ShippingView } from "../ShippingView";
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
@@ -47,8 +49,16 @@ jest.mock("@/src/lib/api-client", () => ({
   apiClient: { get: jest.fn(), post: jest.fn() },
 }));
 
+// ShippingView gates the create button on shipping.create (ACR-35), so the view needs an auth
+// context. Mock it rather than wrapping in AuthProvider — the rest of this file mocks at module
+// level too.
+jest.mock("@/src/contexts/AuthContext", () => ({
+  useAuth: jest.fn(),
+}));
+
 const mockUseQuery = useQuery as jest.Mock;
 const mockUseMutation = useMutation as jest.Mock;
+const mockUseAuth = useAuth as jest.Mock;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -141,6 +151,22 @@ const mutate = jest.fn();
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockUseAuth.mockReturnValue({
+    user: {
+      user_id: 1,
+      full_name: "Test User",
+      roles: ["production_supervisor"],
+      preferred_language: "en",
+      effective_privileges: [PRIVILEGES.SHIPPING_VIEW, PRIVILEGES.SHIPPING_CREATE],
+    },
+    token: "tok",
+    isAuthenticated: true,
+    authResolved: true,
+    login: jest.fn(),
+    logout: jest.fn(),
+    hasPrivilege: (p: string) =>
+      [PRIVILEGES.SHIPPING_VIEW, PRIVILEGES.SHIPPING_CREATE].includes(p),
+  });
   mockUseMutation.mockReturnValue({ mutate, isPending: false });
   setupQueries();
 });

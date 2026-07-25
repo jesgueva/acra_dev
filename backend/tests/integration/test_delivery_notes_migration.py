@@ -30,9 +30,12 @@ pytestmark = pytest.mark.asyncio
 
 
 def _dsn_parts():
-    raw = os.environ.get("DATABASE_URL")
-    if not raw:
-        pytest.skip("DATABASE_URL not set")
+    # Same default as the rest of the suite: the port backend/.env uses locally, since pytest does
+    # not load that file. Migrations run against a scratch database, never the one named here, and
+    # _connect() below degrades to a skip when no Postgres is listening.
+    raw = os.environ.get(
+        "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5434/acra_db"
+    )
     # alembic/SQLAlchemy use the +asyncpg dialect prefix; asyncpg itself does not.
     dsn = raw.replace("postgresql+asyncpg://", "postgresql://")
     m = re.match(r"postgresql://([^:]+):([^@]+)@([^:/]+):(\d+)/(.+)", dsn)

@@ -209,6 +209,63 @@ async def test_list_shipments_no_auth_returns_401():
 
 
 # ---------------------------------------------------------------------------
+# HTTP Test 5 — GET /shipments/{id} → 200
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_get_shipment_returns_200():
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session(privileges=("shipping.view",))
+
+    with patch(
+        "app.services.shipment_service.get_shipment",
+        new=AsyncMock(return_value=_make_mock_shipment_response()),
+    ):
+        app.dependency_overrides[get_db] = _override(session)
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+                resp = await client.get(
+                    "/api/v1/shipments/1",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            assert resp.status_code == 200
+            assert resp.json()["bol_number"] == "AV26-0001"
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+
+# ---------------------------------------------------------------------------
+# RBAC Tests 6-8 — ACR-35: the privileges are seeded, so the negative paths matter.
+# A caller holding one shipping privilege must not inherit the other.
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "held,method,path,required",
+    [
+        # Holding one shipping privilege must not confer the other.
+        (("shipping.view",), "post", "/api/v1/shipments", "shipping.create"),
+        (("shipping.create",), "get", "/api/v1/shipments/1", "shipping.view"),
+        # A caller with no shipping privilege at all reaches nothing.
+        (("work_orders.view",), "get", "/api/v1/shipments", "shipping.view"),
+    ],
+)
+async def test_shipment_endpoints_reject_missing_privilege(held, method, path, required):
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session(privileges=held)
+    kwargs = {"json": _VALID_BODY} if method == "post" else {}
+
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+            resp = await getattr(client, method)(
+                path, headers={"Authorization": f"Bearer {token}"}, **kwargs
+            )
+        assert resp.status_code == 403
+        assert required in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+# ---------------------------------------------------------------------------
 # Service Test 5 — create_shipment happy path: deducts stock + writes txn
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
