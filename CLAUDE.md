@@ -73,6 +73,12 @@ cd frontend && npm run build
 # Option B — Docker Compose (repo root): Postgres is exposed on host port 5433
 # Set DATABASE_URL / NEXT_PUBLIC_API_URL accordingly, e.g.:
 # postgresql+asyncpg://postgres:postgres@localhost:5433/acra_db
+
+# If 5433 is already taken, or you need a second worktree's DB up at the same time,
+# override the port and container name instead of editing docker-compose.yml:
+# ACRA_DB_PORT=5435 ACRA_DB_CONTAINER=acra-pg-mybranch COMPOSE_PROJECT_NAME=mybranch \
+#   docker compose up -d
+# (COMPOSE_PROJECT_NAME also namespaces the volume, so branches don't share data.)
 ```
 
 ## Environment Variables

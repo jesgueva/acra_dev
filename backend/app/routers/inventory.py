@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.rbac import require_privilege
+from app.models.inventory import LotStatus
 from app.schemas.auth import TokenUser
 from app.schemas.inventory import (
     InventoryAdjust,
@@ -20,7 +21,8 @@ from app.schemas.inventory import (
     LowStockAlertResponse,
     TraceabilityResponse,
 )
-from app.services import inventory_service
+from app.schemas.reservation import AvailabilityResponse
+from app.services import inventory_service, reservation_service
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
@@ -59,6 +61,21 @@ async def export_csv(
         content=content,
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=inventory.csv"},
+    )
+
+
+@router.get("/availability", response_model=AvailabilityResponse)
+async def get_availability(
+    product_id: int = Query(..., description="The item to report on"),
+    state: LotStatus = Query(LotStatus.IN_STORAGE),
+    current_user: TokenUser = Depends(require_privilege("inventory.view")),
+    db: AsyncSession = Depends(get_db),
+) -> AvailabilityResponse:
+    """``on_hand`` / ``reserved`` / ``available`` for one ``(item, state)`` pair."""
+    return await reservation_service.availability(
+        db=db,
+        product_id=product_id,
+        state=state,
     )
 
 

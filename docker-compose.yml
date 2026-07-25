@@ -1,13 +1,16 @@
 services:
   db:
     image: postgres:15
-    container_name: acra-postgres
+    # Overridable so a second worktree (or a host that already has 5433 taken by an
+    # unrelated stack) can bring this up without editing a tracked file. Defaults are
+    # the documented ones, so the plain `docker compose up -d` is unchanged.
+    container_name: ${ACRA_DB_CONTAINER:-acra-postgres}
     environment:
       POSTGRES_DB: acra_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5433:5432"
+      - "${ACRA_DB_PORT:-5433}:5432"
     volumes:
       - acra-postgres-data:/var/lib/postgresql/data
     healthcheck:

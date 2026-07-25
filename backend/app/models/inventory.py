@@ -18,8 +18,11 @@ class LotStatus(str, Enum):
     ``InventoryLot.status`` — the column default and its check constraint are both derived from the
     members below, so the enum and the database can no longer disagree. Service-layer queries still
     compare against string literals (``allocation_service``, ``work_order_service``,
-    ``shipment_service``, ``delivery_service``); migrating those to this enum is follow-up work, and
-    ACR-27 reservations should key on it rather than re-declaring the vocabulary.
+    ``shipment_service``, ``delivery_service``); migrating those to this enum is follow-up work.
+
+    Reservations (ACR-27) key on this axis rather than re-declaring the vocabulary, and
+    deliberately not on ``StockState``: that enum describes the not-yet-built Phase 2 ledger, so
+    coupling reservations to it would make them churn with an unshipped redesign.
 
     The Sprint II ledger migration converts lot statuses and reservation states to the material axis
     **together**; until then, code that reads ``inventory_lots`` uses this enum and code that

@@ -20,9 +20,7 @@ async def create_worksheet(
     current_user: TokenUser = Depends(require_privilege("production.worksheet.create")),
     db: AsyncSession = Depends(get_db),
 ) -> WorksheetResponse:
-    return await production_worksheet_service.create_worksheet(
-        db=db, body=body, current_user=current_user
-    )
+    return await production_worksheet_service.create_worksheet(db, body, current_user)
 
 
 @router.get("/{worksheet_id}", response_model=WorksheetResponse)
@@ -31,7 +29,7 @@ async def get_worksheet(
     current_user: TokenUser = Depends(require_privilege("production.worksheet.view")),
     db: AsyncSession = Depends(get_db),
 ) -> WorksheetResponse:
-    return await production_worksheet_service.get_worksheet(db=db, worksheet_id=worksheet_id)
+    return await production_worksheet_service.get_worksheet(db, worksheet_id)
 
 
 @router.post("/{worksheet_id}/close", response_model=WorksheetResponse)
@@ -41,6 +39,11 @@ async def close_worksheet(
     current_user: TokenUser = Depends(require_privilege("production.worksheet.close")),
     db: AsyncSession = Depends(get_db),
 ) -> WorksheetResponse:
+    """Close the worksheet, consuming actual quantities from stock.
+
+    Returns 409 when another close won the race (stale ``expected_version``), when the worksheet is
+    already closed, or when stock is insufficient.
+    """
     return await production_worksheet_service.close_worksheet(
-        db=db, worksheet_id=worksheet_id, body=body, current_user=current_user
+        db, worksheet_id, body, current_user
     )
