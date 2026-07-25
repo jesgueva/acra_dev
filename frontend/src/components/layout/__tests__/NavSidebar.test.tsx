@@ -56,9 +56,39 @@ test("hides all nav links when user has no privileges", () => {
   expect(screen.queryByText("nav.receiving")).not.toBeInTheDocument();
   expect(screen.queryByText("nav.inventory")).not.toBeInTheDocument();
   expect(screen.queryByText("nav.workOrders")).not.toBeInTheDocument();
+  expect(screen.queryByText("nav.shippingNav")).not.toBeInTheDocument();
   expect(screen.queryByText("nav.users")).not.toBeInTheDocument();
   expect(screen.queryByText("nav.audit")).not.toBeInTheDocument();
   expect(screen.getByText("nav.logout")).toBeInTheDocument();
+});
+
+test("shows the Shipping link to a user holding shipping.view", () => {
+  mockUseAuth.mockReturnValue(makeAuth([PRIVILEGES.SHIPPING_VIEW]));
+
+  render(<NavSidebar />);
+
+  expect(screen.getByText("nav.shippingNav").closest("a")).toHaveAttribute(
+    "href",
+    "/en/shipping"
+  );
+});
+
+test("hides the Shipping link from a user without shipping.view", () => {
+  // ACR-35: the entry shipped commented out with a RECEIVING_VIEW placeholder privilege.
+  // Holding every *other* nav privilege must still not surface Shipping.
+  mockUseAuth.mockReturnValue(
+    makeAuth([
+      PRIVILEGES.RECEIVING_VIEW,
+      PRIVILEGES.INVENTORY_VIEW,
+      PRIVILEGES.USERS_MANAGE,
+      PRIVILEGES.AUDIT_VIEW,
+      PRIVILEGES.SHIPPING_CREATE,
+    ])
+  );
+
+  render(<NavSidebar />);
+
+  expect(screen.queryByText("nav.shippingNav")).not.toBeInTheDocument();
 });
 
 test("shows the Users and Audit links to an admin holding both privileges", () => {

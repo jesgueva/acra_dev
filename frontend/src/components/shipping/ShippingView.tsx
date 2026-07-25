@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { apiClient } from "@/src/lib/api-client";
+import { useAuth } from "@/src/contexts/AuthContext";
+import { PRIVILEGES } from "@/src/lib/privileges";
 import { PageHeader } from "@/src/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -97,6 +99,11 @@ export function ShippingView() {
   const t = useTranslations("shipping");
   const tc = useTranslations("common");
   const queryClient = useQueryClient();
+  const { hasPrivilege } = useAuth();
+
+  // `shipping.view` and `shipping.create` are granted separately (ACR-35) — the supervisor reads
+  // the log but cannot book a shipment, so don't offer them a button that would 403 on submit.
+  const canCreate = hasPrivilege(PRIVILEGES.SHIPPING_CREATE);
 
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -243,10 +250,12 @@ export function ShippingView() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader title={t("title")} description={t("subtitle")}>
-        <Button onClick={openCreate}>
-          <Plus className="mr-2 h-4 w-4" />
-          {t("newShipment")}
-        </Button>
+        {canCreate && (
+          <Button onClick={openCreate}>
+            <Plus className="mr-2 h-4 w-4" />
+            {t("newShipment")}
+          </Button>
+        )}
       </PageHeader>
 
       {isLoading && (
