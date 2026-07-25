@@ -16,6 +16,7 @@
 # Flags (env):
 #   SMOKE_SKIP_FRONTEND=1   skip the frontend production build (faster backend-only run)
 #   SMOKE_SKIP_RESET=1      assume DB is already migrated+seeded; do not wipe/reseed
+#   SMOKE_SKIP_DOCKER=1     DB is managed outside docker-compose.yml (parallel worktrees)
 #   SMOKE_BACKEND_PORT=8000 port to boot the backend on (must be free)
 #
 # Requires: Docker + Compose, and backend deps installed (see README "Setup").
@@ -59,7 +60,11 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 step "1/7  Database — start PostgreSQL and apply migrations + seed"
 if [[ "${SMOKE_SKIP_RESET:-0}" == "1" ]]; then
-  docker compose up -d >/dev/null
+  # SMOKE_SKIP_DOCKER=1 — the database is managed outside this compose file. Parallel worktrees
+  # cannot each run it: `container_name: acra-postgres` and host port 5433 are single-occupancy.
+  if [[ "${SMOKE_SKIP_DOCKER:-0}" != "1" ]]; then
+    docker compose up -d >/dev/null
+  fi
   ( cd "$ROOT/backend" && $ALEMBIC upgrade head >/dev/null ) && ok "migrations at head (reset skipped)"
 else
   ./scripts/reset-db-and-seed.sh >/tmp/acra_smoke_db.log 2>&1 && ok "DB reset, migrated, and seeded" \

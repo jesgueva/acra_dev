@@ -29,8 +29,10 @@ const NAV_ITEMS = [
   { key: "receiving" as const, path: "receiving", icon: Truck, privilege: PRIVILEGES.RECEIVING_VIEW },
   { key: "inventory" as const, path: "inventory", icon: Boxes, privilege: PRIVILEGES.INVENTORY_VIEW },
   // { key: "workOrders" as const, path: "work-orders", icon: ClipboardList, privilege: PRIVILEGES.RECEIVING_VIEW },
+  // shipping.view is now granted to company_admin by migration 013 (a one-role slice of
+  // ACR-35), so gating on it no longer hides the link from everyone.
   { key: "shippingNav" as const, path: "shipping", icon: PackageCheck, privilege: PRIVILEGES.SHIPPING_VIEW },
-  // Gated on deliveries.view to match the API it reads, not shipping.view.
+  // Gated on deliveries.view to match the API, which admits deliveries.view OR shipping.view.
   { key: "deliveryNotes" as const, path: "delivery-notes", icon: FileText, privilege: PRIVILEGES.DELIVERIES_VIEW },
   { key: "contacts" as const, path: "master-data/contacts", icon: Database, privilege: PRIVILEGES.RECEIVING_VIEW },
   { key: "users" as const, path: "users", icon: Users, privilege: PRIVILEGES.USERS_MANAGE },

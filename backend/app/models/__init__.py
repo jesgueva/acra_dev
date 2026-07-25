@@ -8,6 +8,7 @@ from app.models.inventory import (
     LotStatus,
     LowStockAlert,
 )
+from app.models.invoice import Invoice, InvoiceLine
 from app.models.production_worksheet import ProductionWorksheet, ProductionWorksheetLine
 from app.models.reservation import ReservationStatus, StockReservation
 from app.models.shipment import Shipment, ShipmentItem
@@ -34,6 +35,8 @@ __all__ = [
     "StockReservation",
     "Shipment",
     "ShipmentItem",
+    "Invoice",
+    "InvoiceLine",
     "WorkOrder",
     "WorkOrderMaterial",
     "MaterialAllocation",

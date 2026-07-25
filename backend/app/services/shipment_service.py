@@ -36,6 +36,7 @@ def _item_response(
         shipment_id=si.shipment_id,
         lot_id=si.lot_id,
         quantity=si.quantity,
+        unit_price=si.unit_price,
         product_name=product_name,
         lot_number=lot.lot_number if lot else None,
     )
@@ -139,6 +140,7 @@ async def create_shipment(
             shipment_id=shipment.id,
             lot_id=item_data.lot_id,
             quantity=item_data.quantity,
+            unit_price=item_data.unit_price,
         )
         db.add(si)
 
