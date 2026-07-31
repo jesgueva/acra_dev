@@ -97,12 +97,20 @@ def _parse_items(raw: list[dict[str, Any]]) -> list[OCRItemResult]:
 
 
 def _build_response(data: dict[str, Any], provider: str) -> OCRResponse:
+    """Shape a provider's raw JSON into the wire response.
+
+    `confidence` is a **header fill rate**, not an accuracy: it counts how many of the four header
+    fields came back non-empty, so four wrong values still score 1.0. It keeps its meaning because
+    the 422 gate and the Gemini→Claude fallback both key off `> 0.0`; `header_fill_rate` carries the
+    same number under an honest name. Measured accuracy comes from the A8-4 bench
+    (`backend/scripts/ocr_bench/`), which scores against a labelled corpus.
+    """
     supplier = data.get("supplier")
     carrier = data.get("carrier")
     bol_reference = data.get("bol_reference")
     delivery_date = data.get("delivery_date")
     filled = sum(1 for v in [supplier, carrier, bol_reference, delivery_date] if v)
-    confidence = round(filled / 4.0, 2)
+    fill_rate = round(filled / 4.0, 2)
     raw_items = data.get("items") or []
     return OCRResponse(
         supplier=supplier,
@@ -110,7 +118,9 @@ def _build_response(data: dict[str, Any], provider: str) -> OCRResponse:
         bol_reference=bol_reference,
         delivery_date=delivery_date,
         items=_parse_items(raw_items),
-        confidence=confidence,
+        confidence=fill_rate,
+        header_fill_rate=fill_rate,
+        provider=provider,
     )
 
 

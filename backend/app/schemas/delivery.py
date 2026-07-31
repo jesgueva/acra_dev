@@ -79,9 +79,27 @@ class OCRItemResult(BaseModel):
 
 
 class OCRResponse(BaseModel):
+    """A BOL extraction.
+
+    On `confidence`: it is the fraction of the four header fields that came back **non-empty** — a
+    measure of *presence*, not of *correctness*. Four wrong header values still score 1.0. It is
+    kept as-is because the endpoint's 422 gate and the Gemini→Claude fallback both key off
+    `> 0.0`, but it must never be read as accuracy. `header_fill_rate` is the same number under a
+    name that says what it actually is.
+
+    Real accuracy is measured out-of-band against a labelled corpus by the A8-4 bench
+    (`backend/scripts/ocr_bench/`), which scores header fields and line items against ground truth.
+    """
+
     supplier: Optional[str] = None
     carrier: Optional[str] = None
     bol_reference: Optional[str] = None
     delivery_date: Optional[str] = None
     items: List[OCRItemResult] = []
     confidence: float = 0.0
+    #: Fraction of the four header fields that are non-empty. The same number as `confidence`,
+    #: named honestly: presence, not correctness.
+    header_fill_rate: float = 0.0
+    #: Which model actually answered — "gemini" or "claude". Without it a caller cannot tell
+    #: whether the primary succeeded or the fallback carried the request.
+    provider: Optional[str] = None

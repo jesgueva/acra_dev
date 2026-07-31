@@ -33,8 +33,15 @@ _GOOD_RESPONSE = OCRResponse(
     carrier="Fast Freight",
     bol_reference="BOL-2026-001",
     delivery_date="01/15/2026",
-    items=[OCRItemResult(material_type="Steel Rod", quantity=50.0, lot_batch_number="LOT-001")],
+    # ACR-36: these were `material_type=` / `lot_batch_number=` — fields OCRItemResult has not had
+    # for some time. Pydantic v2 silently drops unknown kwargs, so the assertions below were
+    # passing against an all-None item. Use the real field names.
+    items=[
+        OCRItemResult(item_name="Steel Rod", quantity=50.0, pallets=2, units_per_pallet=25),
+    ],
     confidence=1.0,
+    header_fill_rate=1.0,
+    provider="gemini",
 )
 
 
@@ -148,16 +155,53 @@ def test_ocr_service_build_response_and_parse_items():
         "bol_reference": "BOL-2026-001",
         "delivery_date": "01/15/2026",
         "items": [
-            {"material_type": "Steel Rod", "quantity": 50.0, "lot_batch_number": "LOT-001"},
-            {"material_type": "Bolt", "quantity": None, "lot_batch_number": None},
+            {"item_name": "Steel Rod", "quantity": 50.0, "pallets": 2, "units_per_pallet": 25},
+            {"item_name": "Bolt", "quantity": None, "pallets": None, "units_per_pallet": None},
         ],
     }
     result = ocr_service._build_response(data, "gemini")
     assert result.supplier == "Acme Metals"
     assert result.confidence == 1.0
     assert len(result.items) == 2
+    # Names, not just quantities: the previous version of this test used field names the schema
+    # dropped, so item identity went unchecked entirely.
+    assert result.items[0].item_name == "Steel Rod"
     assert result.items[0].quantity == 50.0
+    assert result.items[0].pallets == 2
+    assert result.items[1].item_name == "Bolt"
     assert result.items[1].quantity is None
+
+
+def test_build_response_reports_the_answering_provider():
+    """ACR-36: `provider` was accepted by _build_response and thrown away."""
+    data = {"supplier": "Acme Metals", "items": []}
+    assert ocr_service._build_response(data, "gemini").provider == "gemini"
+    assert ocr_service._build_response(data, "claude").provider == "claude"
+
+
+def test_header_fill_rate_mirrors_confidence():
+    data = {"supplier": "Acme Metals", "carrier": "Fast Freight", "items": []}
+    result = ocr_service._build_response(data, "gemini")
+    assert result.header_fill_rate == result.confidence == 0.5
+
+
+def test_confidence_measures_presence_not_correctness():
+    """The defect A8-4 exists to expose, pinned at the unit level.
+
+    Four header values that are all wrong still score 1.0, because the number counts non-empty
+    fields. This test documents the semantics rather than asserting they are good — real accuracy
+    is measured by `scripts/ocr_bench` against ground truth.
+    """
+    nonsense = {
+        "supplier": "wrong",
+        "carrier": "also wrong",
+        "bol_reference": "wrong again",
+        "delivery_date": "not a date",
+        "items": [],
+    }
+    result = ocr_service._build_response(nonsense, "gemini")
+    assert result.confidence == 1.0
+    assert result.header_fill_rate == 1.0
 
 
 def test_ocr_service_extract_with_gemini():
@@ -178,6 +222,7 @@ def test_ocr_service_extract_with_gemini():
 
     assert result.bol_reference == "BOL-001"
     assert result.confidence == 1.0
+    assert result.provider == "gemini"
     mock_client.models.generate_content.assert_called_once()
 
 
@@ -200,6 +245,8 @@ def test_ocr_service_extract_with_claude_jpeg_and_pdf():
 
     assert result_jpeg.bol_reference == "BOL-001"
     assert result_pdf.bol_reference == "BOL-001"
+    assert result_jpeg.provider == "claude"
+    assert result_pdf.provider == "claude"
     assert mock_client.messages.create.call_count == 2
 
 
@@ -212,3 +259,93 @@ def test_ocr_service_gemini_zero_confidence_falls_back_to_claude():
 
     assert result.confidence == 1.0
     assert result.supplier == "Acme Metals"
+
+
+def test_fallback_reports_claude_through_the_real_build_path():
+    """A genuine Gemini failure must surface `provider == "claude"`.
+
+    Patched at the *client* boundary rather than at `_extract_with_*`, so the provider label comes
+    from the real `_build_response` call instead of from a mock's return value.
+    """
+    tool_input = {
+        "supplier": "Acme Metals",
+        "carrier": "Fast Freight",
+        "bol_reference": "BOL-001",
+        "delivery_date": "01/15/2026",
+        "items": [],
+    }
+    claude_response = MagicMock()
+    claude_response.content = [MagicMock(input=tool_input)]
+    claude_client = MagicMock()
+    claude_client.messages.create.return_value = claude_response
+
+    gemini_client = MagicMock()
+    gemini_client.models.generate_content.side_effect = RuntimeError("gemini is down")
+
+    with (
+        patch("app.services.ocr_service._get_gemini_client", return_value=gemini_client),
+        patch("app.services.ocr_service._get_anthropic_client", return_value=claude_client),
+    ):
+        result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
+
+    assert result.provider == "claude"
+    assert result.bol_reference == "BOL-001"
+
+
+def test_total_failure_reports_no_provider():
+    gemini_client = MagicMock()
+    gemini_client.models.generate_content.side_effect = RuntimeError("gemini is down")
+    claude_client = MagicMock()
+    claude_client.messages.create.side_effect = RuntimeError("claude is down too")
+
+    with (
+        patch("app.services.ocr_service._get_gemini_client", return_value=gemini_client),
+        patch("app.services.ocr_service._get_anthropic_client", return_value=claude_client),
+    ):
+        result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
+
+    assert result.confidence == 0.0
+    assert result.provider is None
+
+
+@pytest.mark.asyncio
+async def test_ocr_endpoint_surfaces_provider_and_fill_rate_on_the_wire():
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session(privileges=("deliveries.create",))
+
+    with patch("app.services.ocr_service.process_image_bytes", return_value=_GOOD_RESPONSE):
+        app.dependency_overrides[get_db] = _override(session)
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+                resp = await client.post(
+                    "/api/v1/deliveries/ocr",
+                    files={"file": ("bol.jpg", _small_jpeg_bytes(), "image/jpeg")},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["provider"] == "gemini"
+            assert body["header_fill_rate"] == 1.0
+            assert body["items"][0]["item_name"] == "Steel Rod"
+            assert body["items"][0]["pallets"] == 2
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_ocr_endpoint_without_privilege_returns_403():
+    """RBAC negative path — the endpoint requires `deliveries.create`."""
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session(privileges=("deliveries.view",))
+
+    app.dependency_overrides[get_db] = _override(session)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+            resp = await client.post(
+                "/api/v1/deliveries/ocr",
+                files={"file": ("bol.jpg", _small_jpeg_bytes(), "image/jpeg")},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert resp.status_code == 403
+    finally:
+        app.dependency_overrides.pop(get_db, None)
