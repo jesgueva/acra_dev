@@ -155,8 +155,10 @@ makes; partially drawn lots stay `IN_STORAGE`.
 
 ## Verified version snapshot
 
-Pinned/verified for the `v0.2.0-sprint1-baseline` tag (see `submissions` evidence in the docs
-archive). Nearby versions are expected to work; these are what the baseline was smoke-tested on.
+These are the **declared** versions, not merely the ones the baseline happened to be tested on.
+Python comes from `backend/pyproject.toml` (`requires-python`) and Node from `.nvmrc`;
+`backend/tests/test_packaging.py` fails the build if this table, the README, or CI drifts from
+them (ACR-42 / A10-4).
 
 | Component | Version |
 |---|---|
@@ -167,5 +169,10 @@ archive). Nearby versions are expected to work; these are what the baseline was 
 | Next.js / React | 16 / 19 |
 | Docker / Compose | 29 / v5 |
 
-Backend dependencies are pinned in `backend/requirements.txt`; frontend in
-`frontend/package-lock.json`.
+Backend dependencies: `backend/requirements.txt` holds the **direct** dependencies, every one
+exactly pinned; `backend/requirements.lock` holds the full resolved transitive closure and is what
+CI and the container images install from. Frontend: `frontend/package-lock.json`.
+
+> Until ACR-42, `google-genai` and `anthropic` were the two lines in `requirements.txt` carrying a
+> `>=` range rather than a pin — and two developer virtualenvs built from that same file were
+> measured running `anthropic` **0.119.0** and **0.109.2**. Same spec, different code.

@@ -28,12 +28,16 @@ Docker Compose for local infrastructure.
 
 ## Prerequisites
 
-Install these before you start. Versions below are what the baseline was verified against
-(see [`docs/architecture.md`](docs/architecture.md) for the full snapshot); nearby versions work.
+**If you run the stack with Docker (below), you only need Docker and git** — Python and Node come
+from the images.
 
-- **Python** ≥ 3.11 (verified on 3.13)
-- **Node.js** ≥ 20 (verified on 24) + npm
-- **Docker** with the Compose plugin (`docker compose`) — used for PostgreSQL
+For a local (non-container) install, these are the supported versions. They are the *only* versions
+named anywhere in this repo — `backend/pyproject.toml` and `.nvmrc` are the machine-readable source
+of truth, and `backend/tests/test_packaging.py` fails the build if a doc drifts from them.
+
+- **Python** 3.13 — declared in [`backend/pyproject.toml`](backend/pyproject.toml)
+- **Node.js** 24 + npm — declared in [`.nvmrc`](.nvmrc) / [`frontend/.nvmrc`](frontend/.nvmrc)
+- **Docker** with the Compose plugin (`docker compose`)
 - **git**
 
 You do **not** need a local PostgreSQL install — Docker Compose provides it on host port **5433**.
