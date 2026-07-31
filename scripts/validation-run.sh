@@ -121,6 +121,17 @@ say "    6d  Comparative concurrency study (A8-5)"
   && echo "  Concurrency ablation captured" \
   || { echo "  Concurrency ablation FAILED (see concurrency-bench.log)"; tail -5 "$OUT/concurrency-bench.log"; }
 
+say "    6e  Aggregation benchmark at volume (A8-6)"
+# Also self-provenanced, so no hdr() wrapper. A reduced sweep: the committed evidence run goes to
+# 200 000 lots, which takes several minutes and is not what a validation pass is for. Safe against
+# the seeded database — every row it creates is tagged storage_location='A86-BENCH' and torn down,
+# and the index it creates for the with-index arm is dropped again on the way out.
+( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/aggregation_bench.py" "$OUT" \
+    --lot-steps 1000,10000 --samples 50 ) \
+  > "$OUT/aggregation-bench.log" 2>&1 \
+  && echo "  Aggregation benchmark captured" \
+  || { echo "  Aggregation benchmark FAILED (see aggregation-bench.log)"; tail -5 "$OUT/aggregation-bench.log"; }
+
 say "7/7  Done"
 kill "$BPID" 2>/dev/null; BPID=""
 rm -f "$OUT/.reseed.log" "$OUT/.backend.log"
