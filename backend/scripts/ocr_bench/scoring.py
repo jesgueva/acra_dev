@@ -13,7 +13,9 @@ Three numbers come out, deliberately kept separate rather than blended:
 * **numeric accuracy** — quantity / pallets / units-per-pallet within *matched* rows only, so a
   missed row is not double-counted as a numeric error.
 
-Everything here is pure and offline: no network, no API keys, no database. Stdlib only.
+Everything here is pure and offline: no network, no API keys, no database. Stdlib only at import
+time — the one shared helper it borrows (`app.core.benchmark.percentiles`) is imported lazily,
+so this module stays usable without loading the FastAPI app's settings.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from functools import cached_property
 from difflib import SequenceMatcher
 from typing import Any, Iterable, Sequence
 
@@ -75,12 +78,21 @@ def normalize_text(value: str | None) -> str:
     return _WS.sub(" ", _PUNCT.sub("", stripped)).strip().casefold()
 
 
-def similarity(left: str | None, right: str | None) -> float:
-    """Normalized similarity in [0, 1]. Two empty strings are dissimilar, not identical."""
-    a, b = normalize_text(left), normalize_text(right)
+def _ratio_of(a: str, b: str) -> float:
+    """Similarity of two **already normalized** strings.
+
+    Two empty strings score 0.0, not 1.0: a model that returns nothing must not be credited with a
+    perfect match against a missing value. That rule lives here so the pairwise loop in
+    `align_items` and the one-shot `similarity()` cannot disagree about it.
+    """
     if not a or not b:
         return 0.0
     return SequenceMatcher(None, a, b).ratio()
+
+
+def similarity(left: str | None, right: str | None) -> float:
+    """Normalized similarity in [0, 1]. Two empty strings are dissimilar, not identical."""
+    return _ratio_of(normalize_text(left), normalize_text(right))
 
 
 def parse_date(value: Any) -> date | None:
@@ -247,12 +259,14 @@ class CorpusScore:
 
     documents: list[BolScore] = field(default_factory=list)
 
-    @property
+    # cached: `documents` is populated once by `score_corpus` and never mutated afterwards, and
+    # one `to_dict()` would otherwise re-filter it 16 times.
+    @cached_property
     def succeeded(self) -> list[BolScore]:
         """Documents that returned an extraction — the only ones accuracy is computed over."""
         return [d for d in self.documents if d.error is None]
 
-    @property
+    @cached_property
     def failed(self) -> list[BolScore]:
         return [d for d in self.documents if d.error is not None]
 
@@ -303,13 +317,22 @@ class CorpusScore:
         otherwise flatter the percentiles."""
         return sorted(d.latency_ms for d in self.succeeded if d.latency_ms is not None)
 
-    def latency_percentile(self, pct: float) -> float | None:
-        """Nearest-rank percentile. Returns None when nothing was timed."""
+    def latency_percentile(self, pct: int) -> float | None:
+        """Nearest-rank percentile. Returns None when nothing was timed.
+
+        Delegates the maths to `app.core.benchmark.percentiles`, which is where A8-2 defined the
+        nearest-rank convention (`rank = ceil(p/100 x n)`, no interpolation) for every ACRA
+        benchmark. Re-deriving it here would let this bench's published numbers drift from the
+        other A8 artifacts'.
+        """
+        # Imported lazily: `app.core.benchmark` pulls in `app.core.config`, and this module is
+        # deliberately importable without the FastAPI app's settings.
+        from app.core.benchmark import percentiles
+
         samples = self.latencies_ms
         if not samples:
             return None
-        rank = max(1, min(len(samples), _ceil(pct / 100.0 * len(samples))))
-        return round(samples[rank - 1], 1)
+        return round(percentiles(samples, (pct,))[pct], 1)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -334,10 +357,6 @@ class CorpusScore:
 
 def _ratio(numerator: int, denominator: int) -> float:
     return 0.0 if denominator == 0 else round(numerator / denominator, 4)
-
-
-def _ceil(value: float) -> int:
-    return int(value) if value == int(value) else int(value) + 1
 
 
 def score_header(spec: BolSpec, extraction: Any) -> dict[str, bool]:
@@ -397,10 +416,15 @@ def align_items(
     hallucinating one each affect only the rows involved. Every row is consumable once, so a single
     extracted row cannot satisfy two expected rows.
     """
+    # Normalize each name once rather than once per pair: `similarity()` normalizes both sides on
+    # every call, so the n x m matrix re-normalized the same few strings n and m times over.
+    expected_names = [normalize_text(exp.item_name) for exp in expected]
+    actual_names = [normalize_text(_attr(act, "item_name")) for act in actual]
+
     candidates = [
-        (similarity(exp.item_name, _attr(act, "item_name")), i, j)
-        for i, exp in enumerate(expected)
-        for j, act in enumerate(actual)
+        (_ratio_of(a, b), i, j)
+        for i, a in enumerate(expected_names)
+        for j, b in enumerate(actual_names)
     ]
     # Sort by similarity desc, then by index for a deterministic result on ties.
     candidates.sort(key=lambda c: (-c[0], c[1], c[2]))
