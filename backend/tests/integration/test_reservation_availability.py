@@ -13,7 +13,6 @@ torn down in a different event loop than the test body, which breaks asyncpg wit
 """
 import asyncio
 import os
-import statistics
 import time
 from contextlib import asynccontextmanager
 
@@ -22,6 +21,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from app.core.benchmark import percentiles
 from app.models.audit import AuditLog
 from app.models.contact import Contact  # noqa: F401 — registers products.contact_id's FK target
 from app.models.inventory import InventoryLot, InventoryTransaction, LotStatus
@@ -340,12 +340,13 @@ async def test_availability_latency_budget():
             )
             timings_ms.append((time.perf_counter() - start) * 1000)
 
-        timings_ms.sort()
-        p95 = timings_ms[int(len(timings_ms) * 0.95) - 1]
-        median = statistics.median(timings_ms)
+        # ACR-43 — one shared nearest-rank definition (app.core.benchmark) rather than a
+        # hand-rolled index here, so this number and the A8 benchmark artifacts agree.
+        pct = percentiles(timings_ms, (50, 95))
+        p50, p95 = pct[50], pct[95]
         print(
             f"\navailability latency over {SEED_LOTS_IN_STORAGE} lots + 200 reservations: "
-            f"median {median:.1f}ms, p95 {p95:.1f}ms (budget {LATENCY_BUDGET_MS:.0f}ms)"
+            f"p50 {p50:.1f}ms, p95 {p95:.1f}ms (budget {LATENCY_BUDGET_MS:.0f}ms)"
         )
 
         assert p95 < LATENCY_BUDGET_MS, (

@@ -6,11 +6,13 @@ from fastapi.responses import JSONResponse
 from jose import JWTError
 
 from app.core.config import settings  # also ensures .env is loaded early
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+from app.core.observability import (
+    REQUEST_ID_HEADER,
+    RequestTimingMiddleware,
+    configure_logging,
 )
+
+configure_logging()
 logger = logging.getLogger("acra")
 
 app = FastAPI(
@@ -25,7 +27,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Without this the browser hides the id from client JS, and the correlation only works
+    # server-side — which defeats handing a request id to a user reporting a problem.
+    expose_headers=[REQUEST_ID_HEADER],
 )
+
+# Added last so it is the outermost layer: every request is timed, including the ones CORS
+# short-circuits.
+app.add_middleware(RequestTimingMiddleware)
 
 
 @app.exception_handler(JWTError)
