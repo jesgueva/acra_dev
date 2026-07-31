@@ -14,6 +14,7 @@ from app.core.benchmark import (
     Outcome,
     RunMetadata,
     percentiles,
+    redact_command,
     redact_dsn,
 )
 
@@ -104,6 +105,65 @@ def test_redact_dsn_drops_the_password():
     assert "hunter2" not in redact_dsn(
         "postgresql+asyncpg://postgres:hunter2@localhost:5435/acra_db"
     )
+
+
+def test_redact_command_drops_a_password_passed_as_a_flag():
+    """`database` was redacted while `command` was captured verbatim — one leak reopens the other.
+
+    `concurrency_bench.py` accepts `--dsn` on the command line, so the password reaches an artifact
+    that gets committed under `validation-evidence/` unless the *command* is redacted too.
+    """
+    command = redact_command(
+        ["bench.py", "--dsn", "postgresql+asyncpg://postgres:hunter2@localhost:5435/acra_db"]
+    )
+
+    assert "hunter2" not in command
+    assert "postgresql+asyncpg://localhost:5435/acra_db" in command, (
+        "the scheme and host must survive — a Command line that no longer runs is not provenance"
+    )
+
+
+def test_redact_command_handles_the_joined_spelling():
+    """`--dsn=<url>` is one argv entry, so a per-argument check that only looks at bare values
+    would walk straight past it."""
+    command = redact_command(
+        ["bench.py", "--dsn=postgresql://postgres:hunter2@db.example.com/acra"]
+    )
+
+    assert "hunter2" not in command
+    assert "--dsn=postgresql://db.example.com/acra" in command
+
+
+def test_redact_command_leaves_ordinary_arguments_alone():
+    argv = ["bench.py", "out/", "--levels", "2,8,32", "--rounds", "5"]
+
+    assert redact_command(argv) == "bench.py out/ --levels 2,8,32 --rounds 5"
+
+
+def test_redact_command_leaves_a_credential_free_url_runnable():
+    """`api_latency_bench.py --base-url` carries no password, and mangling it breaks the provenance.
+
+    Redacting every `://` token would rewrite this to `staging.example.com`, which httpx reads as a
+    relative path — so the `Command  :` line would no longer reproduce the run it documents. There
+    is nothing to leak here, so there is nothing to redact.
+    """
+    argv = ["api_latency_bench.py", "out/", "--base-url", "https://staging.example.com"]
+
+    assert redact_command(argv) == "api_latency_bench.py out/ --base-url https://staging.example.com"
+
+
+def test_redact_command_keeps_a_credential_free_socket_dsn_intact():
+    """No hostname and no credentials — `redact_dsn` alone would collapse this to `unknown`."""
+    argv = ["bench.py", "--dsn", "postgresql:///acra?host=/var/run/postgresql"]
+
+    assert redact_command(argv) == "bench.py --dsn 'postgresql:///acra?host=/var/run/postgresql'"
+
+
+def test_redact_command_fails_closed_on_an_unparseable_url():
+    """If it cannot be parsed it cannot be proven safe, so it must not be echoed verbatim."""
+    command = redact_command(["bench.py", "--dsn", "postgresql://user:hunter2@[::1/acra"])
+
+    assert "hunter2" not in command
 
 
 # ---------------------------------------------------------------------------

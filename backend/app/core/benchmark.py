@@ -141,6 +141,46 @@ def redact_dsn(url: str) -> str:
     return f"{host}{parts.path}"
 
 
+def _redact_url_argument(url: str) -> str:
+    """Strip credentials from one URL, keeping everything a reader needs to rerun the command.
+
+    Only URLs that *carry* credentials are touched. A benchmark's `--base-url https://host` has no
+    password to leak, and reducing it to `host` would produce a `Command  :` line that no longer
+    runs — which defeats the provenance this module exists to provide. The scheme is preserved on
+    the ones that are redacted for the same reason.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        # Cannot parse it, so cannot prove it is safe. Fail closed.
+        return _UNKNOWN
+    if not (parts.username or parts.password):
+        return url
+    return f"{parts.scheme}://{redact_dsn(url)}" if parts.scheme else _UNKNOWN
+
+
+def redact_command(argv: list[str]) -> str:
+    """`shlex.join(argv)` with credentials stripped from any URL-shaped argument.
+
+    `redact_dsn` keeps the password out of the `database` field, but the *command* is captured
+    verbatim — so a bench invoked as `--dsn postgresql://user:password@host/db` writes the password
+    straight into an artifact that gets committed under `validation-evidence/` and pasted into
+    writeups. The redaction has to cover both paths or it only covers the one nobody uses.
+
+    Both spellings are handled: `--dsn <url>` as two argv entries, and `--dsn=<url>` as one.
+    """
+    cleaned: list[str] = []
+    for arg in argv:
+        flag, sep, value = arg.partition("=")
+        if sep and "://" in value:
+            cleaned.append(f"{flag}={_redact_url_argument(value)}")
+        elif "://" in arg:
+            cleaned.append(_redact_url_argument(arg))
+        else:
+            cleaned.append(arg)
+    return shlex.join(cleaned)
+
+
 @dataclass(frozen=True)
 class RunMetadata:
     """Everything needed to repeat a run, captured at the moment it happened."""
@@ -173,7 +213,7 @@ class RunMetadata:
             # populating os.environ, so the provenance would silently lose the database it ran on.
             database=redact_dsn(os.getenv("DATABASE_URL") or settings.database_url),
             captured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            command=shlex.join(sys.argv) if sys.argv else _UNKNOWN,
+            command=redact_command(sys.argv) if sys.argv else _UNKNOWN,
             params=dict(params),
         )
 
