@@ -65,10 +65,20 @@ test.describe("ACR-42 containerized stack", () => {
     }
   });
 
-  test("renders both locales without console errors", async ({ page }) => {
-    const consoleErrors: string[] = [];
+  test("renders both locales without page errors", async ({ page }) => {
+    // Uncaught exceptions are the real signal. Console "errors" are not: AuthContext.tsx:41 probes
+    // /api/auth/me on mount to bootstrap the session, and on the login page that correctly answers
+    // 401 — which Chrome logs as "Failed to load resource". Asserting no console errors at all
+    // would be asserting that correct behaviour does not happen.
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+
+    const unexpectedConsoleErrors: string[] = [];
     page.on("console", (message: ConsoleMessage) => {
-      if (message.type() === "error") consoleErrors.push(message.text());
+      if (message.type() !== "error") return;
+      const text = message.text();
+      const isAnonymousAuthProbe = /401 \(Unauthorized\)/.test(text);
+      if (!isAnonymousAuthProbe) unexpectedConsoleErrors.push(text);
     });
 
     for (const locale of ["en", "es"] as const) {
@@ -78,7 +88,11 @@ test.describe("ACR-42 containerized stack", () => {
       await expect(page.locator("#password")).toBeVisible();
     }
 
-    expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
+    expect(pageErrors, `uncaught page errors: ${pageErrors.join(" | ")}`).toEqual([]);
+    expect(
+      unexpectedConsoleErrors,
+      `unexpected console errors: ${unexpectedConsoleErrors.join(" | ")}`,
+    ).toEqual([]);
   });
 
   test("static assets served by the standalone server actually resolve", async ({ page }) => {
