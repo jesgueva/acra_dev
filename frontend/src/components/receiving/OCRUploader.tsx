@@ -19,7 +19,16 @@ export interface OCRResult {
     pallets?: number;
     units_per_pallet?: number;
   }>;
+  /**
+   * Fraction of the four header fields that came back non-empty — presence, not correctness.
+   * Four wrong values still score 1.0, so this must never be surfaced as an accuracy or quality
+   * score. `header_fill_rate` is the same number under an honest name; measured accuracy comes
+   * from the A8-4 bench in `backend/scripts/ocr_bench/`.
+   */
   confidence: number;
+  header_fill_rate?: number;
+  /** Which model answered: "gemini" (primary) or "claude" (fallback). */
+  provider?: string;
 }
 
 interface OCRUploaderProps {

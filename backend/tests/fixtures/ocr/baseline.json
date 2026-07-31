@@ -1,0 +1,73 @@
+{
+  "_comment": "Recorded accuracy floor for the A8-4 OCR gate. Regenerate with scripts.ocr_bench.run_bench and update DELIBERATELY \u2014 never to turn a red gate green. See tests/fixtures/ocr/README.md.",
+  "run": {
+    "captured_at": "2026-07-31T21:35:56+00:00",
+    "git_sha": "45d4668",
+    "host": "Darwin 25.5.0 arm64",
+    "python": "3.13.13",
+    "repeat": 3,
+    "models": {
+      "gemini": "gemini-2.5-flash",
+      "claude": "claude-sonnet-4-6"
+    },
+    "corpus": {
+      "documents": 7,
+      "layouts": [
+        "gridded",
+        "borderless_cramped",
+        "rotated",
+        "multipage",
+        "spanish",
+        "poor_scan",
+        "degraded_fax"
+      ],
+      "line_items": 23,
+      "noise_seed": 20260730
+    },
+    "scorer": {
+      "item_match_threshold": 0.75,
+      "text_field_threshold": 0.9,
+      "quantity_tolerance": 0.01
+    },
+    "tolerance": 0.05,
+    "notes": "Both arms: 7 synthetic documents x 3 rounds. gemini paced at --delay 13 to stay inside the free tier's 5 requests/minute; claude needed no pacing. gemini-2.5-pro was measured and is NOT usable on this API key -- it returns 429 RESOURCE_EXHAUSTED in ~142ms on every call, so gemini-2.5-flash is the configured default. Synthetic documents are cleaner than real phone photos of paper BOLs, so these figures are an upper bound."
+  },
+  "providers": {
+    "gemini": {
+      "header_accuracy": 0.9625,
+      "item_f1": 0.9925,
+      "numeric_accuracy": 0.9949,
+      "measured": {
+        "repeat": 3,
+        "calls": 21,
+        "scored": 20,
+        "errors": 1,
+        "item_precision": 1.0,
+        "item_recall": 0.9851,
+        "latency_ms": {
+          "p50": 6133.7,
+          "p95": 9313.1,
+          "p99": 9313.2
+        }
+      }
+    },
+    "claude": {
+      "header_accuracy": 0.9643,
+      "item_f1": 0.971,
+      "numeric_accuracy": 0.995,
+      "measured": {
+        "repeat": 3,
+        "calls": 21,
+        "scored": 21,
+        "errors": 0,
+        "item_precision": 0.971,
+        "item_recall": 0.971,
+        "latency_ms": {
+          "p50": 5154.7,
+          "p95": 7400.4,
+          "p99": 8542.4
+        }
+      }
+    }
+  }
+}

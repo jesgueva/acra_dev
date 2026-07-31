@@ -88,6 +88,52 @@ describe("OCRUploader", () => {
     });
   });
 
+  test("2b: passes the ACR-36 provider and header_fill_rate fields through untouched", async () => {
+    const mockResult = {
+      supplier: "ACME Corp",
+      carrier: "Fast Freight",
+      bol_reference: "BOL-1000",
+      delivery_date: "2026-01-15",
+      items: [{ item_name: "Steel", quantity: 10, pallets: 2, units_per_pallet: 5 }],
+      confidence: 1.0,
+      header_fill_rate: 1.0,
+      provider: "claude",
+    };
+    (apiClient.post as jest.Mock).mockResolvedValue({ data: mockResult });
+
+    const onOCRResult = jest.fn();
+    render(<OCRUploader onOCRResult={onOCRResult} />);
+
+    await userEvent.upload(screen.getByLabelText("receiving.uploadFile"), makeFile());
+
+    await waitFor(() => {
+      expect(onOCRResult).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "claude", header_fill_rate: 1.0 }),
+      );
+    });
+  });
+
+  test("2c: does not render confidence as a quality signal", async () => {
+    // `confidence` counts non-empty header fields, so 1.0 is compatible with every value being
+    // wrong. Surfacing it would invite a clerk to trust a bad extraction.
+    (apiClient.post as jest.Mock).mockResolvedValue({
+      data: {
+        supplier: "ACME Corp",
+        bol_reference: "BOL-1001",
+        items: [],
+        confidence: 1.0,
+        header_fill_rate: 1.0,
+        provider: "gemini",
+      },
+    });
+
+    const { container } = render(<OCRUploader onOCRResult={jest.fn()} />);
+    await userEvent.upload(screen.getByLabelText("receiving.uploadFile"), makeFile());
+
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalled());
+    expect(container.textContent).not.toMatch(/100%|confidence|accuracy/i);
+  });
+
   test("3: shows error toast on 422 response", async () => {
     (apiClient.post as jest.Mock).mockRejectedValue({
       response: { status: 422 },
