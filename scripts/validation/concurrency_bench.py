@@ -219,14 +219,18 @@ async def _close_optimistic(db: AsyncSession, scenario: Scenario, index: int, dr
         return Outcome.CONFLICT if exc.status_code == 409 else Outcome.ERROR
 
 
-def _is_serialization_failure(exc: DBAPIError) -> bool:
+def _is_serialization_failure(exc: BaseException) -> bool:
     """Whether a driver error is PostgreSQL's `40001`, i.e. retryable rather than a bug.
 
     asyncpg exposes `sqlstate`, psycopg `pgcode`; the string fallback covers a wrapped driver that
     exposes neither. Misclassifying this as a generic error would collapse the distinction the whole
     retry argument rests on, so it is checked three ways rather than assumed.
+
+    Takes the raw exception as well as a wrapped one. SQLAlchemy does not always get to wrap the
+    abort in `DBAPIError` — depending on which statement the conflict surfaces at, asyncpg's own
+    `SerializationError` propagates — so `.orig` cannot be assumed to exist.
     """
-    orig = exc.orig
+    orig = getattr(exc, "orig", None) or exc
     for attr in ("sqlstate", "pgcode"):
         code = getattr(orig, attr, None)
         if code is not None:
@@ -268,8 +272,18 @@ async def _close_serializable(
         )
         await db.commit()
         return Outcome.OK
-    except DBAPIError as exc:
-        await db.rollback()
+    except Exception as exc:
+        # Deliberately not `except DBAPIError`. Depending on which statement the conflict surfaces
+        # at — and it moves with timing — asyncpg's own `SerializationError` propagates without
+        # SQLAlchemy wrapping it. A narrower catch let those escape to the caller's blanket handler
+        # and be recorded as `ERROR`, which is not a cosmetic misfile: `error_rate` would carry the
+        # arm's aborts, `retry_rate` would read ~0, and the retry arm would not retry at all, since
+        # it only retries `SERIALIZATION_FAILURE`. The SERIALIZABLE rows in the study would have
+        # been wrong in the direction that flatters ADR-02's argument.
+        try:
+            await db.rollback()
+        except Exception:  # pragma: no cover — a rollback failure must not mask the real outcome
+            pass
         return (
             Outcome.SERIALIZATION_FAILURE
             if _is_serialization_failure(exc)
@@ -575,6 +589,11 @@ def _parse_args(argv: list[str] | None = None):
     # to `stock < 0`. Every arm would report 100% success over an untested ledger.
     if args.draw < 1:
         parser.error("--draw must be at least 1; a zero draw consumes nothing and tests nothing")
+    # Zero rounds records no samples, so `run.stats` reaches `percentiles([])` and the sweep dies on
+    # a traceback well after the run looked like it had started. It also zeroes the stock guard
+    # below, since that multiplies by rounds.
+    if args.rounds < 1:
+        parser.error("--rounds must be at least 1; a zero-round sweep measures nothing")
     # Same class of theatre one axis over: a single closer cannot race anything, so every arm —
     # including `unguarded` — would post 100% success and a clean ledger. An empty --levels would
     # also reach `max()` below as a bare ValueError rather than a usage message.

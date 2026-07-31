@@ -171,8 +171,14 @@ with run.time(outcome="serialization_failure"):
 ```
 PYTHONPATH=backend python scripts/validation/concurrency_bench.py [OUT_DIR] \
     [--arms unguarded,optimistic,serializable,serializable-retry] \
-    [--levels 2,4,8,16,32] [--rounds 5] [--stock 100000] [--draw 6000]
+    [--levels 2,4,8,16,32] [--rounds 5] [--stock 1000000] [--draw 1000]
 ```
+
+These are the shipped defaults, and the stock guard enforces the relationship between them:
+`--stock` must exceed `max(levels) × draw × rounds`, or a lot running dry lets "insufficient
+stock" stand in for the concurrency control and a broken arm looks correct. The numbers this
+section originally carried (`--stock 100000 --draw 6000`) violate that — 32 closers drawing 6000
+exhaust a 100,000 lot inside a single round — and are now rejected at argument-parse time.
 
 Per (arm, level): seed → barrier-release N closers on their own sessions → collect
 `(outcome, duration)` → read the correctness oracle (`_on_hand` + `_movements`) → tear down. One

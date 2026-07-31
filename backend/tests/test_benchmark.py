@@ -231,6 +231,42 @@ def test_redact_command_fails_closed_on_a_token_that_is_not_exactly_one_url(argv
     assert "hunter2" not in redact_command(argv)
 
 
+@pytest.mark.parametrize(
+    "dsn,secret",
+    [
+        # `openssl rand -base64` emits `/` routinely, and SQLAlchemy accepts it because its
+        # password group runs to the *last* `@`. So this is a working DSN.
+        ("postgresql+asyncpg://postgres:aB3/xY9@localhost:5433/acra_db", "aB3/xY9"),
+        ("postgresql://postgres:pa?ss@h/db", "pa?ss"),
+        ("postgresql://postgres:pa#ss@h/db", "pa#ss"),
+    ],
+)
+def test_redact_command_fails_closed_when_a_delimiter_truncates_the_userinfo(dsn, secret):
+    """`urlsplit` ends the netloc at the first `/`, `?` or `#` after `//`.
+
+    An unencoded one of those *inside the password* truncates the netloc before the `@`, so the
+    parse reports no userinfo at all and a userinfo-only check sees a credential-free URL.
+    `redact_dsn` already fails closed on these, so without this guard the `database` field would be
+    safe while the `Command` line printed the password — the exact split this redaction exists to
+    close.
+    """
+    assert secret not in redact_command(["bench.py", "--dsn", dsn])
+
+
+def test_redact_command_sniffs_the_whole_argument_not_just_the_parsed_query():
+    """A secret in the fragment is invisible to a sniff that reads `parts.query`."""
+    assert "hunter2" not in redact_command(
+        ["bench.py", "--dsn", "postgresql://h/db#password=hunter2"]
+    )
+
+
+def test_redact_command_keeps_an_at_sign_that_is_not_userinfo():
+    """`/@scope/pkg` is an ordinary path. Failing closed on every `@` would destroy it."""
+    argv = ["bench.py", "--base-url", "https://registry.example.com/@scope/pkg"]
+
+    assert redact_command(argv) == "bench.py --base-url https://registry.example.com/@scope/pkg"
+
+
 def test_redact_command_keeps_the_non_secret_query_when_it_redacts():
     """`?host=` and `?sslmode=` decide whether the command reproduces at all.
 

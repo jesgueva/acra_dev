@@ -190,12 +190,27 @@ def _redact_url_argument(url: str) -> str:
         # So require the argument to be exactly one URL, opening at its own scheme.
         if not url.lower().startswith(f"{parts.scheme}://") or url.count("://") > 1:
             return _UNKNOWN
+        # An `@` the parse cannot account for. `urlsplit` ends the netloc at the first `/`, `?` or
+        # `#` after `//`, so an unencoded one of those *inside the password* truncates the netloc
+        # before the `@` — `postgresql://postgres:aB3/xY9@host:5433/db` yields no userinfo at all
+        # and the whole DSN would be echoed verbatim. That is not an exotic password: `openssl rand
+        # -base64` emits `/` routinely, and SQLAlchemy accepts it because its password group runs
+        # to the *last* `@`. Note `redact_dsn` already fails closed here, so without this the
+        # `database` field would be safe while `Command` printed the password.
+        after_scheme = url.split("://", 1)[1]
+        authority = after_scheme.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+        if "@" in after_scheme and ":" in authority and not (parts.username or parts.password):
+            return _UNKNOWN
         query = parse_qsl(parts.query, keep_blank_values=True)
         # `parse_qsl` splits on `&` only — Python dropped `;` as a separator for CVE-2021-23336 —
         # so `?a=1;password=hunter2` comes back as the single non-secret key `a`, and a check that
         # trusted the parse alone would wave the whole URL through. Sniff the raw text as well and
-        # let the parse decide only *how much* to remove, never *whether* to.
-        raw_names_a_secret = any(k in parts.query.lower() for k in _SECRET_QUERY_KEYS)
+        # let the parse decide only *how much* to remove, never *whether* to. The sniff reads the
+        # whole argument rather than `parts.query`, or anything urlsplit files under `fragment`
+        # (`...#password=hunter2`) stays invisible to it — which is the same mistake one field over.
+        # Scanning the full URL cannot over-redact in practice: the rebuild keeps scheme, host and
+        # path regardless, so a host or dbname that merely contains "password" comes back unchanged.
+        raw_names_a_secret = any(k in url.lower() for k in _SECRET_QUERY_KEYS)
         secrets = [(k, v) for k, v in query if k.lower() in _SECRET_QUERY_KEYS]
         if not (parts.username or parts.password or secrets or raw_names_a_secret):
             return url

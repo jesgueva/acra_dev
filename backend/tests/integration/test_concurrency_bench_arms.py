@@ -45,6 +45,8 @@ AttemptResult = _bench.AttemptResult
 _apply_correctness_oracle = _bench._apply_correctness_oracle
 _comparison_lines = _bench._comparison_lines
 _on_hand = _bench._on_hand
+_is_serialization_failure = _bench._is_serialization_failure
+_parse_args = _bench._parse_args
 _run_attempt = _bench._run_attempt
 _seed = _bench._seed
 _teardown = _bench._teardown
@@ -402,3 +404,100 @@ def test_comparison_table_shows_a_sub_draw_discrepancy():
     body = _comparison_lines([row])[2]
 
     assert "200" in body, f"the 200 lost units must appear in the row, got: {body!r}"
+
+
+# ---------------------------------------------------------------------------
+# 6 — the argument guards
+#
+# Pure and DB-free: `_parse_args` never opens a connection. These exist because a guard whose whole
+# job is to *reject* an invocation is exactly the code that silently starts rejecting the evidence
+# run instead — so the accepted case is pinned alongside the refused ones.
+
+_OK_DSN = "postgresql+asyncpg://postgres:postgres@localhost:5441/acra_bench"
+
+
+@pytest.mark.parametrize(
+    "argv,because",
+    [
+        (["--draw", "0"], "a zero draw consumes nothing, so the oracle short-circuits clean"),
+        (["--rounds", "0"], "zero rounds records no samples, so percentiles() raises"),
+        (["--levels", "1"], "one closer contends with nothing; every arm posts 100%"),
+        (["--levels", ""], "empty levels reached max() as a bare ValueError"),
+        (["--levels", "2,4,eight"], "a non-integer level reached int() as a bare ValueError"),
+        (["--arms", ""], "zero arms ran zero cells and still exited 0"),
+        (["--arms", "nonsense"], "an unknown arm should not silently do nothing"),
+        (["--stock", "100"], "scarcity, not the guard, would decide the outcome"),
+    ],
+)
+def test_parse_args_refuses_an_invocation_that_would_measure_nothing(argv, because):
+    with pytest.raises(SystemExit):
+        _parse_args(["out/", "--dsn", _OK_DSN, *argv])
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [],  # the argparse defaults
+        ["--levels", "2,8,32", "--rounds", "3"],  # scripts/validation-run.sh stage 6d
+        ["--levels", "2,4,8,16,32", "--rounds", "5"],  # the published evidence run
+        ["--arms", "optimistic", "--levels", "2", "--rounds", "1"],  # the smoke invocation
+    ],
+)
+def test_parse_args_accepts_every_invocation_the_repo_actually_uses(argv):
+    """If a guard ever blocks one of these, the evidence run stops and this says so first."""
+    args = _parse_args(["out/", "--dsn", _OK_DSN, *argv])
+
+    assert args.levels and min(args.levels) >= 2
+    assert args.rounds >= 1 and args.draw >= 1
+    assert args.stock >= max(args.levels) * args.draw * args.rounds
+
+
+# ---------------------------------------------------------------------------
+# 7 — abort classification
+#
+# Pure: these build the exception shapes by hand, so the one distinction the whole retry argument
+# rests on is pinned without a database.
+
+
+class _RawAsyncpgError(Exception):
+    """asyncpg's `SerializationError` shape: `sqlstate` on the exception, and no `.orig`."""
+
+    sqlstate = "40001"
+
+
+class _WrappedError(Exception):
+    """SQLAlchemy's `DBAPIError` shape: the driver error hangs off `.orig`."""
+
+    def __init__(self, orig):
+        super().__init__("wrapped")
+        self.orig = orig
+
+
+def test_a_raw_driver_abort_is_recognised_without_being_wrapped():
+    """SQLAlchemy does not always get to wrap the abort.
+
+    Depending on which statement the conflict surfaces at — and it moves with timing — asyncpg's
+    own `SerializationError` propagates with no `.orig` at all. Reading `exc.orig` unconditionally
+    raised `AttributeError` on those, and the arm recorded `ERROR`. That is not a cosmetic misfile:
+    `error_rate` would carry the aborts, `retry_rate` would read ~0, and the retry arm would never
+    retry, because it only retries `SERIALIZATION_FAILURE`.
+    """
+    assert _is_serialization_failure(_RawAsyncpgError())
+
+
+def test_a_wrapped_driver_abort_is_still_recognised():
+    assert _is_serialization_failure(_WrappedError(_RawAsyncpgError()))
+
+
+def test_a_non_serialization_error_is_not_mistaken_for_one():
+    class _Other(Exception):
+        sqlstate = "23505"  # unique violation — a bug, not something to retry
+
+    assert not _is_serialization_failure(_Other())
+    assert not _is_serialization_failure(_WrappedError(_Other()))
+
+
+def test_a_driver_exposing_no_sqlstate_falls_back_to_the_message():
+    """Covers a wrapped driver that exposes neither `sqlstate` nor `pgcode`."""
+    assert _is_serialization_failure(Exception("ERROR: 40001: could not serialize access"))
+    assert not _is_serialization_failure(Exception("connection refused"))
