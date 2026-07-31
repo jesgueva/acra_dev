@@ -72,10 +72,14 @@ async def sessionmaker_():
 
 
 ROUNDS = 3
+#: Ceiling on the rounds an `until` escalation may spend before the caller's assertion is allowed
+#: to fail. Generous, because the cost of exhausting it is one slow failure while the cost of it
+#: being too small is a flaky suite.
+MAX_ROUNDS = 12
 
 
 async def _run_arm(sessionmaker_, arm: str, closers: int = CLOSERS):
-    """One round of `closers` concurrent attempts, returning (results, final_on_hand, lost)."""
+    """One round of `closers` concurrent attempts → (results, final_on_hand, OracleVerdict)."""
     scenario = await _seed(sessionmaker_, stock=STOCK, worksheets=closers, planned=DRAW)
     try:
         barrier = asyncio.Barrier(closers)
@@ -89,28 +93,54 @@ async def _run_arm(sessionmaker_, arm: str, closers: int = CLOSERS):
             timeout=120,
         )
         final = await _on_hand(sessionmaker_, scenario)
-        lost = _apply_correctness_oracle(results, final_on_hand=final, stock=STOCK, draw=DRAW)
-        return results, final, lost
+        verdict = _apply_correctness_oracle(
+            results, final_on_hand=final, stock=STOCK, draw=DRAW
+        )
+        return results, final, verdict
     finally:
         await _teardown(sessionmaker_, scenario)
 
 
-async def _run_arm_rounds(sessionmaker_, arm: str, rounds: int = ROUNDS):
-    """`rounds` independent rounds, with every attempt pooled into one list.
+async def _run_arm_rounds(
+    sessionmaker_, arm: str, *, rounds: int = ROUNDS, until=None, max_rounds: int = MAX_ROUNDS
+):
+    """`rounds` independent rounds pooled into one list, extended until contention actually shows.
 
-    The barrier guarantees the closers *start* together; it cannot guarantee they *overlap*. On a
-    loaded machine the first closer can finish its whole transaction before the second issues its
-    SELECT, and a single round then observes no contention at all — which silently turns an
-    assertion about contention into an assertion about nothing. Pooling rounds makes the collision
-    reliable without weakening any claim, and mirrors how the benchmark itself samples.
+    The barrier guarantees the closers *start* together; it cannot guarantee they *overlap*. Under
+    SERIALIZABLE the snapshot is taken at the first statement of the transaction, so a closer that
+    issues its SELECT after an earlier closer has already committed reads a snapshot that already
+    contains that write — and conflicts with nothing. On a fast local database a whole close costs
+    about a millisecond, so a round can complete with every closer serialized and no contention
+    observed at all, which silently turns an assertion about contention into an assertion about
+    nothing. This is exactly how these tests flaked: green in isolation, three red under a full-suite
+    run, with no code difference between the two.
+
+    `until(pooled)` names the collision the caller's assertion depends on. Rounds are added until it
+    is satisfied or `max_rounds` is spent — and when it is never satisfied the caller's own assertion
+    fires with its own message, so a genuinely broken arm still fails. It buys reliability, not
+    leniency: no assertion is weakened, the harness is just made to keep trying until the race it
+    claims to measure has actually happened.
     """
-    pooled = []
+    pooled: list = []
     total_lost = 0
-    for _ in range(rounds):
-        results, _, lost = await _run_arm(sessionmaker_, arm)
+    total_over = 0
+    limit = max(rounds, max_rounds) if until else rounds
+    for completed in range(limit):
+        results, _, verdict = await _run_arm(sessionmaker_, arm)
         pooled += results
-        total_lost += lost
-    return pooled, total_lost
+        total_lost += verdict.lost_updates
+        total_over += verdict.overconsumed_units
+        if until and completed + 1 >= rounds and until(pooled):
+            break
+    return pooled, total_lost, total_over
+
+
+def _saw_lost_update(results) -> bool:
+    return any(r.outcome is Outcome.LOST_UPDATE for r in results)
+
+
+def _saw_abort(results) -> bool:
+    return any(r.outcome is Outcome.SERIALIZATION_FAILURE for r in results)
 
 
 # ---------------------------------------------------------------------------
@@ -124,13 +154,13 @@ async def test_unguarded_arm_loses_updates(sessionmaker_):
     Asserted, not observed: a clean result here would mean the harness never actually raced the
     closers, and every other arm's zero would be meaningless by association.
     """
-    results, lost = await _run_arm_rounds(sessionmaker_, "unguarded")
+    results, lost, _ = await _run_arm_rounds(sessionmaker_, "unguarded", until=_saw_lost_update)
 
     assert lost > 0, (
-        f"the unguarded arm must lose updates under {CLOSERS}-way contention over {ROUNDS} rounds. "
-        "If this is clean the closers are not overlapping and the whole study is asleep."
+        f"the unguarded arm must lose updates under {CLOSERS}-way contention within {MAX_ROUNDS} "
+        "rounds. If this is clean the closers are not overlapping and the whole study is asleep."
     )
-    assert any(r.outcome is Outcome.LOST_UPDATE for r in results), (
+    assert _saw_lost_update(results), (
         "lost updates must be visible in the arm's own outcomes, not only in the oracle"
     )
 
@@ -143,14 +173,33 @@ async def test_unguarded_arm_loses_updates(sessionmaker_):
 async def test_optimistic_arm_is_correct_and_loses_nothing(sessionmaker_):
     """ADR-02's protocol, exercised through the real `close_worksheet`.
 
-    Every closer holds its own worksheet over shared lots, so with abundant stock all of them
-    should win — and the books must agree exactly.
+    Every closer holds its own worksheet over shared lots, so with abundant stock all of them should
+    win and the books must agree exactly.
+
+    **The unguarded arm is run first, in this same test, as a contention witness.** On its own,
+    "optimistic lost nothing" is vacuous: if the closers never actually overlapped, there was no
+    race to survive and the assertion passes while proving nothing. The optimistic arm emits no
+    CONFLICT or SERIALIZATION_FAILURE either, so it has no outcome-based tell of its own. Running
+    the unguarded arm against the identical scenario shape establishes that these conditions *do*
+    produce collisions — and only then does the optimistic arm's clean sheet mean anything.
+
+    The negative control in a different test function cannot do this job: it proves the mechanism
+    can collide on *its* invocation, not on this one.
     """
-    results, final, lost = await _run_arm(sessionmaker_, "optimistic")
+    witness, witness_lost, _ = await _run_arm_rounds(
+        sessionmaker_, "unguarded", until=_saw_lost_update
+    )
+    assert witness_lost > 0, (
+        "contention witness failed: the unguarded arm lost nothing, so these conditions did not "
+        "produce a race at all. The optimistic result below would be vacuous — fix the harness "
+        f"rather than trusting it. Outcomes: {[r.outcome.value for r in witness]}"
+    )
+
+    results, lost, over = await _run_arm_rounds(sessionmaker_, "optimistic")
 
     assert lost == 0
+    assert over == 0, "the books must not move further than the successes claim either"
     assert all(r.outcome is Outcome.OK for r in results), [r.outcome for r in results]
-    assert final == STOCK - CLOSERS * DRAW, "on-hand must match exactly what won"
 
 
 # ---------------------------------------------------------------------------
@@ -164,11 +213,12 @@ async def test_serializable_arm_is_correct_but_aborts_losers(sessionmaker_):
     Aborts must surface as SQLSTATE 40001 rather than as a generic error: the whole retry argument
     depends on the caller being able to tell a retryable abort from a bug.
     """
-    results, lost = await _run_arm_rounds(sessionmaker_, "serializable")
+    results, lost, over = await _run_arm_rounds(sessionmaker_, "serializable", until=_saw_abort)
 
     assert lost == 0, "SERIALIZABLE must not corrupt the books"
-    assert any(r.outcome is Outcome.SERIALIZATION_FAILURE for r in results), (
-        f"expected 40001 aborts over {ROUNDS} rounds, got {[r.outcome for r in results]}"
+    assert over == 0, "SERIALIZABLE must not over-consume either"
+    assert _saw_abort(results), (
+        f"expected 40001 aborts within {MAX_ROUNDS} rounds, got {[r.outcome for r in results]}"
     )
     assert not any(r.outcome is Outcome.ERROR for r in results), (
         "a serialization abort must be classified as retryable, not as a generic error — "
@@ -183,11 +233,16 @@ async def test_serializable_retry_arm_actually_retries(sessionmaker_):
     Without the retry-counter assertion this test passes on a machine where the closers happen not
     to collide, which would silently turn ADR-02's central claim into an untested one.
     """
-    results, lost = await _run_arm_rounds(sessionmaker_, "serializable-retry")
+    results, lost, _ = await _run_arm_rounds(
+        sessionmaker_,
+        "serializable-retry",
+        until=lambda pooled: sum(r.retries for r in pooled) > 0,
+    )
 
     assert lost == 0
     assert sum(r.retries for r in results) > 0, (
-        "no attempt retried — the arm cannot be said to have measured the retry loop"
+        f"no attempt retried in {MAX_ROUNDS} rounds — the arm cannot be said to have measured the "
+        "retry loop"
     )
     succeeded = sum(1 for r in results if r.outcome is Outcome.OK)
     assert succeeded > 0
@@ -195,15 +250,28 @@ async def test_serializable_retry_arm_actually_retries(sessionmaker_):
 
 @requires_db
 async def test_retry_arm_beats_naked_serializable_on_success_rate(sessionmaker_):
-    """The comparison the writeup rests on: retrying converts aborts into completed work."""
-    naked, _ = await _run_arm_rounds(sessionmaker_, "serializable")
-    retried, _ = await _run_arm_rounds(sessionmaker_, "serializable-retry")
+    """The comparison the writeup rests on: retrying converts aborts into completed work.
 
-    naked_ok = sum(1 for r in naked if r.outcome is Outcome.OK)
-    retried_ok = sum(1 for r in retried if r.outcome is Outcome.OK)
-    assert retried_ok > naked_ok, (
-        f"bounded retry should complete more work than bare SERIALIZABLE "
-        f"({retried_ok} vs {naked_ok} of {ROUNDS * CLOSERS} attempts)"
+    Compared as *rates*, not counts: each arm escalates rounds independently until it has seen the
+    contention it needs, so the two pools are not guaranteed to be the same size and comparing raw
+    totals would let a difference in round count masquerade as a difference in behaviour.
+    """
+    naked, _, _ = await _run_arm_rounds(sessionmaker_, "serializable", until=_saw_abort)
+    assert _saw_abort(naked), (
+        "bare SERIALIZABLE never aborted, so there is no contention here for retrying to rescue — "
+        "the comparison below would be vacuous"
+    )
+    retried, _, _ = await _run_arm_rounds(
+        sessionmaker_,
+        "serializable-retry",
+        until=lambda pooled: sum(r.retries for r in pooled) > 0,
+    )
+
+    naked_rate = sum(1 for r in naked if r.outcome is Outcome.OK) / len(naked)
+    retried_rate = sum(1 for r in retried if r.outcome is Outcome.OK) / len(retried)
+    assert retried_rate > naked_rate, (
+        f"bounded retry should complete a larger share of its attempts than bare SERIALIZABLE "
+        f"({retried_rate:.0%} of {len(retried)} vs {naked_rate:.0%} of {len(naked)})"
     )
 
 
@@ -219,9 +287,11 @@ def test_oracle_relabels_exactly_the_updates_that_vanished():
     """
     results = [AttemptResult(Outcome.OK, 0.01) for _ in range(3)]
 
-    lost = _apply_correctness_oracle(results, final_on_hand=9000, stock=10_000, draw=1_000)
+    verdict = _apply_correctness_oracle(results, final_on_hand=9000, stock=10_000, draw=1_000)
 
-    assert lost == 2
+    assert verdict.lost_updates == 2
+    assert verdict.lost_units == 2_000
+    assert verdict.overconsumed_units == 0
     assert sum(1 for r in results if r.outcome is Outcome.LOST_UPDATE) == 2
     assert sum(1 for r in results if r.outcome is Outcome.OK) == 1
 
@@ -229,7 +299,9 @@ def test_oracle_relabels_exactly_the_updates_that_vanished():
 def test_oracle_is_silent_when_the_books_agree():
     results = [AttemptResult(Outcome.OK, 0.01) for _ in range(3)]
 
-    assert _apply_correctness_oracle(results, final_on_hand=7000, stock=10_000, draw=1_000) == 0
+    verdict = _apply_correctness_oracle(results, final_on_hand=7000, stock=10_000, draw=1_000)
+
+    assert verdict == (0, 0, 0)
     assert all(r.outcome is Outcome.OK for r in results)
 
 
@@ -237,4 +309,38 @@ def test_oracle_ignores_non_successes():
     """A closer that was correctly refused did not lose an update — it never had one."""
     results = [AttemptResult(Outcome.OK, 0.01), AttemptResult(Outcome.CONFLICT, 0.01)]
 
-    assert _apply_correctness_oracle(results, final_on_hand=9000, stock=10_000, draw=1_000) == 0
+    verdict = _apply_correctness_oracle(results, final_on_hand=9000, stock=10_000, draw=1_000)
+
+    assert verdict == (0, 0, 0)
+
+
+def test_oracle_reports_over_consumption():
+    """The books moving *further* than the successes claim is corruption too.
+
+    Two successes account for 2000 drawn from 10000, but 3000 actually left — an attempt decremented
+    and then failed, or drew twice. An earlier version returned a bare 0 here, reporting a corrupt
+    ledger as clean, because the discrepancy was negative and got floored away.
+    """
+    results = [AttemptResult(Outcome.OK, 0.01) for _ in range(2)]
+
+    verdict = _apply_correctness_oracle(results, final_on_hand=7000, stock=10_000, draw=1_000)
+
+    assert verdict.overconsumed_units == 1_000
+    assert verdict.lost_updates == 0
+    assert all(r.outcome is Outcome.OK for r in results), (
+        "over-consumption is not a lost update — it must not be relabelled as one"
+    )
+
+
+def test_oracle_reports_a_partial_discrepancy_that_is_not_a_whole_update():
+    """A discrepancy smaller than one draw still means the ledger is wrong.
+
+    Reporting only whole updates would floor 1500 to 1 and silently drop the remaining 500, so the
+    unit count is carried alongside the update count.
+    """
+    results = [AttemptResult(Outcome.OK, 0.01) for _ in range(3)]
+
+    verdict = _apply_correctness_oracle(results, final_on_hand=8_500, stock=10_000, draw=1_000)
+
+    assert verdict.lost_updates == 1
+    assert verdict.lost_units == 1_500, "the 500-unit remainder must not vanish from the report"

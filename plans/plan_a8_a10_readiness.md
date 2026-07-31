@@ -270,13 +270,13 @@ Legend: ⬜ not started · 🔄 in progress · ✅ done · ⏸️ blocked/deferr
 | A8-2 | Benchmark harness — run metadata, p50/p95/p99, machine-readable output | **ACR-43** | ✅ done — `app/core/benchmark.py`; first consumer `api_latency_bench.py`; `validation-run.sh` stage 6c | `ticket-43/bench-harness-request-timing` (#36) |
 | A8-3 | Request-timing middleware + structured request logs | **ACR-43** | ✅ done — `app/core/observability.py`, folded into A8-2 | `ticket-43/bench-harness-request-timing` (#36) |
 | A8-4 | OCR accuracy + provider comparison bench | **ACR-36** | 🔄 in progress — `ticket-36/ocr-accuracy-bench`, plan at `plans/plan_ticket_36.md` | — |
-| A8-5 | Comparative concurrency study (3-arm ablation) | **ACR-44** | 🔄 in progress — `ticket-44/comparative-concurrency-study`, plan at `plans/plan_ticket_44.md` | — |
+| A8-5 | Comparative concurrency study (3-arm ablation) | **ACR-44** | ✅ done — 4-arm ablation over one workload; ADR-02's protocol is the only arm holding 100% success and zero lost updates at 2→32 | `ticket-44/comparative-concurrency-study` (#38) |
 | A8-6 | Aggregation benchmark at volume (RSK-04) | **ACR-45** | ⬜ — ticket written; `inventory_lots` carries **no index at all**, so RSK-04's own mitigation is half-applied | — |
 | A8-7 | Subsystem diagram marking measurement points | — | ⬜ | — |
-| A10-1 | Dockerfiles for backend + frontend; whole-stack compose | **ACR-42** | 🔄 in progress | — |
+| A10-1 | Dockerfiles for backend + frontend; whole-stack compose | **ACR-42** | ✅ done | `ticket-42/docker-stack-versions` (#37) |
 | A10-2 | OCR offline/mock mode + committed sample fixtures | — | ⬜ | — |
 | A10-3 | CI: Playwright job, all 20 Jest files, frontend coverage gate | — | ⬜ blocked on §6 #3 + wants A10-1 first | — |
-| A10-4 | Lockfile + Node/Python version reconciliation, pin AI SDKs | **ACR-42** | 🔄 in progress — folded into A10-1 | — |
+| A10-4 | Lockfile + Node/Python version reconciliation, pin AI SDKs | **ACR-42** | ✅ done — folded into A10-1 | `ticket-42/docker-stack-versions` (#37) |
 | A10-5 | Privilege-parity test (seed vs migrations); fix/delete `create_admin.py` | (ACR-40 adjacent) | ⬜ | — |
 | A10-6 | LICENSE + data-provenance doc | — | ⬜ | — |
 | A10-7 | README troubleshooting, expected-output transcript, runbook | — | ⬜ | — |
@@ -302,6 +302,7 @@ makes the writeup citable.
 |---|---|---|---|---|
 | **A8-1** | Parameterized seed (ACR-41) | 2026-07-30 | `ticket-41/parameterized-seed` | See `plans/plan_ticket_41.md` §9. **Scale-1 fixture proven bit-identical** across all 14 seeded tables (per-table SHA-256 of full ordered content, captured before/after on freshly migrated databases) — the contract the 83 Playwright specs depend on. **Volume/timing:** scale 50 = 1 200 deliveries / 3 700 lots / 400 work orders in **8.9 s**; scale 200 = 14 800 lots in **31.8 s**; ~linear, so the planned bulk-insert follow-up is unnecessary. **Idempotence:** re-seeding creates 0 rows; raising the scale adds exactly one unit. **Supply/demand headroom** 176× at scale 1 vs 165× at scale 50 — the ratio-preservation claim measured, not assumed. 40 pure tests + 6 guarded live-DB tests. |
 | **A8-2 + A8-3** | Benchmark harness & request-timing middleware (ACR-43) | 2026-07-31 | `ticket-43/bench-harness-request-timing` (#36) | `app/core/benchmark.py` — nearest-rank p50/p95/p99 pinned against a known vector, `RunMetadata` capturing git SHA/tag/dirty + host + redacted DSN + exact command, JSON+text artifact pair under `validation-evidence/`. `app/core/observability.py` — per-request structured logs (status, route, duration, request id). First consumer `scripts/validation/api_latency_bench.py` over 5 read endpoints; wired as `validation-run.sh` stage 6c. **Credentials never reach an artifact** — asserted end to end on both files, not assumed. |
+| **A8-5** | Comparative concurrency study (ACR-44) | 2026-07-31 | `ticket-44/comparative-concurrency-study` (#38) | `scripts/validation/concurrency_bench.py` — 4 arms over **one** workload (N closers drawing stock from one product), so the measured variable is the concurrency control and not how much work each endpoint does; `optimistic` is the real `close_worksheet`. 5 rounds/cell at 2/4/8/16/32, PostgreSQL 15.18. **ADR-02's protocol is the only arm holding 100% success and 0 lost updates at every level, and the only one whose goodput rises with concurrency (95 → 227 closes/s).** Unguarded read-modify-write lost **281 updates across the sweep**, collapsing to 3% success and 10 closes/s goodput. **A bounded retry does not rescue SERIALIZABLE:** 5 retries hold 100% only to 4 closers, and still drop 79% of the work at 32. **Raw throughput inverts the result** — bare SERIALIZABLE posts the sweep's best attempts/second (1648/s) while completing 3% of the work, which is why the study reports goodput. |
 | — | — | — | — | — |
 
 ---
