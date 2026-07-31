@@ -81,6 +81,10 @@ What belongs in this repository vs. elsewhere:
 Rule of thumb: this repo holds **everything needed to build and run the system, and nothing
 that can be regenerated or that must stay private.**
 
+Data provenance — where seed/demo/corpus data comes from and what cannot be redistributed (the
+client logo, specifically) — is documented separately in
+[`docs/DATA_PROVENANCE.md`](docs/DATA_PROVENANCE.md).
+
 ## Local setup & smoke test
 
 See [`README.md`](README.md) for setup. Before opening a PR, run the smoke test:
