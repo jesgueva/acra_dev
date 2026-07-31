@@ -133,13 +133,19 @@ say "    6d  Comparative concurrency study (A8-5)"
   || { echo "  Concurrency ablation FAILED (see concurrency-bench.log)"; tail -5 "$OUT/concurrency-bench.log"; }
 
 say "    6e  OCR provider comparison bench (A8-4)"
+# Self-provenanced via run_bench's own run-metadata block, so no hdr() wrapper here (same as 6c/6d).
 if [[ -n "${GEMINI_API_KEY:-}" && -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  ( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" -m scripts.ocr_bench.run_bench \
-      --provider both --repeat "${OCR_BENCH_REPEAT:-1}" --out "$OUT/ocr-bench" --quiet ) \
-    > "$OUT/.ocr-bench.log" 2>&1 \
-    && echo "  provider comparison captured ($OUT/ocr-bench/)" \
-    || { echo "  provider comparison FAILED"; tail -5 "$OUT/.ocr-bench.log"; }
-  rm -f "$OUT/.ocr-bench.log"
+  # The scratch log is removed only on success: run_bench writes ocr-bench.json/.md just on the
+  # happy path, so deleting it unconditionally left a failed run with no evidence at all — in the
+  # one case where the evidence matters most. 6c and 6d already retain theirs on failure.
+  if ( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" -m scripts.ocr_bench.run_bench \
+        --provider both --repeat "${OCR_BENCH_REPEAT:-1}" --out "$OUT/ocr-bench" --quiet ) \
+      > "$OUT/ocr-bench.log" 2>&1; then
+    echo "  provider comparison captured ($OUT/ocr-bench/)"
+    rm -f "$OUT/ocr-bench.log"
+  else
+    echo "  provider comparison FAILED (see $OUT/ocr-bench.log)"; tail -5 "$OUT/ocr-bench.log"
+  fi
 else
   echo "  provider comparison SKIPPED (needs BOTH GEMINI_API_KEY and ANTHROPIC_API_KEY)"
 fi

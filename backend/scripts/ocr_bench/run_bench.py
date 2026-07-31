@@ -216,6 +216,11 @@ def run(
     }
 
 
+def _row(*cells: Any) -> str:
+    """One markdown table row. Centralized so adding a column cannot desync the pipes."""
+    return "| " + " | ".join(str(c) for c in cells) + " |"
+
+
 def format_markdown(payload: dict[str, Any]) -> str:
     """The head-to-head table for the A8 writeup."""
     meta = payload["run"]
@@ -247,17 +252,17 @@ def format_markdown(payload: dict[str, Any]) -> str:
         "|---|---|---|---|---|---|---|",
     ]
 
-    def cell(value: float | None) -> str:
-        return "n/a" if value is None else f"{value:.0f} ms"
-
     for provider, result in payload["results"].items():
         lines.append(
-            f"| `{provider}` | `{meta['models'][provider]}` "
-            f"| {result['header_accuracy']:.3f} "
-            f"| {result['item_precision']:.3f} "
-            f"| {result['item_recall']:.3f} "
-            f"| **{result['item_f1']:.3f}** "
-            f"| {result['numeric_accuracy']:.3f} |"
+            _row(
+                f"`{provider}`",
+                f"`{meta['models'][provider]}`",
+                f"{result['header_accuracy']:.3f}",
+                f"{result['item_precision']:.3f}",
+                f"{result['item_recall']:.3f}",
+                f"**{result['item_f1']:.3f}**",
+                f"{result['numeric_accuracy']:.3f}",
+            )
         )
 
     lines += [
@@ -267,12 +272,22 @@ def format_markdown(payload: dict[str, Any]) -> str:
         "| Provider | Calls | Scored | Errors | Error rate | p50 | p95 | p99 |",
         "|---|---|---|---|---|---|---|---|",
     ]
+    def cell(value: float | None) -> str:
+        return "n/a" if value is None else f"{value:.0f} ms"
+
     for provider, result in payload["results"].items():
         latency = result["latency_ms"]
         lines.append(
-            f"| `{provider}` | {result['calls']} | {result['scored']} | {result['errors']} "
-            f"| {result['error_rate']:.3f} "
-            f"| {cell(latency['p50'])} | {cell(latency['p95'])} | {cell(latency['p99'])} |"
+            _row(
+                f"`{provider}`",
+                result["calls"],
+                result["scored"],
+                result["errors"],
+                f"{result['error_rate']:.3f}",
+                cell(latency["p50"]),
+                cell(latency["p95"]),
+                cell(latency["p99"]),
+            )
         )
 
     lines += [
@@ -281,7 +296,7 @@ def format_markdown(payload: dict[str, Any]) -> str:
         "",
         "Scored calls only; `n/a` means every call for that layout failed.",
         "",
-        "| Layout | " + " | ".join(payload["results"]) + " |",
+        _row("Layout", *payload["results"]),
         "|---|" + "---|" * len(payload["results"]),
     ]
     for layout in meta["corpus"]["layouts"]:
@@ -293,7 +308,7 @@ def format_markdown(payload: dict[str, Any]) -> str:
             cells.append(
                 f"{sum(d['items']['f1'] for d in docs) / len(docs):.3f}" if docs else "n/a"
             )
-        lines.append(f"| `{layout}` | " + " | ".join(cells) + " |")
+        lines.append(_row(f"`{layout}`", *cells))
 
     errors = [
         (p, d["layout"], d["error"])

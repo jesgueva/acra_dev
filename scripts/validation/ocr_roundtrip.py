@@ -23,6 +23,7 @@ Usage (from backend/, with the API on :8000):
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -31,15 +32,15 @@ import httpx
 from scripts.ocr_bench import corpus, scoring
 from scripts.ocr_bench.ground_truth import CORPUS
 
-BASE = "http://localhost:8000"
+#: Overridable so the gate can be pointed at a stack on a non-default port — a second worktree, or
+#: a developer already running something on 8000. `validation-run.sh` boots its own backend on the
+#: default, so the harness path is unchanged. Mirrors the e2e suite's E2E_API_URL convention.
+BASE = os.getenv("ACRA_API_URL", "http://localhost:8000")
 DEFAULT_OUT = "/tmp/acra-ocr-roundtrip"
 
 BASELINE_PATH = (
     Path(__file__).resolve().parents[2] / "backend" / "tests" / "fixtures" / "ocr" / "baseline.json"
 )
-
-_MIME_SUFFIX = {"image/png": ".png", "image/jpeg": ".jpg", "application/pdf": ".pdf"}
-
 
 def _login(client: httpx.Client) -> str:
     response = client.post(
@@ -65,8 +66,10 @@ def main() -> int:
 
     scores = []
     for spec in CORPUS:
+        # Name comes from the rendered path itself — `corpus.render()` already owns the
+        # mime-to-extension mapping, and duplicating it here let the two drift silently.
         payload = rendered[spec.layout].read_bytes()
-        filename = f"bol_{spec.layout}{_MIME_SUFFIX[spec.mime_type]}"
+        filename = rendered[spec.layout].name
 
         response = client.post(
             "/api/v1/deliveries/ocr",
