@@ -1,8 +1,11 @@
 """OCR Service — Vision LLM-based BOL field extraction.
 
 Two-tier pipeline:
-  1. Gemini 2.5 Flash  — primary (fast, cheap, JSON schema output)
-  2. Claude Sonnet 4.6 — fallback (used when Gemini fails or returns confidence == 0.0)
+  1. Gemini    — primary  (`settings.gemini_model`, JSON schema output)
+  2. Claude    — fallback (`settings.anthropic_model`, used when Gemini fails or confidence == 0.0)
+
+Both model IDs are configuration, not constants, so a swap does not require a code change and the
+A8-4 comparison bench can report the model that actually ran.
 
 Both providers receive the raw file bytes (JPEG, PNG, or PDF) encoded as base64.
 """
@@ -130,7 +133,7 @@ def _build_response(data: dict[str, Any], provider: str) -> OCRResponse:
 
 def _extract_with_gemini(file_bytes: bytes, content_type: str) -> OCRResponse:
     response = _get_gemini_client().models.generate_content(
-        model="gemini-2.5-flash",
+        model=settings.gemini_model,
         contents=[
             _OCR_EXTRACTION_INSTRUCTIONS,
             genai_types.Part.from_bytes(data=base64.b64encode(file_bytes).decode(), mime_type=content_type),
@@ -191,7 +194,7 @@ def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
         }
 
     response = _get_anthropic_client().messages.create(
-        model="claude-sonnet-4-6",
+        model=settings.anthropic_model,
         max_tokens=2048,
         tools=[_CLAUDE_TOOL],
         tool_choice={"type": "tool", "name": "extract_bol_fields"},

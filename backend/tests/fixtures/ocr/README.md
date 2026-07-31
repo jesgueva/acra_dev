@@ -20,7 +20,7 @@ Then copy the `header_accuracy`, `item_f1` and `numeric_accuracy` figures for ea
 `baseline.json`, along with the new `run` block. **Re-record deliberately, never to make a red gate
 go green** — a gate that gets rewritten whenever it fires measures nothing.
 
-`--delay 13` matters: `gemini-2.5-flash`'s free tier allows five requests per minute. Without
+`--delay 13` matters: Gemini's free tier allows only five requests per minute. Without
 pacing, most calls come back HTTP 429 and the run measures quota rather than extraction quality.
 
 ## `sample_bol_gridded.png`

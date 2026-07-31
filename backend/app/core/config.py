@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 480
     gemini_api_key: str = ""
     anthropic_api_key: str = ""
+    # Vision models behind the BOL extractor, primary then fallback. Configurable rather than
+    # hardcoded in `ocr_service` so swapping a model is a config change, and so the A8-4 comparison
+    # bench reports the model that actually ran instead of a constant duplicated in two places.
+    gemini_model: str = "gemini-2.5-pro"
+    anthropic_model: str = "claude-sonnet-4-6"
     # Browser origins allowed to call this API, comma-separated. The default is the frontend's
     # documented dev port; override it to run the stack anywhere else (a second worktree, an e2e
     # run on a free port, a deployed environment) without editing code.

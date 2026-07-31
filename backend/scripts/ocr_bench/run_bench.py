@@ -1,4 +1,4 @@
-"""Opt-in provider comparison bench — gemini-2.5-flash vs claude-sonnet-4-6.
+"""Opt-in provider comparison bench — the configured Gemini model vs the configured Claude model.
 
 Renders the labelled corpus, sends every document to each provider, scores the extractions against
 ground truth, and writes machine-readable evidence with enough run metadata to repeat the run.
@@ -36,10 +36,17 @@ from .ground_truth import CORPUS, BolSpec
 
 PROVIDERS = ("gemini", "claude")
 
-#: Model identifiers, read off the service so the bench cannot drift from what ships.
-MODELS = {"gemini": "gemini-2.5-flash", "claude": "claude-sonnet-4-6"}
-
 ENV_KEYS = {"gemini": "GEMINI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
+
+
+def models() -> dict[str, str]:
+    """Model IDs read from settings, so the bench cannot report a model that is not what ran.
+
+    Imported lazily for the same reason `_extractor` is: importing `app` loads backend settings.
+    """
+    from app.core.config import settings
+
+    return {"gemini": settings.gemini_model, "claude": settings.anthropic_model}
 
 
 def _extractor(provider: str) -> Callable[[bytes, str], Any]:
@@ -71,7 +78,7 @@ def run_metadata(providers: list[str], repeat: int) -> dict[str, Any]:
         "git_sha": _git_sha(),
         "host": f"{platform.system()} {platform.release()} {platform.machine()}",
         "python": platform.python_version(),
-        "models": {p: MODELS[p] for p in providers},
+        "models": {p: models()[p] for p in providers},
         "providers": providers,
         "repeat": repeat,
         "corpus": {
@@ -313,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=0.0,
         help=(
-            "seconds to pace between calls. gemini-2.5-flash's free tier allows 5 requests per "
+            "seconds to pace between calls. Gemini's free tier allows only 5 requests per "
             "minute, so --delay 13 keeps a single-provider run inside it"
         ),
     )

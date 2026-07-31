@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from app.core.config import settings
 from scripts.ocr_bench import run_bench, scoring
 from scripts.ocr_bench.ground_truth import BY_LAYOUT, CORPUS
 
@@ -194,7 +195,7 @@ def test_run_scores_every_document_and_records_metadata(tmp_path, monkeypatch):
 
     meta = payload["run"]
     assert meta["corpus"]["documents"] == len(CORPUS)
-    assert meta["models"]["gemini"] == "gemini-2.5-flash"
+    assert meta["models"]["gemini"] == settings.gemini_model
     assert meta["git_sha"]
     assert meta["scorer"]["item_match_threshold"] == scoring.ITEM_MATCH_THRESHOLD
     assert payload["results"]["gemini"]["calls"] == len(CORPUS)
@@ -316,5 +317,5 @@ def test_cli_writes_both_artifacts(tmp_path, monkeypatch):
     assert run_bench.main(["--provider", "gemini", "--out", str(tmp_path), "--quiet"]) == 0
 
     written = json.loads((tmp_path / "ocr-bench.json").read_text())
-    assert written["run"]["models"] == {"gemini": "gemini-2.5-flash"}
+    assert written["run"]["models"] == {"gemini": settings.gemini_model}
     assert (tmp_path / "ocr-bench.md").read_text().startswith("# OCR provider comparison")
