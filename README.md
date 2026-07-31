@@ -180,6 +180,39 @@ cd frontend && npm run build
 ./scripts/reset-db-and-seed.sh
 ```
 
+### Seeding at volume
+
+`seed_fake_data.py` takes a scale knob, so the same fixture can be grown for benchmarking. All
+arguments are forwarded through `reset-db-and-seed.sh`.
+
+```bash
+./scripts/reset-db-and-seed.sh --scale 50    # 1 200 deliveries / 3 600 lots / 400 work orders
+cd backend && ./.venv/bin/python scripts/seed_fake_data.py --help
+```
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--scale N` | `1` | Multiplies both volume axes: 24 deliveries and 8 work orders per unit |
+| `--deliveries N` | from `--scale` | Absolute delivery count, overriding `--scale` on that axis |
+| `--work-orders N` | from `--scale` | Absolute work-order count (`0` builds a lots-only corpus) |
+| `--materials M` | `6` | Size of the raw-material catalogue, for stressing per-product aggregation |
+| `--json` | off | Machine-readable summary (params, elapsed, per-table counts) |
+
+Two properties the seeder guarantees, both covered by `backend/tests/test_seed_scaling.py`:
+
+- **`--scale 1` is the demo fixture**, byte-for-byte. The e2e suite reads these exact rows, so the
+  default output is pinned by a golden-snapshot test.
+- **Scale N is a superset of scale 1.** Deliveries are generated from the row index with no RNG, so
+  re-running at a higher scale adds rows rather than conflicting with existing ones.
+
+Only the bare invocation reproduces the demo fixture — every flag in the table above changes the
+rows the e2e suite reads. `--materials` does so in **either** direction: lowering it drops materials
+from the catalogue just as surely as raising it adds them.
+
+Raising `--materials` also dilutes supply for the six materials work orders consume. Pair it with
+`--work-orders 0` or more `--deliveries`; if allocation runs short the seeder aborts before
+committing anything and names the knob to turn.
+
 ---
 
 ## Repository layout
@@ -189,7 +222,7 @@ acra_dev/
 ├── backend/            # FastAPI app (router → service → repository), Alembic, pytest
 │   ├── app/            #   main.py, core/ (config, db, security, rbac, audit), models, routers, schemas, services
 │   ├── alembic/        #   migrations (versions/)
-│   ├── scripts/        #   create_admin.py, seed_fake_data.py
+│   ├── scripts/        #   create_admin.py, seed_fake_data.py (--scale N for volume)
 │   └── tests/          #   pytest suite (+ integration/)
 ├── frontend/           # Next.js 16 App Router + shadcn/ui
 │   ├── app/            #   [locale]/ routes, api/auth/ server proxies, layout

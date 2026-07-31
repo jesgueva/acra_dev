@@ -2,7 +2,11 @@
 # Reset local Docker Postgres (wipes volume), apply migrations, and run seed_fake_data.py.
 #
 # Usage (from repo root):
-#   ./scripts/reset-db-and-seed.sh
+#   ./scripts/reset-db-and-seed.sh                  # the demo fixture (scale 1)
+#   ./scripts/reset-db-and-seed.sh --scale 50       # 50x volume, for benchmarking
+#   ./scripts/reset-db-and-seed.sh --deliveries 480 --work-orders 0 --materials 60
+#
+# Arguments are forwarded verbatim to seed_fake_data.py; run it with --help for the full set.
 #
 # Requires: Docker with Compose, Python deps installed for backend (see CLAUDE.md).
 # Expects Postgres from docker-compose.yml on host port 5433 unless DATABASE_URL overrides.
@@ -69,7 +73,7 @@ echo "==> Applying migrations (alembic upgrade head)..."
 echo "==> Seeding fake data..."
 (
   cd "$ROOT/backend"
-  "$PY" scripts/seed_fake_data.py
+  "$PY" scripts/seed_fake_data.py "$@"
 )
 
 echo "==> Done. Default demo logins: admin / admin123, supervisor1 / demo123 (see seed script)."
