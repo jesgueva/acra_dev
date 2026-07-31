@@ -105,8 +105,24 @@ def test_gate_tolerates_a_drop_inside_the_band(baseline):
 
 
 def test_gate_ignores_metrics_absent_from_the_baseline():
-    """A baseline recorded before a metric existed must not fail the run for it."""
-    assert scoring.compare_to_baseline({"item_f1": 0.0}, {"header_accuracy": 1.0}) == []
+    """A baseline recorded before a metric existed must not fail the run for that metric.
+
+    Only metrics the baseline actually records are enforced, so adding a new metric to the scorer
+    does not retroactively fail every run against an older baseline.
+    """
+    measured = {"header_accuracy": 1.0, "item_f1": 0.0}
+    assert scoring.compare_to_baseline(measured, {"header_accuracy": 1.0}) == []
+
+
+def test_gate_fails_when_a_baselined_metric_is_missing_from_the_run():
+    """The converse, and the more dangerous direction.
+
+    If the baseline enforces a metric the measured run does not report, that must fail rather than
+    silently pass — otherwise dropping a metric from the bench would look like a green gate.
+    """
+    failures = scoring.compare_to_baseline({"item_f1": 1.0}, {"header_accuracy": 0.96})
+    assert [f.metric for f in failures] == ["header_accuracy"]
+    assert failures[0].measured == 0.0
 
 
 # ---------------------------------------------------------------------------
