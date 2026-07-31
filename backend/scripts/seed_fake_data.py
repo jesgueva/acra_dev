@@ -2,7 +2,18 @@
 Seed deterministic fake data for local development and demos.
 
 Usage:
-    python scripts/seed_fake_data.py
+    python scripts/seed_fake_data.py                  # the demo fixture (scale 1)
+    python scripts/seed_fake_data.py --scale 50       # 50× the volume, for benchmarking
+    python scripts/seed_fake_data.py --deliveries 400 --work-orders 0
+    python scripts/seed_fake_data.py --scale 10 --json
+
+`--scale 1` is the **demo fixture contract**: its output is bit-identical to what this script
+produced before the scale knob existed, because the Playwright e2e suite logs in as these users and
+asserts against these rows. Scale N is a strict superset of scale 1 — index 1..24 always generate
+the same deliveries — so re-running at a higher scale adds rows instead of conflicting with them.
+
+There is deliberately no RNG and no `--seed`: every value is arithmetic on the row index, so two
+runs of the same arguments produce the same database without needing a seed to be recorded.
 
 Safe to re-run:
 - roles, privileges, users, contacts, products, alerts are upserted
@@ -12,17 +23,25 @@ Safe to re-run:
 Schema: deliveries and shipments hang off delivery_notes, which carry the partner, document
 number and date; delivery_items and inventory_lots reference products;
 quantities are integer ×100 where applicable (inventory, delivery lines, low-stock thresholds).
+
+Only the bare invocation reproduces the demo fixture — every volume flag changes the rows the e2e
+suite reads. `--help` documents each flag; the one interaction worth stating here is that raising
+`--materials` dilutes supply for the six materials work orders consume, so pair it with
+`--work-orders 0` or a higher `--deliveries` if allocation runs short.
 """
 
+import argparse
 import asyncio
+import json
 import os
 import sys
+import time
 from collections import defaultdict
 
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -156,43 +175,21 @@ USER_SPECS = [
     },
 ]
 
-RAW_MATERIALS = [
-    {
-        "material_type": "Steel Rod",
-        "locations": ["RACK-A1", "RACK-A2"],
-        "threshold": Decimal("40"),
-        "lot_prefix": "STL",
-    },
-    {
-        "material_type": "Aluminum Sheet",
-        "locations": ["RACK-B1", "RACK-B2"],
-        "threshold": Decimal("35"),
-        "lot_prefix": "ALM",
-    },
-    {
-        "material_type": "Plastic Resin",
-        "locations": ["BULK-01", "BULK-02"],
-        "threshold": Decimal("60"),
-        "lot_prefix": "RSN",
-    },
-    {
-        "material_type": "Printed Film",
-        "locations": ["RACK-C1", "RACK-C2"],
-        "threshold": Decimal("30"),
-        "lot_prefix": "FIL",
-    },
-    {
-        "material_type": "Cardboard Core",
-        "locations": ["RACK-D1", "RACK-D2"],
-        "threshold": Decimal("20"),
-        "lot_prefix": "CRD",
-    },
-    {
-        "material_type": "Adhesive Roll",
-        "locations": ["RACK-E1", "RACK-E2"],
-        "threshold": Decimal("25"),
-        "lot_prefix": "ADH",
-    },
+@dataclass(frozen=True)
+class MaterialSpec:
+    material_type: str
+    locations: tuple[str, ...]
+    threshold: Decimal
+    lot_prefix: str
+
+
+BASE_MATERIALS = [
+    MaterialSpec("Steel Rod", ("RACK-A1", "RACK-A2"), Decimal("40"), "STL"),
+    MaterialSpec("Aluminum Sheet", ("RACK-B1", "RACK-B2"), Decimal("35"), "ALM"),
+    MaterialSpec("Plastic Resin", ("BULK-01", "BULK-02"), Decimal("60"), "RSN"),
+    MaterialSpec("Printed Film", ("RACK-C1", "RACK-C2"), Decimal("30"), "FIL"),
+    MaterialSpec("Cardboard Core", ("RACK-D1", "RACK-D2"), Decimal("20"), "CRD"),
+    MaterialSpec("Adhesive Roll", ("RACK-E1", "RACK-E2"), Decimal("25"), "ADH"),
 ]
 
 SUPPLIERS = [
@@ -338,6 +335,191 @@ WORK_ORDER_SEEDS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Planning layer — pure, no database
+#
+# Everything below decides *what rows should exist*; nothing here touches a session. Keeping the
+# decision pure is what lets `tests/test_seed_scaling.py` pin the scale-1 fixture with a golden
+# snapshot in milliseconds — the regression lock protecting the Playwright e2e suite, which logs in
+# as these users and asserts against these rows.
+# ---------------------------------------------------------------------------
+
+DELIVERIES_PER_SCALE = 24  # the pre-scale-knob delivery count; one scale unit
+WORK_ORDERS_PER_SCALE = len(WORK_ORDER_SEEDS)
+
+# Delivery dates step 2 days per index. Left unbounded, scale 100 reaches ~13 years back, which
+# reads as a bug in a demo; wrapping keeps the corpus inside ~2 years. Indices 1..24 are unaffected
+# (index % 365 == index), so the demo fixture is untouched. Dates are not unique-constrained, so
+# the collisions this introduces at high scale are harmless.
+DATE_WINDOW_INDICES = 365
+
+
+@dataclass(frozen=True)
+class DeliveryItemSpec:
+    material_type: str
+    lot_prefix: str
+    storage_location: str
+    line_number: int  # 1-based position within the delivery
+    pallets: int
+    units_per_pallet: int
+    quantity_x100: int
+
+
+@dataclass(frozen=True)
+class DeliverySpec:
+    index: int
+    bol_reference: str
+    supplier: str
+    carrier: str
+    delivery_date: date
+    items: tuple[DeliveryItemSpec, ...]
+
+
+def plan_materials(count: int) -> list[MaterialSpec]:
+    """The 6 named materials, then deterministic filler to reach `count`.
+
+    Filler exists for A8-6: the availability aggregation groups by (item, state), so stressing it
+    needs more *products*, not just more lots against the same six.
+    """
+    if count <= len(BASE_MATERIALS):
+        return list(BASE_MATERIALS[:count])
+
+    materials = list(BASE_MATERIALS)
+    for i in range(len(BASE_MATERIALS), count):
+        n = i + 1
+        materials.append(
+            MaterialSpec(
+                material_type=f"Synthetic Material {n:03d}",
+                locations=(f"RACK-S{n:03d}-1", f"RACK-S{n:03d}-2"),
+                # Cycles 20/30/40/50/60 — the same spread as the named materials.
+                threshold=Decimal(20 + (i % 5) * 10),
+                lot_prefix=f"SYN{n:03d}",
+            )
+        )
+    return materials
+
+
+def plan_deliveries(
+    count: int, today: date, materials: list[MaterialSpec] | None = None
+) -> list[DeliverySpec]:
+    """Every field is arithmetic on `index`/`offset` — no RNG, no clock beyond `today`."""
+    catalogue = list(BASE_MATERIALS) if materials is None else materials
+    specs: list[DeliverySpec] = []
+
+    for index in range(1, count + 1):
+        bol_reference = f"DEMO-BOL-{today.year}-{index:03d}"
+        delivery_date = today - timedelta(days=(index % DATE_WINDOW_INDICES) * 2)
+        item_count = 2 + (index % 3)
+
+        items = []
+        for offset in range(item_count):
+            material = catalogue[(index + offset - 1) % len(catalogue)]
+            pallets = 2 + ((index + offset) % 8)
+            units_per_pallet = 100 + (((index * 3 + offset) % 10) * 50)
+            items.append(
+                DeliveryItemSpec(
+                    material_type=material.material_type,
+                    lot_prefix=material.lot_prefix,
+                    storage_location=material.locations[offset % len(material.locations)],
+                    line_number=offset + 1,
+                    pallets=pallets,
+                    units_per_pallet=units_per_pallet,
+                    quantity_x100=pallets * units_per_pallet * 100,
+                )
+            )
+
+        specs.append(
+            DeliverySpec(
+                index=index,
+                bol_reference=bol_reference,
+                supplier=SUPPLIERS[(index - 1) % len(SUPPLIERS)],
+                carrier=CARRIERS[(index - 1) % len(CARRIERS)],
+                delivery_date=delivery_date,
+                items=tuple(items),
+            )
+        )
+
+    return specs
+
+
+def plan_work_orders(count: int) -> list[WorkOrderSeed]:
+    """Cycle the 8 base seeds, suffixing replicas.
+
+    `create_demo_work_orders` skips on an exact `WorkOrder.product` match, so replicas that reused
+    the base name would be silently dropped and every scale would yield 8 work orders. Replica 0
+    keeps the bare name, which is what preserves the scale-1 fixture.
+    """
+    orders: list[WorkOrderSeed] = []
+    for i in range(count):
+        base = WORK_ORDER_SEEDS[i % len(WORK_ORDER_SEEDS)]
+        replica = i // len(WORK_ORDER_SEEDS)
+        product = base.product if replica == 0 else f"{base.product} #{replica + 1}"
+        orders.append(replace(base, product=product))
+    return orders
+
+
+def material_balance(
+    deliveries: list[DeliverySpec], work_orders: list[WorkOrderSeed]
+) -> dict[str, tuple[int, int]]:
+    """Planned (supply_x100, demand_x100) per material type.
+
+    `allocate_inventory` aborts the whole seed when a material runs short. This makes that
+    predictable from the plan alone, so the scaling tests can prove the default ratios stay
+    feasible instead of arguing it from supply and demand both being multiplied by N.
+    """
+    supply: dict[str, int] = defaultdict(int)
+    demand: dict[str, int] = defaultdict(int)
+
+    for delivery in deliveries:
+        for item in delivery.items:
+            supply[item.material_type] += item.quantity_x100
+
+    for order in work_orders:
+        # Work orders with status "created" are seeded unallocated.
+        if order.status == "created":
+            continue
+        for material_type, qty_display in order.materials:
+            demand[material_type] += int(qty_display * Decimal("100"))
+
+    return {
+        material_type: (supply.get(material_type, 0), demand.get(material_type, 0))
+        for material_type in set(supply) | set(demand)
+    }
+
+
+def resolve_volumes(args: argparse.Namespace) -> tuple[int, int, int]:
+    """(delivery_count, work_order_count, material_count) from the parsed CLI."""
+    deliveries = (
+        args.deliveries
+        if args.deliveries is not None
+        else DELIVERIES_PER_SCALE * args.scale
+    )
+    work_orders = (
+        args.work_orders
+        if args.work_orders is not None
+        else WORK_ORDERS_PER_SCALE * args.scale
+    )
+    return deliveries, work_orders, args.materials
+
+
+# asyncpg binds one parameter per IN element and the PostgreSQL wire protocol caps a statement at
+# 32 767 of them. Measured: a 24 000-element IN succeeds, 65 000 raises InterfaceError. Chunking
+# keeps the existence pre-checks O(1) queries per 10 000 rows instead of one per row, without
+# reintroducing a ceiling — unchunked, --scale would have died around 1 365.
+IN_CLAUSE_CHUNK = 10_000
+
+
+async def _existing_values(db: AsyncSession, column, values: list[str], *extra_where) -> set[str]:
+    """Which of `values` already exist in `column`, fetched in bind-parameter-safe chunks."""
+    found: set[str] = set()
+    for start in range(0, len(values), IN_CLAUSE_CHUNK):
+        chunk = values[start : start + IN_CLAUSE_CHUNK]
+        stmt = select(column).where(column.in_(chunk), *extra_where)
+        rows = await db.execute(stmt)
+        found.update(row[0] for row in rows.fetchall())
+    return found
+
+
 async def ensure_contact(db: AsyncSession, name: str, type_: str) -> Contact:
     result = await db.execute(
         select(Contact).where(Contact.name == name, Contact.type == type_)
@@ -466,6 +648,7 @@ async def ensure_low_stock_alert(
 
 async def create_demo_deliveries(
     db: AsyncSession,
+    specs: list[DeliverySpec],
     *,
     created_by: int,
     supplier_ids: dict[str, int],
@@ -475,30 +658,27 @@ async def create_demo_deliveries(
     created_deliveries = 0
     created_delivery_items = 0
     created_inventory_lots = 0
-    today = date.today()
 
-    for index in range(1, 25):
-        bol_reference = f"DEMO-BOL-{today.year}-{index:03d}"
-        existing = await db.execute(
-            select(DeliveryNote.id).where(
-                DeliveryNote.type == DeliveryNoteType.INBOUND.value,
-                DeliveryNote.document_number == bol_reference,
-            )
-        )
-        if existing.scalar_one_or_none() is not None:
+    # One pre-fetch per 10 000 deliveries instead of a SELECT per delivery: at scale 100 that is
+    # 2 400 round-trips replaced by one.
+    already_seeded = await _existing_values(
+        db,
+        DeliveryNote.document_number,
+        [s.bol_reference for s in specs],
+        DeliveryNote.type == DeliveryNoteType.INBOUND.value,
+    )
+
+    for spec in specs:
+        if spec.bol_reference in already_seeded:
             continue
-
-        delivery_date = today - timedelta(days=index * 2)
-        supplier_name = SUPPLIERS[(index - 1) % len(SUPPLIERS)]
-        carrier_name = CARRIERS[(index - 1) % len(CARRIERS)]
 
         # §4.1/§4.2 — the paper document that arrived with the goods owns the
         # supplier, reference and date.
         note = DeliveryNote(
             type=DeliveryNoteType.INBOUND.value,
-            partner_id=supplier_ids[supplier_name],
-            document_number=bol_reference,
-            document_date=delivery_date.strftime("%d/%m/%y"),
+            partner_id=supplier_ids[spec.supplier],
+            document_number=spec.bol_reference,
+            document_date=spec.delivery_date.strftime("%d/%m/%y"),
             uploaded=True,
             created_by=created_by,
         )
@@ -507,7 +687,7 @@ async def create_demo_deliveries(
 
         delivery = Delivery(
             delivery_note_id=note.id,
-            carrier_id=carrier_ids[carrier_name],
+            carrier_id=carrier_ids[spec.carrier],
             notes=None,
             created_by=created_by,
         )
@@ -515,47 +695,41 @@ async def create_demo_deliveries(
         await db.flush()
         created_deliveries += 1
 
-        item_count = 2 + (index % 3)
-        pairs: list[tuple[DeliveryItem, InventoryLot, Product]] = []
+        pairs: list[tuple[DeliveryItem, InventoryLot]] = []
 
-        for offset in range(item_count):
-            material = RAW_MATERIALS[(index + offset - 1) % len(RAW_MATERIALS)]
-            product = products_by_name[str(material["material_type"])]
-            pallets = 2 + ((index + offset) % 8)
-            units_per_pallet = 100 + (((index * 3 + offset) % 10) * 50)
-            total_units = pallets * units_per_pallet
-            quantity_x100 = int(total_units * 100)
+        for item_spec in spec.items:
+            product = products_by_name[item_spec.material_type]
 
             item = DeliveryItem(
                 delivery_id=delivery.id,
                 product_id=product.id,
                 description=(
-                    f"Demo batch — {material['lot_prefix']}-"
-                    f"{delivery_date.strftime('%y%m%d')}-{offset + 1}"
+                    f"Demo batch — {item_spec.lot_prefix}-"
+                    f"{spec.delivery_date.strftime('%y%m%d')}-{item_spec.line_number}"
                 ),
-                quantity=quantity_x100,
-                pallets=pallets,
-                units_per_pallet=units_per_pallet,
+                quantity=item_spec.quantity_x100,
+                pallets=item_spec.pallets,
+                units_per_pallet=item_spec.units_per_pallet,
                 leftover=None,
             )
             db.add(item)
 
             lot = InventoryLot(
                 product_id=product.id,
-                lot_number=f"{material['lot_prefix']}-{bol_reference}-{offset + 1}",
-                storage_location=material["locations"][offset % len(material["locations"])],
+                lot_number=f"{item_spec.lot_prefix}-{spec.bol_reference}-{item_spec.line_number}",
+                storage_location=item_spec.storage_location,
                 status="in_storage",
-                quantity_on_hand=quantity_x100,
+                quantity_on_hand=item_spec.quantity_x100,
                 source_delivery_item_id=None,
-                pallet_number=pallets,
+                pallet_number=item_spec.pallets,
             )
             db.add(lot)
-            pairs.append((item, lot, product))
+            pairs.append((item, lot))
             created_delivery_items += 1
 
         await db.flush()
 
-        for item, lot, _product in pairs:
+        for item, lot in pairs:
             lot.source_delivery_item_id = item.id
             item.inventory_lot_id = lot.id
             db.add(
@@ -611,7 +785,10 @@ async def allocate_inventory(
     if total_available < remaining_x100 - 1e-3:
         raise RuntimeError(
             f"Not enough seeded inventory for '{material_type}'. "
-            f"Need {required_qty_display} (×100={remaining_x100}), have {total_available} on hand."
+            f"Need {required_qty_display} (×100={remaining_x100}), have {total_available} on hand.\n"
+            "Work-order demand has outrun delivery supply. Raise --deliveries (or --scale), "
+            "lower --work-orders, or drop --materials back towards 6 — extra materials dilute "
+            "the six that work orders actually consume."
         )
 
     for item in inventory_items:
@@ -668,21 +845,24 @@ async def ensure_finished_inventory(
 
 async def create_demo_work_orders(
     db: AsyncSession,
+    specs: list[WorkOrderSeed],
     *,
     created_by: int,
+    today: date,
 ) -> tuple[int, int, int, int]:
     created_work_orders = 0
     created_work_order_materials = 0
     created_allocations = 0
     created_finished_inventory = 0
     items_by_type = await build_inventory_index(db)
-    today = date.today()
 
-    for sequence, spec in enumerate(WORK_ORDER_SEEDS, start=1):
-        existing = await db.execute(
-            select(WorkOrder.id).where(WorkOrder.product == spec.product)
-        )
-        if existing.scalar_one_or_none() is not None:
+    # Same batching as the delivery pre-check: one query per 10 000 instead of one per work order.
+    already_seeded = await _existing_values(
+        db, WorkOrder.product, [s.product for s in specs]
+    )
+
+    for sequence, spec in enumerate(specs, start=1):
+        if spec.product in already_seeded:
             continue
 
         now = datetime.now(timezone.utc)
@@ -745,7 +925,19 @@ async def create_demo_work_orders(
     )
 
 
-async def seed_fake_data() -> None:
+async def seed_fake_data(
+    *,
+    delivery_count: int = DELIVERIES_PER_SCALE,
+    work_order_count: int = WORK_ORDERS_PER_SCALE,
+    material_count: int = len(BASE_MATERIALS),
+    today: date | None = None,
+) -> dict[str, int]:
+    """Write the planned fixture and return the per-table created counts."""
+    today = today or date.today()
+    materials = plan_materials(material_count)
+    delivery_specs = plan_deliveries(delivery_count, today, materials)
+    work_order_specs = plan_work_orders(work_order_count)
+
     engine = create_async_engine(DATABASE_URL, echo=False)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -796,14 +988,15 @@ async def seed_fake_data() -> None:
             carrier_ids[name] = (await ensure_contact(db, name, "carrier")).id
 
         products_by_name: dict[str, Product] = {}
-        for material in RAW_MATERIALS:
-            name = str(material["material_type"])
-            products_by_name[name] = await ensure_product(db, name, category="raw")
+        for material in materials:
+            products_by_name[material.material_type] = await ensure_product(
+                db, material.material_type, category="raw"
+            )
 
         admin_user = user_map["admin"]
-        for material in RAW_MATERIALS:
-            product = products_by_name[str(material["material_type"])]
-            threshold_x100 = int((material["threshold"] * Decimal("100")).quantize(Decimal("1")))
+        for material in materials:
+            product = products_by_name[material.material_type]
+            threshold_x100 = int((material.threshold * Decimal("100")).quantize(Decimal("1")))
             alert_create_count += int(
                 await ensure_low_stock_alert(
                     db,
@@ -815,42 +1008,177 @@ async def seed_fake_data() -> None:
 
         delivery_counts = await create_demo_deliveries(
             db,
+            delivery_specs,
             created_by=user_map["clerk1"].id,
             supplier_ids=supplier_ids,
             carrier_ids=carrier_ids,
             products_by_name=products_by_name,
         )
         work_order_counts = await create_demo_work_orders(
-            db, created_by=user_map["supervisor1"].id
+            db,
+            work_order_specs,
+            created_by=user_map["supervisor1"].id,
+            # The same `today` the deliveries were planned against, so a run straddling midnight
+            # cannot date the two halves of one seed differently.
+            today=today,
         )
 
         await db.commit()
 
-        print("Seed complete.")
-        print()
-        print("Users ready:")
-        print("  admin / admin123")
-        print("  supervisor1 / demo123")
-        print("  clerk1 / demo123")
-        print("  operator1 / demo123")
-        print("  operator2 / demo123")
-        print()
-        print("Changes applied:")
-        print(f"  roles created: {role_create_count}")
-        print(f"  privileges assigned: {role_privilege_count}")
-        print(f"  users created: {user_create_count}")
-        print(f"  user-role assignments created: {role_assignment_count}")
-        print(f"  low-stock alerts created: {alert_create_count}")
-        print(f"  deliveries created: {delivery_counts[0]}")
-        print(f"  delivery items created: {delivery_counts[1]}")
-        print(f"  raw inventory lots created: {delivery_counts[2]}")
-        print(f"  work orders created: {work_order_counts[0]}")
-        print(f"  work-order materials created: {work_order_counts[1]}")
-        print(f"  material allocations created: {work_order_counts[2]}")
-        print(f"  finished inventory lots created: {work_order_counts[3]}")
+        counts = {
+            "roles": role_create_count,
+            "role_privileges": role_privilege_count,
+            "users": user_create_count,
+            "user_role_assignments": role_assignment_count,
+            "low_stock_alerts": alert_create_count,
+            "deliveries": delivery_counts[0],
+            "delivery_items": delivery_counts[1],
+            "raw_inventory_lots": delivery_counts[2],
+            "work_orders": work_order_counts[0],
+            "work_order_materials": work_order_counts[1],
+            "material_allocations": work_order_counts[2],
+            "finished_inventory_lots": work_order_counts[3],
+        }
 
     await engine.dispose()
+    return counts
+
+
+COUNT_LABELS = {
+    "roles": "roles created",
+    "role_privileges": "privileges assigned",
+    "users": "users created",
+    "user_role_assignments": "user-role assignments created",
+    "low_stock_alerts": "low-stock alerts created",
+    "deliveries": "deliveries created",
+    "delivery_items": "delivery items created",
+    "raw_inventory_lots": "raw inventory lots created",
+    "work_orders": "work orders created",
+    "work_order_materials": "work-order materials created",
+    "material_allocations": "material allocations created",
+    "finished_inventory_lots": "finished inventory lots created",
+}
+
+
+def print_summary(counts: dict[str, int]) -> None:
+    print("Seed complete.")
+    print()
+    print("Users ready:")
+    print("  admin / admin123")
+    print("  supervisor1 / demo123")
+    print("  clerk1 / demo123")
+    print("  operator1 / demo123")
+    print("  operator2 / demo123")
+    print()
+    print("Changes applied:")
+    # Drive the loop off `counts`, not off COUNT_LABELS: a count added without a label then still
+    # prints (under a derived name) instead of silently vanishing from the summary or KeyError-ing.
+    for key, value in counts.items():
+        print(f"  {COUNT_LABELS.get(key, key.replace('_', ' '))}: {value}")
+
+
+def positive_int(raw: str) -> int:
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or greater, got {value}")
+    return value
+
+
+def non_negative_int(raw: str) -> int:
+    value = int(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {value}")
+    return value
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Seed deterministic fake data. Scale 1 is the demo fixture the e2e suite "
+        "depends on; higher scales are benchmark corpora.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--scale",
+        type=positive_int,
+        default=1,
+        metavar="N",
+        help=f"volume multiplier: {DELIVERIES_PER_SCALE} deliveries and "
+        f"{WORK_ORDERS_PER_SCALE} work orders per unit (default: 1)",
+    )
+    parser.add_argument(
+        "--deliveries",
+        type=non_negative_int,
+        default=None,
+        metavar="N",
+        help="absolute delivery count, overriding --scale on this axis",
+    )
+    parser.add_argument(
+        "--work-orders",
+        type=non_negative_int,
+        default=None,
+        metavar="N",
+        help="absolute work-order count, overriding --scale on this axis",
+    )
+    parser.add_argument(
+        "--materials",
+        type=positive_int,
+        default=len(BASE_MATERIALS),
+        metavar="M",
+        help=f"size of the raw-material catalogue (default: {len(BASE_MATERIALS)}). Any other "
+        "value, higher or lower, changes which material each delivery line draws and so stops "
+        "reproducing the demo fixture.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit a machine-readable summary instead of prose (feeds the A8-2 harness)",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    delivery_count, work_order_count, material_count = resolve_volumes(args)
+
+    started = time.monotonic()
+    try:
+        counts = asyncio.run(
+            seed_fake_data(
+                delivery_count=delivery_count,
+                work_order_count=work_order_count,
+                material_count=material_count,
+            )
+        )
+    except RuntimeError as exc:
+        # Allocation ran out of stock. That is a choice-of-arguments problem, not a crash, so it
+        # gets a clean message instead of a traceback. Nothing was committed — the session exits
+        # without commit, so the database is untouched.
+        print(f"Seed aborted: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    elapsed = time.monotonic() - started
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "params": {
+                        "scale": args.scale,
+                        "deliveries": delivery_count,
+                        "work_orders": work_order_count,
+                        "materials": material_count,
+                    },
+                    "elapsed_seconds": round(elapsed, 3),
+                    "counts": counts,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print_summary(counts)
+        print()
+        print(f"Elapsed: {elapsed:.2f}s")
 
 
 if __name__ == "__main__":
-    asyncio.run(seed_fake_data())
+    main()

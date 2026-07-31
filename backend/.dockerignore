@@ -1,0 +1,32 @@
+# Keep the backend build context small and free of anything host- or secret-specific.
+
+# Virtualenvs — a host .venv is the wrong platform and dwarfs the rest of the context.
+.venv/
+venv/
+
+# Python build/test detritus. The `**/` prefix matters: a bare `__pycache__/` only matches at the
+# context root, so nested ones (app/**, tests/**) would still be copied into the image.
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/*.egg-info/
+**/.pytest_cache/
+**/.mypy_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Secrets. Only the .example templates belong in an image.
+.env
+.env.*
+!.env.example
+
+# tests/ is deliberately NOT excluded: requirements.lock already installs pytest, so keeping the
+# suite in the image costs a few hundred KB and buys a reviewer
+# `docker compose run --rm backend pytest tests/` without a local Python at all. That is the
+# clean-environment reproducibility A10-1 exists for.
+#
+# Caveat, since the build context here is backend/: the repo-root files (.nvmrc,
+# frontend/package.json, .github/workflows/ci.yml, README.md) are NOT in the image, so the
+# repo-parity tests in tests/test_packaging.py skip when run this way. They are guarded by
+# `@requires_repo_root` and still run on a checkout and in CI.

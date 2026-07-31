@@ -76,7 +76,7 @@ What belongs in this repository vs. elsewhere:
 | Secrets / credentials | **never committed** — local `.env` / `.env.local` only (templates: `*.example`) |
 | Generated/build output | **git-ignored** (`.next/`, `__pycache__/`, `.venv/`, coverage) |
 | Large binaries, datasets, exported reports, screenshots, course material | **out of this repo** (separate documentation archive) |
-| Database data | the Docker volume; reproducible from migrations + `seed_fake_data.py`, never committed |
+| Database data | the Docker volume; reproducible from migrations + `seed_fake_data.py` (`--scale N` for volume), never committed |
 
 Rule of thumb: this repo holds **everything needed to build and run the system, and nothing
 that can be regenerated or that must stay private.**

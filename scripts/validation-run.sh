@@ -13,6 +13,8 @@
 #   ocr-roundtrip.txt            real vision-LLM BOL extraction, gated against the
 #                                recorded baseline (skipped w/o API key)
 #   ocr-corpus/                  the labelled synthetic BOL corpus that was uploaded
+#   api-latency-*.json/.txt      per-endpoint p50/p95/p99 latency (A8-2 benchmark harness)
+#   concurrency-*.json/.txt      three-arm stock-drawdown ablation (A8-5 comparative study)
 #   ocr-bench/ocr-bench.json     gemini vs claude head-to-head, machine-readable (A8-4)
 #   ocr-bench/ocr-bench.md       the same comparison as a table for the writeup
 #
@@ -113,7 +115,24 @@ else
   echo "  OCR round-trip SKIPPED (no API key)"
 fi
 
-say "    6c  OCR provider comparison bench (A8-4)"
+say "    6c  API latency benchmark"
+# Writes its own provenance-stamped artifacts via app.core.benchmark, so no hdr() wrapper here.
+( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/api_latency_bench.py" "$OUT" ) \
+  > "$OUT/api-latency-bench.log" 2>&1 \
+  && echo "  API latency benchmark captured" \
+  || { echo "  API latency benchmark FAILED (see api-latency-bench.log)"; tail -5 "$OUT/api-latency-bench.log"; }
+
+say "    6d  Comparative concurrency study (A8-5)"
+# Also self-provenanced, so no hdr() wrapper. A reduced sweep: the committed evidence run uses the
+# full 2,4,8,16,32 x 5, which takes minutes and is not what a validation pass is for.
+# Safe against the seeded database — every row it creates is uuid-tagged and torn down by id.
+( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/concurrency_bench.py" "$OUT" \
+    --levels 2,8,32 --rounds 3 ) \
+  > "$OUT/concurrency-bench.log" 2>&1 \
+  && echo "  Concurrency ablation captured" \
+  || { echo "  Concurrency ablation FAILED (see concurrency-bench.log)"; tail -5 "$OUT/concurrency-bench.log"; }
+
+say "    6e  OCR provider comparison bench (A8-4)"
 if [[ -n "${GEMINI_API_KEY:-}" && -n "${ANTHROPIC_API_KEY:-}" ]]; then
   ( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" -m scripts.ocr_bench.run_bench \
       --provider both --repeat "${OCR_BENCH_REPEAT:-1}" --out "$OUT/ocr-bench" --quiet ) \

@@ -75,7 +75,7 @@ acra_dev/
 │   │   ├── routers/         # HTTP adapters (one per component surface)
 │   │   └── services/        # business logic + transactions
 │   ├── alembic/versions/    # migrations — schema evolution (001→008, + Phase 2 stub)
-│   ├── scripts/             # create_admin.py, seed_fake_data.py (deterministic local data)
+│   ├── scripts/             # create_admin.py, seed_fake_data.py (deterministic local data, --scale N)
 │   └── tests/               # pytest: unit (mocked) + integration/ + schema (live DB)
 ├── frontend/
 │   ├── app/[locale]/        # operator-facing route surfaces (dashboard, inventory, receiving, …)
@@ -83,7 +83,7 @@ acra_dev/
 │   ├── src/components/      # feature + layout components (shadcn/ui design system)
 │   └── messages/            # next-intl catalogs → C-10 i18n
 ├── scripts/                 # reset-db-and-seed.sh, smoke-test.sh
-├── docker-compose.yml       # PostgreSQL 15 (host 5433) — the DB container
+├── docker-compose.yml       # full stack: db → migrate → backend → frontend (+ seed profile)
 └── docs/                    # this note + RISK_LOG.md
 ```
 
@@ -109,8 +109,9 @@ carried by `MovementType` and `StockReservation` for the future ledger, and by
 
 The authoritative build target — table shapes, the delete/add/migrate list from the ACR-25 decision
 gate, and which ticket owns each piece — is `acra_docs/reference/target_schema.md` (ACR-26).
-Alembic revisions `010` (stock reservations), `011` (production worksheets) and `012` (delivery
-notes) are taken; the next available revision is **`013`**.
+Alembic revisions `010` (stock reservations), `011` (production worksheets), `012` (delivery
+notes), `013` (shipping privileges) and `014` (shipment invoices) are taken; the next available
+revision is **`015`**.
 
 ### ADR-02 — worksheet-close concurrency (spiked in ACR-30)
 
@@ -134,6 +135,36 @@ PostgreSQL: 8 parallel closes × 5 rounds, one winner and correct on-hand every 
 mutation-verified — deleting the version guard turns two tests red, deleting the row locks turns
 the oversell test red — so it cannot pass by accident.
 
+#### Measured against the alternatives (A8-5, ACR-44)
+
+Step 1 rejected SERIALIZABLE on the assertion that it "needs a retry loop to be usable at all".
+`scripts/validation/concurrency_bench.py` turns that into a number. One workload — N concurrent
+closers drawing stock from one product — with only the concurrency control varied; 5 rounds per
+cell, `--stock 1000000 --draw 1000`, PostgreSQL 15.18:
+
+| arm | lost updates | success @32 | goodput @2 → @32 (closes/s) |
+|---|---|---|---|
+| unguarded read-modify-write | **281 across the sweep** | 3% | 128 → **10** |
+| **ADR-02 optimistic + row locks** | **0** | **100%** | 95 → **227** |
+| SERIALIZABLE, no retry | 0 | 3% | 156 → 52 |
+| SERIALIZABLE + 5 bounded retries | 0 | 21% | 237 → 77 |
+
+Three findings:
+
+1. **ADR-02's protocol is the only arm that scales.** It is alone in holding 100% success and zero
+   lost updates at every level from 2 to 32, and alone in *gaining* goodput as concurrency rises
+   (95 → 227 closes/s). Every other arm's goodput collapses.
+2. **A bounded retry loop does not rescue SERIALIZABLE.** Five retries hold 100% only to 4 closers;
+   by 32 the arm still drops 79% of its work. "Needs a retry loop" understates it — it needs an
+   *unbounded* one, and that is a queue, not a retry.
+3. **Raw throughput inverts the result, which is why the study reports goodput.** Bare SERIALIZABLE
+   posts the highest attempts/second in the entire sweep (1648/s at 32) while completing 3% of the
+   work, because an abort is nearly free. An evidence table quoting attempts/second would recommend
+   the arm that does almost nothing.
+
+The unguarded row is not hypothetical: `inventory_service.adjust_quantity` and
+`shipment_service.create_shipment` still carry that shape today (ISS-06).
+
 **Carried forward to ACR-31.** Two findings do not transfer for free when the close moves onto the
 append-only ledger:
 
@@ -155,8 +186,10 @@ makes; partially drawn lots stay `IN_STORAGE`.
 
 ## Verified version snapshot
 
-Pinned/verified for the `v0.2.0-sprint1-baseline` tag (see `submissions` evidence in the docs
-archive). Nearby versions are expected to work; these are what the baseline was smoke-tested on.
+These are the **declared** versions, not merely the ones the baseline happened to be tested on.
+Python comes from `backend/pyproject.toml` (`requires-python`) and Node from `.nvmrc`;
+`backend/tests/test_packaging.py` fails the build if this table, the README, or CI drifts from
+them (ACR-42 / A10-4).
 
 | Component | Version |
 |---|---|
@@ -167,5 +200,10 @@ archive). Nearby versions are expected to work; these are what the baseline was 
 | Next.js / React | 16 / 19 |
 | Docker / Compose | 29 / v5 |
 
-Backend dependencies are pinned in `backend/requirements.txt`; frontend in
-`frontend/package-lock.json`.
+Backend dependencies: `backend/requirements.txt` holds the **direct** dependencies, every one
+exactly pinned; `backend/requirements.lock` holds the full resolved transitive closure and is what
+CI and the container images install from. Frontend: `frontend/package-lock.json`.
+
+> Until ACR-42, `google-genai` and `anthropic` were the two lines in `requirements.txt` carrying a
+> `>=` range rather than a pin — and two developer virtualenvs built from that same file were
+> measured running `anthropic` **0.119.0** and **0.109.2**. Same spec, different code.

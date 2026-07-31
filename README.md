@@ -28,21 +28,80 @@ Docker Compose for local infrastructure.
 
 ## Prerequisites
 
-Install these before you start. Versions below are what the baseline was verified against
-(see [`docs/architecture.md`](docs/architecture.md) for the full snapshot); nearby versions work.
+**If you run the stack with Docker (below), you only need Docker and git** — Python and Node come
+from the images.
 
-- **Python** ≥ 3.11 (verified on 3.13)
-- **Node.js** ≥ 20 (verified on 24) + npm
-- **Docker** with the Compose plugin (`docker compose`) — used for PostgreSQL
+For a local (non-container) install, these are the supported versions. They are the *only* versions
+named anywhere in this repo — `backend/pyproject.toml` and `.nvmrc` are the machine-readable source
+of truth, and `backend/tests/test_packaging.py` fails the build if a doc drifts from them.
+
+- **Python** 3.13 — declared in [`backend/pyproject.toml`](backend/pyproject.toml)
+- **Node.js** 24 + npm — declared in [`.nvmrc`](.nvmrc) / [`frontend/.nvmrc`](frontend/.nvmrc)
+- **Docker** with the Compose plugin (`docker compose`)
 - **git**
 
 You do **not** need a local PostgreSQL install — Docker Compose provides it on host port **5433**.
 
 ---
 
-## Quickstart
+## Quickstart A — Docker (whole stack, no toolchain install)
 
-A peer should be able to go from a clean clone to a running stack with the steps below.
+Clean clone to running system in three commands. Nothing but Docker and git required.
+
+```bash
+git clone git@github.com:jesgueva/acra_dev.git
+cd acra_dev
+cp .env.example .env                            # defaults work as-is for local use
+
+docker compose up -d --build                    # Postgres + migrations + API + web
+docker compose --profile seed run --rm seed     # demo data (opt-in)
+```
+
+Open **http://localhost:3000** and sign in with a [seeded account](#seeded-demo-logins). The API is
+at **http://localhost:8000** (docs at `/docs`).
+
+| Service | What it does |
+|---|---|
+| `db` | PostgreSQL 15, published on `5433` |
+| `migrate` | One-shot `alembic upgrade head`, then exits. The API waits for it to succeed. |
+| `backend` | FastAPI on `8000` |
+| `frontend` | Next.js production server on `3000` |
+| `seed` | Demo data. Behind the `seed` profile, so `up` never repopulates a database by surprise. |
+
+Useful commands:
+
+```bash
+docker compose logs -f backend        # follow a service
+docker compose run --rm backend pytest tests/   # run the suite with no local Python*
+docker compose down                   # stop, keep data
+docker compose down -v                # stop and wipe the database volume
+./scripts/compose-smoke.sh            # assert the containerized stack end to end
+```
+
+\* Expect **`379 passed, 7 skipped`**. The backend image is built from `backend/` alone, so files
+outside that directory — `.nvmrc`, `frontend/package.json`, `.github/workflows/ci.yml`,
+`frontend/Dockerfile`, and the frontend/root `.env.example` templates — are not in the image. The
+`backend/tests/test_packaging.py` checks that compare against them skip here and run normally on a
+checkout and in CI. Nothing is failing; that skip count is the expected result.
+
+**If a port is already taken** (common — this repo is often checked out into several worktrees),
+override it in `.env` or inline:
+
+```bash
+ACRA_DB_PORT=5442 ACRA_BACKEND_PORT=8042 ACRA_FRONTEND_PORT=3042 \
+  docker compose -p acr42 up -d --build
+```
+
+> **Changing `ACRA_BACKEND_PORT` requires `--build`, not just a restart.** `NEXT_PUBLIC_API_URL` is
+> compiled into the browser bundle at build time rather than read at runtime, so the frontend image
+> is tied to the API port it was built for. This is a property of Next.js's `NEXT_PUBLIC_*`
+> handling, not a bug in the compose file.
+
+---
+
+## Quickstart B — Local processes (for active development)
+
+Use this when you want hot reload. Requires the Python and Node versions listed above.
 
 ```bash
 # 1. Clone
@@ -54,10 +113,13 @@ cp backend/.env.example backend/.env
 cp frontend/.env.local.example frontend/.env.local
 
 # 3. Backend dependencies (isolated virtualenv)
+#    requirements.lock is the full resolved set — it is what CI and the containers install, so
+#    installing it gets you exactly their versions. Use requirements.txt only when ADDING a
+#    dependency, then regenerate the lock (see backend/requirements.lock's header).
 cd backend
 python3 -m venv .venv
 ./.venv/bin/python -m pip install --upgrade pip
-./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python -m pip install -r requirements.lock
 cd ..
 
 # 4. Frontend dependencies
@@ -105,8 +167,9 @@ It exits `0` only if every stage passes. Flags: `SMOKE_SKIP_FRONTEND=1` (backend
 `SMOKE_SKIP_RESET=1` (don't wipe/reseed), `SMOKE_BACKEND_PORT=8001`.
 
 For a fuller, evidence-capturing pass — environment snapshot, API route inventory, smoke test,
-full backend suite + coverage, a **data-pipeline integrity trace**, and a **real OCR round-trip** —
-run the validation harness (used for the Hard Stop 3 validation package):
+full backend suite + coverage, a **data-pipeline integrity trace**, a **real OCR round-trip**, and
+an **API latency benchmark** — run the validation harness (used for the Hard Stop 3 validation
+package):
 
 ```bash
 ./scripts/validation-run.sh            # writes artifacts to ./validation-evidence/
@@ -114,6 +177,39 @@ run the validation harness (used for the Hard Stop 3 validation package):
 
 The OCR round-trip needs `GEMINI_API_KEY` (and optionally `ANTHROPIC_API_KEY`) in `backend/.env`;
 it is skipped with a clear notice if no key is present.
+
+### Benchmarks and request logs
+
+Latency numbers come from one place, `app/core/benchmark.py`, so they stay comparable: nearest-rank
+p50/p95/p99 plus a provenance record (git SHA, host, Python, database, UTC timestamp, exact command)
+stamped onto every artifact. Database credentials are stripped from the recorded DSN.
+
+Run the API benchmark on its own against an already-running backend:
+
+```bash
+PYTHONPATH=backend python scripts/validation/api_latency_bench.py validation-evidence \
+  --requests 100 [--base-url http://localhost:8000]
+```
+
+It writes `validation-evidence/api-latency-<endpoint>.{json,txt}` — the text carries the
+human-readable header, the JSON keeps the raw samples so a later regression gate can recompute
+rather than trust the summary. It reports latency and does not enforce a budget; the asserted budget
+gate lives in `backend/tests/integration/test_reservation_availability.py` (RSK-04).
+
+The API also logs one line per request (method, route **template**, status, duration, request id).
+Set `LOG_FORMAT=json` in `backend/.env` for one JSON object per line; the default `text` keeps the
+human-readable console format. Every response carries an `X-Request-ID` header — supply your own to
+trace a specific call through the logs:
+
+```bash
+curl -i -H 'X-Request-ID: my-trace-1' localhost:8000/health
+```
+
+One limitation worth knowing: a `500` from an unhandled exception is produced by Starlette's
+`ServerErrorMiddleware`, which wraps *outside* the CORS layer. That response carries the
+`X-Request-ID` header on the wire, but cross-origin browser JavaScript cannot read it because the
+response has no `Access-Control-Allow-Origin`. Read the id from the server log or from a same-origin
+request. This is a property of the app's pre-existing error handling, not of the request logging.
 
 ---
 
@@ -150,6 +246,7 @@ Configuration is via env files (both are git-ignored; commit only the `.example`
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Token lifetime. |
 | `GEMINI_API_KEY` | Google Gemini key for receiving-document extraction (primary). |
 | `ANTHROPIC_API_KEY` | Anthropic Claude key (extraction fallback). |
+| `LOG_FORMAT` | `text` (default, human-readable) or `json` (one structured object per request line). |
 
 The AI keys are only exercised by the receiving/OCR flow — the rest of the app runs without them.
 
@@ -180,6 +277,39 @@ cd frontend && npm run build
 ./scripts/reset-db-and-seed.sh
 ```
 
+### Seeding at volume
+
+`seed_fake_data.py` takes a scale knob, so the same fixture can be grown for benchmarking. All
+arguments are forwarded through `reset-db-and-seed.sh`.
+
+```bash
+./scripts/reset-db-and-seed.sh --scale 50    # 1 200 deliveries / 3 600 lots / 400 work orders
+cd backend && ./.venv/bin/python scripts/seed_fake_data.py --help
+```
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--scale N` | `1` | Multiplies both volume axes: 24 deliveries and 8 work orders per unit |
+| `--deliveries N` | from `--scale` | Absolute delivery count, overriding `--scale` on that axis |
+| `--work-orders N` | from `--scale` | Absolute work-order count (`0` builds a lots-only corpus) |
+| `--materials M` | `6` | Size of the raw-material catalogue, for stressing per-product aggregation |
+| `--json` | off | Machine-readable summary (params, elapsed, per-table counts) |
+
+Two properties the seeder guarantees, both covered by `backend/tests/test_seed_scaling.py`:
+
+- **`--scale 1` is the demo fixture**, byte-for-byte. The e2e suite reads these exact rows, so the
+  default output is pinned by a golden-snapshot test.
+- **Scale N is a superset of scale 1.** Deliveries are generated from the row index with no RNG, so
+  re-running at a higher scale adds rows rather than conflicting with existing ones.
+
+Only the bare invocation reproduces the demo fixture — every flag in the table above changes the
+rows the e2e suite reads. `--materials` does so in **either** direction: lowering it drops materials
+from the catalogue just as surely as raising it adds them.
+
+Raising `--materials` also dilutes supply for the six materials work orders consume. Pair it with
+`--work-orders 0` or more `--deliveries`; if allocation runs short the seeder aborts before
+committing anything and names the knob to turn.
+
 ---
 
 ## Repository layout
@@ -189,7 +319,7 @@ acra_dev/
 ├── backend/            # FastAPI app (router → service → repository), Alembic, pytest
 │   ├── app/            #   main.py, core/ (config, db, security, rbac, audit), models, routers, schemas, services
 │   ├── alembic/        #   migrations (versions/)
-│   ├── scripts/        #   create_admin.py, seed_fake_data.py
+│   ├── scripts/        #   create_admin.py, seed_fake_data.py (--scale N for volume)
 │   └── tests/          #   pytest suite (+ integration/)
 ├── frontend/           # Next.js 16 App Router + shadcn/ui
 │   ├── app/            #   [locale]/ routes, api/auth/ server proxies, layout
@@ -197,7 +327,7 @@ acra_dev/
 │   └── messages/       #   next-intl catalogs (en.json, es.json)
 ├── scripts/            # reset-db-and-seed.sh, smoke-test.sh, validation-run.sh, validation/
 ├── docs/               # architecture.md, RISK_LOG.md
-├── docker-compose.yml  # PostgreSQL 15 on host port 5433
+├── docker-compose.yml  # full stack: db → migrate → backend → frontend (+ seed profile)
 ├── CHANGELOG.md · KNOWN_ISSUES.md · CONTRIBUTING.md
 └── CLAUDE.md           # engineering memory (conventions, patterns)
 ```
