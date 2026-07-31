@@ -90,13 +90,20 @@ jobs:
     name: Playwright E2E (containerized stack)
     runs-on: ubuntu-latest
 
-    # Distinct project name and ports so this job can never collide with a stack a developer or
-    # another CI run already has up — same reasoning `scripts/compose-smoke.sh` documents.
+    # Distinct project, ports, AND container names so this job can never collide with a stack a
+    # developer or another CI run already has up — the full pattern `scripts/compose-smoke.sh`
+    # documents. Ports alone are not enough: every service in docker-compose.yml pins an explicit
+    # `container_name:`, which Compose treats as a literal, un-namespaced-by-`-p` identity — hence
+    # the ACRA_*_CONTAINER overrides alongside the ACRA_*_PORT ones.
     env:
       COMPOSE_PROJECT: ci-e2e
       ACRA_DB_PORT: 5633
       ACRA_BACKEND_PORT: 8200
       ACRA_FRONTEND_PORT: 3200
+      ACRA_DB_CONTAINER: acra-pg-ci-e2e
+      ACRA_MIGRATE_CONTAINER: acra-migrate-ci-e2e
+      ACRA_BACKEND_CONTAINER: acra-backend-ci-e2e
+      ACRA_FRONTEND_CONTAINER: acra-frontend-ci-e2e
 
     steps:
       - uses: actions/checkout@v4
@@ -111,8 +118,14 @@ jobs:
       - name: Bring up the stack (db -> migrate -> backend -> frontend)
         run: docker compose -p "$COMPOSE_PROJECT" up -d --wait --build
 
+      - name: Diagnose stack bring-up failure
+        if: failure()
+        run: |
+          docker compose -p "$COMPOSE_PROJECT" ps
+          docker compose -p "$COMPOSE_PROJECT" logs --tail 100
+
       - name: Seed demo data (scale-1 fixture the specs assume)
-        run: docker compose -p "$COMPOSE_PROJECT" --profile seed run --rm seed
+        run: docker compose -p "$COMPOSE_PROJECT" --profile seed run --rm -T seed
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -125,8 +138,8 @@ jobs:
       - name: Run E2E suite
         working-directory: frontend
         env:
-          E2E_BASE_URL: http://localhost:3200
-          E2E_API_URL: http://localhost:8200
+          E2E_BASE_URL: http://localhost:${{ env.ACRA_FRONTEND_PORT }}
+          E2E_API_URL: http://localhost:${{ env.ACRA_BACKEND_PORT }}
         run: npx playwright test
 
       - name: Upload Playwright report
