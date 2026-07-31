@@ -241,13 +241,14 @@ async def test_serializable_retry_arm_actually_retries(sessionmaker_):
     Without the retry-counter assertion this test passes on a machine where the closers happen not
     to collide, which would silently turn ADR-02's central claim into an untested one.
     """
-    results, drift, _ = await _run_arm_rounds(
+    results, drift, over = await _run_arm_rounds(
         sessionmaker_,
         "serializable-retry",
         until=lambda pooled: sum(r.retries for r in pooled) > 0,
     )
 
     assert drift == 0
+    assert over == 0, "retrying must not double-draw — the books must balance in both directions"
     assert sum(r.retries for r in results) > 0, (
         f"no attempt retried in {MAX_ROUNDS} rounds — the arm cannot be said to have measured the "
         "retry loop"

@@ -141,8 +141,26 @@ def redact_dsn(url: str) -> str:
     return f"{host}{parts.path}"
 
 
+def _redact_url_argument(url: str) -> str:
+    """Strip credentials from one URL, keeping everything a reader needs to rerun the command.
+
+    Only URLs that *carry* credentials are touched. A benchmark's `--base-url https://host` has no
+    password to leak, and reducing it to `host` would produce a `Command  :` line that no longer
+    runs — which defeats the provenance this module exists to provide. The scheme is preserved on
+    the ones that are redacted for the same reason.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        # Cannot parse it, so cannot prove it is safe. Fail closed.
+        return _UNKNOWN
+    if not (parts.username or parts.password):
+        return url
+    return f"{parts.scheme}://{redact_dsn(url)}" if parts.scheme else _UNKNOWN
+
+
 def redact_command(argv: list[str]) -> str:
-    """`shlex.join(argv)` with any argument that looks like a database URL reduced to host/db.
+    """`shlex.join(argv)` with credentials stripped from any URL-shaped argument.
 
     `redact_dsn` keeps the password out of the `database` field, but the *command* is captured
     verbatim — so a bench invoked as `--dsn postgresql://user:password@host/db` writes the password
@@ -155,9 +173,9 @@ def redact_command(argv: list[str]) -> str:
     for arg in argv:
         flag, sep, value = arg.partition("=")
         if sep and "://" in value:
-            cleaned.append(f"{flag}={redact_dsn(value)}")
+            cleaned.append(f"{flag}={_redact_url_argument(value)}")
         elif "://" in arg:
-            cleaned.append(redact_dsn(arg))
+            cleaned.append(_redact_url_argument(arg))
         else:
             cleaned.append(arg)
     return shlex.join(cleaned)
