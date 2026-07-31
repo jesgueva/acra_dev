@@ -20,9 +20,12 @@ torn down in a different event loop than the test body, which breaks asyncpg wit
 `async with` keeps setup, body, and cleanup on one loop — the same reason
 `test_reservation_availability.py` is shaped this way.
 """
+import importlib.util
 import os
+import sys
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text
@@ -41,6 +44,22 @@ DATABASE_URL = os.getenv(
 
 TAG = "A86-IT"
 INDEX_NAME = "ix_inventory_lots_item_state"
+
+
+def _load_bench_module():
+    """Import the runner from the repo-root `scripts/` tree, which is not on the backend path.
+
+    tests/integration/<this file> -> tests -> backend -> repo root.
+    """
+    path = Path(__file__).resolve().parents[3] / "scripts" / "validation" / "aggregation_bench.py"
+    spec = importlib.util.spec_from_file_location("acra_aggregation_bench_it", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+bench_module = _load_bench_module()
 
 # The fixture has to be both big enough and **selective** enough.
 #
@@ -349,6 +368,51 @@ async def test_index_is_used_not_merely_present():
             f"fast:\n{without_index}"
         )
         assert await _index_exists(session), "rollback must restore the index"
+
+
+async def test_bench_teardown_restores_the_migrations_index():
+    """The benchmark must give the database back exactly as it found it.
+
+    `aggregation_bench` deliberately reuses migration 015's index *name* — measuring a lookalike
+    would not be measuring the real thing — which means its without-index arm drops an index the
+    schema is supposed to have. An earlier version of the script dropped it and never put it back,
+    so a full `scripts/validation-run.sh` pass (migrate, then benchmark) ended with the mitigation
+    silently missing and the negative control above quietly skipping.
+
+    This asserts the round trip on the real database rather than trusting the code to be careful.
+    """
+    engine = create_async_engine(DATABASE_URL)
+    try:
+        async with AsyncSession(engine) as session:
+            if not await _index_exists(session):
+                pytest.skip(f"{INDEX_NAME} not present — migration 015 not applied")
+            before = await session.scalar(
+                text(
+                    "SELECT indexdef FROM pg_indexes"
+                    " WHERE tablename = 'inventory_lots' AND indexname = :n"
+                ),
+                {"n": INDEX_NAME},
+            )
+
+            captured = await bench_module._existing_index_ddl(session)
+            assert captured == before, "capture must record the definition verbatim"
+
+            # Stand in for the without-index arm, then tear down the way the sweep does.
+            await bench_module._set_index(session, None)
+            assert not await _index_exists(session), "the arm really does drop it"
+
+            await bench_module._teardown(session, captured)
+
+            after = await session.scalar(
+                text(
+                    "SELECT indexdef FROM pg_indexes"
+                    " WHERE tablename = 'inventory_lots' AND indexname = :n"
+                ),
+                {"n": INDEX_NAME},
+            )
+            assert after == before, "teardown must restore the index exactly as it was"
+    finally:
+        await engine.dispose()
 
 
 async def test_availability_latency_budget_at_volume():

@@ -42,6 +42,15 @@ INDEX_NAME = "ix_inventory_lots_item_state"
 
 def upgrade():
     # RSK-04 — the on-hand aggregation filters on exactly these two columns and sums the third.
+    #
+    # Built without CONCURRENTLY on purpose. A plain CREATE INDEX takes ACCESS EXCLUSIVE for the
+    # duration, which on a large `inventory_lots` blocks reads and writes — but this project applies
+    # migrations as a one-shot step the API waits on before it starts serving (the `migrate` service
+    # in docker-compose.yml, which `backend` gates on with `service_completed_successfully`), so
+    # there is no concurrent traffic to block. CONCURRENTLY would also have to run outside a
+    # transaction via `op.get_context().autocommit_block()`, giving up the transactional DDL every
+    # other revision in this tree relies on, and it can leave an INVALID index behind on failure.
+    # Revisit if migrations ever move to a live-traffic deploy.
     op.create_index(
         INDEX_NAME,
         "inventory_lots",

@@ -104,6 +104,40 @@ def test_scan_kind_reports_none_for_absent_table():
     assert bench.scan_kind("", "inventory_lots") == "none"
 
 
+# ── dominant_scan — a multi-statement path is as indexed as its worst statement ──
+
+
+def test_dominant_scan_reports_seq_when_any_statement_scans():
+    """`list_inventory` issues an unfiltered COUNT(*) and a paginated fetch.
+
+    Reporting "index-only" because the cheaper half used an index would hide the sequential scan
+    that dominates the cost — so a seq anywhere wins the label, even when it is the slower plan
+    that is indexed.
+    """
+    plans = [SEQ_PLAN, INDEX_ONLY_PLAN]
+    assert bench.dominant_scan(plans, [0.1, 99.0], "inventory_lots") == "seq"
+
+
+def test_dominant_scan_reports_the_costliest_when_none_are_sequential():
+    plans = [INDEX_PLAN, INDEX_ONLY_PLAN]
+    assert bench.dominant_scan(plans, [1.0, 50.0], "inventory_lots") == "index-only"
+    assert bench.dominant_scan(plans, [50.0, 1.0], "inventory_lots") == "index"
+
+
+def test_dominant_scan_ignores_plans_that_miss_the_table():
+    plans = [SEQ_PLAN.replace("inventory_lots", "products"), INDEX_PLAN]
+    assert bench.dominant_scan(plans, [10.0, 1.0], "inventory_lots") == "index"
+
+
+def test_dominant_scan_falls_back_without_timings():
+    assert bench.dominant_scan([INDEX_PLAN], [None], "inventory_lots") == "index"
+
+
+def test_dominant_scan_reports_none_for_no_plans():
+    assert bench.dominant_scan([], [], "inventory_lots") == "none"
+    assert bench.dominant_scan([INDEX_PLAN], [1.0], "stock_reservations") == "none"
+
+
 # ── parse_execution_ms — isolating the query from the round trip ──────────────
 
 TIMED_PLAN = """\

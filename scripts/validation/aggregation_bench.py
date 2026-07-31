@@ -145,6 +145,29 @@ def scan_kind(explain_text: str, table: str) -> str:
     return "none"
 
 
+def dominant_scan(
+    plans: Sequence[str], timings: Sequence[float | None], table: str
+) -> str:
+    """One scan verdict for a path that issued several statements against `table`.
+
+    A path is only as indexed as its worst statement: `list_inventory` runs an unfiltered
+    `COUNT(*)` and a paginated fetch, and reporting "index-only" because the cheaper half used an
+    index would hide the sequential scan that dominates the cost. So a `seq` anywhere wins the
+    label. Failing that, the plan that actually cost the most time is the one reported, and
+    untimed plans fall back to the first classification seen.
+    """
+    kinds = [scan_kind(p, table) for p in plans]
+    present = [k for k in kinds if k != "none"]
+    if not present:
+        return "none"
+    if "seq" in present:
+        return "seq"
+    timed = [(t, k) for t, k in zip(timings, kinds) if t is not None and k != "none"]
+    if timed:
+        return max(timed, key=lambda pair: pair[0])[1]
+    return present[0]
+
+
 def parse_execution_ms(explain_text: str) -> float | None:
     """The server-side `Execution Time` from an `EXPLAIN ANALYZE` plan, in ms.
 
@@ -470,6 +493,20 @@ async def _analyze(db: AsyncSession) -> None:
     await db.commit()
 
 
+async def _existing_index_ddl(db: AsyncSession) -> str | None:
+    """The `CREATE INDEX` statement for `INDEX_NAME` as it exists right now, or None.
+
+    Captured before the sweep touches anything so teardown can put the database back exactly as it
+    was found. Reading the definition out of `pg_indexes` rather than assuming it means the restore
+    is correct whatever created it — migration 015, a hand-rolled variant, or a future revision that
+    changes the column list.
+    """
+    return await db.scalar(
+        text("SELECT indexdef FROM pg_indexes WHERE tablename = 'inventory_lots' AND indexname = :n"),
+        {"n": INDEX_NAME},
+    )
+
+
 async def _set_index(db: AsyncSession, ddl: str | None) -> None:
     await db.execute(text(f"DROP INDEX IF EXISTS {INDEX_NAME}"))
     if ddl:
@@ -477,7 +514,16 @@ async def _set_index(db: AsyncSession, ddl: str | None) -> None:
     await db.commit()
 
 
-async def _teardown(db: AsyncSession) -> None:
+async def _teardown(db: AsyncSession, original_index_ddl: str | None) -> None:
+    """Remove every row this script created and restore the index to how it was found.
+
+    The restore is load-bearing. `INDEX_NAME` is deliberately the *same* name migration 015 uses —
+    the point of the with-index arm is to measure the real index, not a lookalike — which means the
+    without-index arm drops an index the schema is supposed to have. Ending the run without putting
+    it back would leave a normally-migrated database silently missing RSK-04's mitigation, and
+    `scripts/validation-run.sh` runs migrations and then this script, so that would be the routine
+    outcome rather than an edge case.
+    """
     await db.execute(
         text("DELETE FROM stock_reservations WHERE production_worksheet_line_id = :m"), {"m": -86}
     )
@@ -486,7 +532,7 @@ async def _teardown(db: AsyncSession) -> None:
     )
     await db.execute(text("DELETE FROM products WHERE name LIKE :p"), {"p": f"{BENCH_TAG} Material%"})
     await db.execute(text("DELETE FROM users WHERE username = :u"), {"u": f"{BENCH_TAG.lower()}_runner"})
-    await db.execute(text(f"DROP INDEX IF EXISTS {INDEX_NAME}"))
+    await _set_index(db, original_index_ddl)
     await db.commit()
 
 
@@ -543,14 +589,27 @@ async def _measure(
             with run.time():
                 await _call(path, db, product_id)
 
-        # The plan for the statement the service actually issued against inventory_lots.
+        # Plans for **every** statement the service issued against inventory_lots, not just the
+        # first. `list_inventory` issues two — the COUNT(*) and the LIMIT/OFFSET page — and taking
+        # only [0] published the COUNT's plan while the docstring claimed the page was measured.
         with SQLCapture(engine) as capture:
             await _call(path, db, product_id)
-        lot_statements = capture.touching("inventory_lots")
-        plan = await _explain(db, lot_statements[0]) if lot_statements else ""
-        scan = scan_kind(plan, "inventory_lots") if plan else "none"
 
-    return run, plan, scan, parse_execution_ms(plan)
+        plans: list[str] = []
+        for statement in capture.touching("inventory_lots"):
+            plans.append(await _explain(db, statement))
+
+    plan = "\n\n".join(
+        f"-- statement {i + 1} of {len(plans)}\n{p}" for i, p in enumerate(plans)
+    )
+    # Server-side cost of the whole path against this table, so a two-statement path is not
+    # reported as though it only ran its cheaper half.
+    timings = [parse_execution_ms(p) for p in plans]
+    measured = [t for t in timings if t is not None]
+    exec_ms = round(sum(measured), 3) if measured else None
+    scan = dominant_scan(plans, timings, "inventory_lots")
+
+    return run, plan, scan, exec_ms
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +626,8 @@ async def _sweep(args: argparse.Namespace) -> int:
     written: list[Path] = []
     ambient_lots = 0
 
+    original_index_ddl: str | None = None
+
     try:
         async with sessionmaker_() as db:
             ambient_lots = await _scalar(
@@ -574,11 +635,17 @@ async def _sweep(args: argparse.Namespace) -> int:
                 "SELECT count(*) FROM inventory_lots WHERE storage_location IS DISTINCT FROM :t",
                 t=BENCH_TAG,
             )
+            # Captured before anything is touched, so teardown can restore exactly what was here.
+            original_index_ddl = await _existing_index_ddl(db)
             product_ids = await _bench_product_ids(db, args.products)
             user_id = await _bench_user_id(db)
             await db.commit()
 
         print(f"== ambient lots already in table: {ambient_lots} ==", flush=True)
+        print(
+            f"== {INDEX_NAME}: {'present, will be restored' if original_index_ddl else 'absent'} ==",
+            flush=True,
+        )
 
         for lots_target in args.lot_steps:
             async with sessionmaker_() as db:
@@ -634,10 +701,13 @@ async def _sweep(args: argparse.Namespace) -> int:
                         flush=True,
                     )
     finally:
-        if not args.keep:
-            async with sessionmaker_() as db:
-                await _teardown(db)
-        await engine.dispose()
+        # Nested, so a teardown failure cannot skip disposal and strand the connection pool.
+        try:
+            if not args.keep:
+                async with sessionmaker_() as db:
+                    await _teardown(db, original_index_ddl)
+        finally:
+            await engine.dispose()
 
     curve = assemble_curve(rows)
     speedups = speedup_rows(curve)
