@@ -568,6 +568,11 @@ def _parse_args(argv: list[str] | None = None):
     # to `stock < 0`. Every arm would report 100% success over an untested ledger.
     if args.draw < 1:
         parser.error("--draw must be at least 1; a zero draw consumes nothing and tests nothing")
+    # Same class of theatre one axis over: a single closer cannot race anything, so every arm —
+    # including `unguarded` — would post 100% success and a clean ledger. An empty --levels would
+    # also reach `max()` below as a bare ValueError rather than a usage message.
+    if not args.levels or min(args.levels) < 2:
+        parser.error("--levels must all be at least 2; one closer alone contends with nothing")
     # Abundant stock is not a nicety: if the lot can run dry, "insufficient stock" stands in for the
     # guard and a broken arm looks correct. Same reason TC-02 has ABUNDANT_STOCK.
     if args.stock < max(args.levels) * args.draw * args.rounds:

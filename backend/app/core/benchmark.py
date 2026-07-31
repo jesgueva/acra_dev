@@ -56,7 +56,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.core.config import settings
 
@@ -123,6 +123,21 @@ def _git(*args: str) -> str:
     return out.stdout.strip() if out.returncode == 0 else _UNKNOWN
 
 
+def _host_and_port(parts) -> str | None:
+    """`host[:port]` from a split URL, re-bracketing an IPv6 literal. None when there is no host.
+
+    `parts.port` validates lazily — it raises `ValueError` on a non-numeric or out-of-range port the
+    moment it is read, not when the URL is split — so every caller must read it inside its own
+    `try`. And `parts.hostname` strips the brackets off `[::1]`, which would otherwise be rebuilt as
+    the unparseable `::1:5432`.
+    """
+    if not parts.hostname:
+        return None
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    port = parts.port
+    return host if port is None else f"{host}:{port}"
+
+
 def redact_dsn(url: str) -> str:
     """Reduce a database URL to `host:port/dbname`, dropping the credentials.
 
@@ -133,30 +148,57 @@ def redact_dsn(url: str) -> str:
         return _UNKNOWN
     try:
         parts = urlsplit(url)
+        host = _host_and_port(parts)
     except ValueError:
         return _UNKNOWN
-    if not parts.hostname:
+    if host is None:
         return _UNKNOWN
-    host = parts.hostname if parts.port is None else f"{parts.hostname}:{parts.port}"
     return f"{host}{parts.path}"
+
+
+#: Query parameters that carry a secret in a libpq-style URI. PostgreSQL accepts every connection
+#: parameter as a query argument, so `postgresql://host/db?password=hunter2` is a working DSN whose
+#: `username`/`password` fields are both empty — a userinfo-only check waves it straight through.
+_SECRET_QUERY_KEYS = frozenset({"password", "sslpassword", "sslkey"})
 
 
 def _redact_url_argument(url: str) -> str:
     """Strip credentials from one URL, keeping everything a reader needs to rerun the command.
 
-    Only URLs that *carry* credentials are touched. A benchmark's `--base-url https://host` has no
-    password to leak, and reducing it to `host` would produce a `Command  :` line that no longer
-    runs — which defeats the provenance this module exists to provide. The scheme is preserved on
-    the ones that are redacted for the same reason.
+    Only URLs that *carry* a credential are touched — in the userinfo or in a `_SECRET_QUERY_KEYS`
+    query parameter. A benchmark's `--base-url https://host` has no password to leak, and reducing
+    it to `host` would produce a `Command  :` line that no longer runs, which defeats the provenance
+    this module exists to provide.
+
+    What survives redaction is everything except the secret: scheme, host, port, path, and the
+    non-secret query parameters. `?host=/var/run/postgresql` and `?sslmode=verify-full` decide
+    whether the command reproduces at all, so dropping the whole query — as reducing this to
+    `redact_dsn` would — makes the record useless without making it any safer.
     """
     try:
         parts = urlsplit(url)
+        # Only arguments already containing `://` reach here, so an empty scheme means `urlsplit`
+        # did not recognise it as a URL — `://user:pw@host/db` parses entirely into `path`, leaving
+        # `username` and `password` empty. Checked *before* the safety test below, or such a token
+        # would look credential-free and get echoed verbatim, password and all.
+        if not parts.scheme:
+            return _UNKNOWN
+        query = parse_qsl(parts.query, keep_blank_values=True)
+        secrets = [(k, v) for k, v in query if k.lower() in _SECRET_QUERY_KEYS]
+        if not (parts.username or parts.password or secrets):
+            return url
+        host = _host_and_port(parts) or ""
     except ValueError:
         # Cannot parse it, so cannot prove it is safe. Fail closed.
         return _UNKNOWN
-    if not (parts.username or parts.password):
-        return url
-    return f"{parts.scheme}://{redact_dsn(url)}" if parts.scheme else _UNKNOWN
+    safe_query = urlencode(
+        [(k, v) for k, v in query if k.lower() not in _SECRET_QUERY_KEYS], safe="/"
+    )
+    # `urlunsplit` drops the `//` when the netloc is empty, turning a hostless socket DSN into
+    # `postgresql:/acra`. Only arguments that already contained `://` get here, so the marker is
+    # always correct — rebuild the tail alone and keep it.
+    tail = urlunsplit(("", "", parts.path, safe_query, ""))
+    return f"{parts.scheme}://{host}{tail}"
 
 
 def redact_command(argv: list[str]) -> str:
