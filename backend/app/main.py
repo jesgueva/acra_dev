@@ -10,6 +10,7 @@ from app.core.observability import (
     REQUEST_ID_HEADER,
     RequestTimingMiddleware,
     configure_logging,
+    request_id_headers,
 )
 
 configure_logging()
@@ -53,6 +54,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error"},
+        # This response is built above RequestTimingMiddleware, so it has to tag itself.
+        headers=request_id_headers(request),
     )
 
 

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { API_URL, USERS, login } from "./helpers";
+import { API, USERS, failOnPageErrors, login } from "./helpers/auth";
 
 /**
  * ACR-43 / A8-3 — request correlation, asserted against the real stack.
@@ -15,19 +15,20 @@ const BROWSER_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 
 test.describe("ACR-43 — request timing and correlation", () => {
   test("every API response carries a unique X-Request-ID", async ({ page }) => {
+    failOnPageErrors(page);
     const missing: string[] = [];
     const ids: string[] = [];
 
     page.on("response", (response) => {
       const url = response.url();
       // Only the FastAPI origin — the Next.js auth proxy routes are a different server.
-      if (!url.startsWith(API_URL) || !url.includes("/api/v1/")) return;
+      if (!url.startsWith(API) || !url.includes("/api/v1/")) return;
       const id = response.headers()["x-request-id"];
       if (id) ids.push(id);
       else missing.push(`${response.request().method()} ${url}`);
     });
 
-    await login(page, USERS.admin.username, USERS.admin.password);
+    await login(page, USERS.admin);
     await page.goto("/en/inventory");
     await page.waitForLoadState("networkidle");
 
@@ -37,7 +38,7 @@ test.describe("ACR-43 — request timing and correlation", () => {
   });
 
   test("a client-supplied X-Request-ID is reused, not replaced", async ({ request }) => {
-    const response = await request.get(`${API_URL}/health`, {
+    const response = await request.get(`${API}/health`, {
       headers: { "X-Request-ID": "e2e-trace-43" },
     });
 
@@ -48,14 +49,14 @@ test.describe("ACR-43 — request timing and correlation", () => {
   test("generated ids are unique across requests", async ({ request }) => {
     const ids = new Set<string>();
     for (let i = 0; i < 5; i += 1) {
-      const response = await request.get(`${API_URL}/health`);
+      const response = await request.get(`${API}/health`);
       ids.add(response.headers()["x-request-id"]);
     }
     expect(ids.size).toBe(5);
   });
 
   test("CORS exposes the id to browser JavaScript", async ({ request }) => {
-    const response = await request.get(`${API_URL}/health`, {
+    const response = await request.get(`${API}/health`, {
       headers: { Origin: BROWSER_ORIGIN },
     });
 

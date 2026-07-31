@@ -45,55 +45,53 @@ def main() -> int:
     parser.add_argument("--base-url", default=DEFAULT_BASE, help="backend base URL")
     args = parser.parse_args()
 
-    client = httpx.Client(base_url=args.base_url, timeout=30.0)
-
-    print(f"== Authenticating against {args.base_url} ==")
-    login = client.post(
-        "/api/v1/auth/login", json={"username": "admin", "password": "admin123"}
-    )
-    if login.status_code != 200:
-        print(f"  [FAIL] login -> {login.status_code}", file=sys.stderr)
-        return 1
-    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
-    print("  [PASS] login -> 200")
-
     written: list[Path] = []
     failed = False
 
-    for label, method, path in ENDPOINTS:
-        print(f"\n== {label}  ({method} {path}) ==")
-
-        probe = client.request(method, path, headers=headers)
-        if probe.status_code != 200:
-            print(f"  [FAIL] {path} -> {probe.status_code}", file=sys.stderr)
-            failed = True
-            continue
-
-        # Warm-up samples are discarded: the first request pays connection setup and any
-        # lazy import, and folding that into p50 would misreport steady-state latency.
-        for _ in range(WARMUP):
-            client.request(method, path, headers=headers)
-
-        run = BenchmarkRun(
-            f"api-latency-{label}",
-            endpoint=path,
-            method=method,
-            requests=args.requests,
-            warmup=WARMUP,
+    # Context-managed so an auth failure or a transport error still closes the connection pool.
+    with httpx.Client(base_url=args.base_url, timeout=30.0) as client:
+        print(f"== Authenticating against {args.base_url} ==")
+        login = client.post(
+            "/api/v1/auth/login", json={"username": "admin", "password": "admin123"}
         )
-        for _ in range(args.requests):
-            with run.time():
+        if login.status_code != 200:
+            print(f"  [FAIL] login -> {login.status_code}", file=sys.stderr)
+            return 1
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        print("  [PASS] login -> 200")
+
+        for label, method, path in ENDPOINTS:
+            print(f"\n== {label}  ({method} {path}) ==")
+
+            probe = client.request(method, path, headers=headers)
+            if probe.status_code != 200:
+                print(f"  [FAIL] {path} -> {probe.status_code}", file=sys.stderr)
+                failed = True
+                continue
+
+            # Warm-up samples are discarded: the first request pays connection setup and any
+            # lazy import, and folding that into p50 would misreport steady-state latency.
+            for _ in range(WARMUP):
                 client.request(method, path, headers=headers)
 
-        stats = run.stats
-        print(
-            f"  n={stats['n']}  p50={stats['p50_ms']:.1f}ms  "
-            f"p95={stats['p95_ms']:.1f}ms  p99={stats['p99_ms']:.1f}ms"
-        )
-        json_path, txt_path = run.write(args.out_dir)
-        written += [json_path, txt_path]
+            run = BenchmarkRun(
+                f"api-latency-{label}",
+                endpoint=path,
+                method=method,
+                requests=args.requests,
+                warmup=WARMUP,
+            )
+            for _ in range(args.requests):
+                with run.time():
+                    client.request(method, path, headers=headers)
 
-    client.close()
+            stats = run.stats
+            print(
+                f"  n={stats['n']}  p50={stats['p50_ms']:.1f}ms  "
+                f"p95={stats['p95_ms']:.1f}ms  p99={stats['p99_ms']:.1f}ms"
+            )
+            json_path, txt_path = run.write(args.out_dir)
+            written += [json_path, txt_path]
 
     print(f"\n== Artifacts ({len(written)}) ==")
     for path in written:

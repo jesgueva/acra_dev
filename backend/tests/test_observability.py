@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from starlette import status
+from starlette.requests import Request
 
 from app.core.observability import (
     REQUEST_ID_HEADER,
@@ -18,7 +19,22 @@ from app.core.observability import (
     RequestTimingMiddleware,
     StructuredFormatter,
     configure_logging,
+    request_id_headers,
 )
+
+
+@pytest.fixture(autouse=True)
+def restore_root_logger():
+    """Put the root logger back after every test.
+
+    `configure_logging()` replaces root's handlers wholesale — correct for an app entry point, but
+    in-process it also discards the handler pytest attaches for log capture, which would leave an
+    orphaned StreamHandler duplicating every later test's request logs to stderr.
+    """
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    yield
+    root.handlers, root.level = saved_handlers, saved_level
 
 
 @pytest.fixture
@@ -28,8 +44,14 @@ def client():
     app.add_middleware(RequestTimingMiddleware)
 
     @app.exception_handler(Exception)
-    async def unhandled(request, exc):  # pragma: no cover - mirrors app.main
-        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    async def unhandled(request, exc):
+        # Mirrors app.main exactly, including the self-tagging that a 500 needs because this
+        # response is built above the middleware and never passes back through it.
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+            headers=request_id_headers(request),
+        )
 
     @app.get("/ok")
     async def ok():
@@ -148,6 +170,36 @@ def test_a_raising_handler_is_still_logged_and_still_returns_500(client, caplog)
     assert records[0].status == 500
     assert records[0].route == "/boom"
     assert records[0].duration_ms >= 0
+
+    # The 500 is the response a user is most likely to be asked to quote an id from. Starlette
+    # builds it above this middleware, so without the handler tagging it the header goes missing
+    # on exactly the requests that need it.
+    assert response.headers[REQUEST_ID_HEADER] == records[0].request_id
+
+
+@pytest.mark.parametrize("request_id,expected", [("abc123", {"X-Request-ID": "abc123"}), (None, {})])
+def test_request_id_headers(request_id, expected):
+    request = Request({"type": "http", "headers": [], "method": "GET", "path": "/"})
+    if request_id:
+        request.state.request_id = request_id
+    assert request_id_headers(request) == expected
+
+
+async def test_the_real_app_500_handler_tags_its_response():
+    """Pins the app.main wiring, not just the middleware in isolation.
+
+    The gap this closes was a wiring bug: the middleware was correct, but the 500 response is
+    built above it and so was never reached.
+    """
+    from app.main import unhandled_exception_handler
+
+    request = Request({"type": "http", "headers": [], "method": "GET", "path": "/boom"})
+    request.state.request_id = "trace-500"
+
+    response = await unhandled_exception_handler(request, RuntimeError("boom"))
+
+    assert response.status_code == 500
+    assert response.headers[REQUEST_ID_HEADER] == "trace-500"
 
 
 # ---------------------------------------------------------------------------

@@ -6,8 +6,9 @@ request." This module supplies the whole **API** row of the A8 evidence table.
 
 One line per request, on the `acra.request` logger:
 
-    {"ts":"…","level":"INFO","logger":"acra.request","request_id":"a3f9c1d20b74",
-     "method":"POST","route":"/api/v1/deliveries/{delivery_id}","status":200,"duration_ms":42.7}
+    {"ts":"…","level":"INFO","logger":"acra.request","message":"POST /api/v1/deliveries 200 42.7ms",
+     "request_id":"a3f9c1d20b74","method":"POST","route":"/api/v1/deliveries/{delivery_id}",
+     "status":200,"duration_ms":42.7}
 
 Two decisions worth knowing about:
 
@@ -86,6 +87,18 @@ def route_label(request: Request) -> str:
     """The matched route template, falling back to the raw path when nothing matched (404)."""
     route = request.scope.get("route")
     return getattr(route, "path", None) or request.url.path
+
+
+def request_id_headers(request: Request) -> dict[str, str]:
+    """The `X-Request-ID` header for a response this middleware cannot reach.
+
+    Starlette lifts an `Exception` handler out to `ServerErrorMiddleware`, which wraps *outside*
+    every user middleware. So a genuinely unhandled exception is converted to a 500 above this
+    middleware, and the response never passes back through `dispatch` to be tagged — the one case
+    where a caller most needs an id to quote. The app's 500 handler calls this to close that gap.
+    """
+    request_id = getattr(request.state, "request_id", None)
+    return {REQUEST_ID_HEADER: request_id} if request_id else {}
 
 
 class RequestTimingMiddleware(BaseHTTPMiddleware):
