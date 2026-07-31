@@ -356,7 +356,7 @@ class BenchmarkRun:
             lines.append("")
             lines.append("Outcomes")
             for name, count in stats["outcomes"].items():
-                lines.append(f"  {name:<20} {count}")
+                lines.append(f"  {name:<22} {count}")
             for key in ("success_rate", "retry_rate", "error_rate", "lost_update_count"):
                 lines.append(f"  {key:<20} {stats[key]}")
         lines.append("")
