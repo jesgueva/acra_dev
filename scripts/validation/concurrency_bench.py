@@ -218,6 +218,21 @@ async def _close_optimistic(db: AsyncSession, scenario: Scenario, index: int, dr
         return Outcome.CONFLICT if exc.status_code == 409 else Outcome.ERROR
 
 
+def _is_serialization_failure(exc: DBAPIError) -> bool:
+    """Whether a driver error is PostgreSQL's `40001`, i.e. retryable rather than a bug.
+
+    asyncpg exposes `sqlstate`, psycopg `pgcode`; the string fallback covers a wrapped driver that
+    exposes neither. Misclassifying this as a generic error would collapse the distinction the whole
+    retry argument rests on, so it is checked three ways rather than assumed.
+    """
+    orig = exc.orig
+    for attr in ("sqlstate", "pgcode"):
+        code = getattr(orig, attr, None)
+        if code is not None:
+            return str(code) == SQLSTATE_SERIALIZATION_FAILURE
+    return SQLSTATE_SERIALIZATION_FAILURE in str(orig)
+
+
 async def _close_serializable(
     db: AsyncSession, scenario: Scenario, index: int, draw: int
 ) -> Outcome:
@@ -254,11 +269,11 @@ async def _close_serializable(
         return Outcome.OK
     except DBAPIError as exc:
         await db.rollback()
-        if getattr(getattr(exc.orig, "sqlstate", None), "__str__", str)() == (
-            SQLSTATE_SERIALIZATION_FAILURE
-        ) or SQLSTATE_SERIALIZATION_FAILURE in str(exc.orig):
-            return Outcome.SERIALIZATION_FAILURE
-        return Outcome.ERROR
+        return (
+            Outcome.SERIALIZATION_FAILURE
+            if _is_serialization_failure(exc)
+            else Outcome.ERROR
+        )
 
 
 @dataclass
