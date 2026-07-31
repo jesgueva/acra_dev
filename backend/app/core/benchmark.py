@@ -18,6 +18,15 @@ read as one set.
 Percentiles are **nearest-rank**: `rank = ceil(p/100 × n)` on the sorted sample, clamped to
 `[1, n]`. `statistics.quantiles` is deliberately not used — it interpolates between samples, and
 switching methods would silently move every number already published.
+
+**Known extension point.** A sample is currently one number: elapsed seconds. That covers A8-6
+(aggregation latency at volume) as-is, and concurrency levels already fit through the free-form
+`**params`. A8-5's three-arm ablation additionally needs *retry rate* and *correctness* per arm,
+which this vocabulary cannot express — so it will want an outcome tag on `record()`/`time()` and a
+counter in `stats`. That is deliberately not built yet: the three drawdown implementations fail in
+different ways (optimistic-guard retry vs. SERIALIZABLE `40001` vs. unguarded lost update), and
+guessing the schema before one exists would over-fit it. Extend here rather than starting a second
+measurement structure alongside this one.
 """
 from __future__ import annotations
 
@@ -37,6 +46,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+from app.core.config import settings
 
 DEFAULT_PERCENTILES: tuple[int, ...] = (50, 95, 99)
 
@@ -130,7 +141,11 @@ class RunMetadata:
             git_dirty=status != _UNKNOWN and bool(status.strip()),
             host=f"{platform.system()} {platform.release()} {platform.machine()}",
             python_version=platform.python_version(),
-            database=redact_dsn(os.getenv("DATABASE_URL", "")),
+            # Env first (validation-run.sh and CI export it), then the app's own settings.
+            # Reading only os.environ would report "unknown" in the documented local setup, where
+            # DATABASE_URL lives in backend/.env — pydantic-settings loads that file without
+            # populating os.environ, so the provenance would silently lose the database it ran on.
+            database=redact_dsn(os.getenv("DATABASE_URL") or settings.database_url),
             captured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             command=shlex.join(sys.argv) if sys.argv else _UNKNOWN,
             params=dict(params),
@@ -220,10 +235,12 @@ class BenchmarkRun:
         """
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
-        stats = self.stats
+        # `stats` re-sorts and re-reduces on every access, so take one snapshot for both artifacts.
+        payload = self.as_dict()
+        stats = payload["stats"]
 
         json_path = out / f"{self.name}.json"
-        json_path.write_text(json.dumps(self.as_dict(), indent=2) + "\n")
+        json_path.write_text(json.dumps(payload, indent=2) + "\n")
 
         summary = (
             f"n={stats['n']}  p50={stats['p50_ms']:.1f}ms  "

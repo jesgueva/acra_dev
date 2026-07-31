@@ -27,8 +27,13 @@ def test_percentiles_against_known_vector():
 
 
 def test_percentiles_sorts_its_input():
-    """Callers must not have to pre-sort."""
-    assert percentiles([95, 1, 50, 99, 2], (50,))[50] == 50
+    """Callers must not have to pre-sort.
+
+    The fixture is chosen so the value sitting at the rank index in the *original* order (99)
+    differs from the one in sorted order (50) — otherwise the test passes even with the sort
+    removed, which is exactly what an earlier version of it did.
+    """
+    assert percentiles([50, 1, 99, 2, 95], (50,))[50] == 50
 
 
 def test_percentiles_single_sample_collapses_to_it():
@@ -104,12 +109,45 @@ def test_metadata_capture_records_provenance(monkeypatch):
     )
     meta = RunMetadata.capture(scale=10)
 
-    assert meta.git_sha and meta.git_sha != ""
+    # Not just "non-empty" — the _UNKNOWN sentinel is itself a non-empty string, so a truthiness
+    # check cannot tell a captured SHA from git having failed outright.
+    assert meta.git_sha != "unknown", "provenance must be a real SHA, not the failure sentinel"
+    assert all(c in "0123456789abcdef" for c in meta.git_sha)
     assert meta.captured_at.endswith("+00:00"), "timestamp must be explicit UTC"
     assert meta.python_version.count(".") == 2
     assert meta.database == "localhost:5435/acra_db"
     assert meta.params == {"scale": 10}
     assert isinstance(meta.git_dirty, bool)
+
+
+def test_metadata_falls_back_to_settings_when_env_is_unset(monkeypatch):
+    """The documented local setup keeps DATABASE_URL in backend/.env, not the shell.
+
+    pydantic-settings reads that file without populating os.environ, so reading only the env var
+    would record "unknown" for the database on a normal developer machine — losing exactly the
+    provenance this class exists to capture.
+    """
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(
+        "app.core.benchmark.settings.database_url",
+        "postgresql+asyncpg://postgres:hunter2@localhost:5999/from_env_file",
+    )
+
+    meta = RunMetadata.capture()
+
+    assert meta.database == "localhost:5999/from_env_file"
+    assert "hunter2" not in meta.database
+
+
+def test_metadata_prefers_the_env_var_over_settings(monkeypatch):
+    """validation-run.sh and CI export DATABASE_URL; that must win over the .env default."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@exported:5555/exported_db")
+    monkeypatch.setattr(
+        "app.core.benchmark.settings.database_url",
+        "postgresql+asyncpg://u:p@dotenv:5435/dotenv_db",
+    )
+
+    assert RunMetadata.capture().database == "exported:5555/exported_db"
 
 
 def test_metadata_capture_survives_git_failure(monkeypatch):

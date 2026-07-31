@@ -143,6 +143,12 @@ trace a specific call through the logs:
 curl -i -H 'X-Request-ID: my-trace-1' localhost:8000/health
 ```
 
+One limitation worth knowing: a `500` from an unhandled exception is produced by Starlette's
+`ServerErrorMiddleware`, which wraps *outside* the CORS layer. That response carries the
+`X-Request-ID` header on the wire, but cross-origin browser JavaScript cannot read it because the
+response has no `Access-Control-Allow-Origin`. Read the id from the server log or from a same-origin
+request. This is a property of the app's pre-existing error handling, not of the request logging.
+
 ---
 
 ## Implementation status

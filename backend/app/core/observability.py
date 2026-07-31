@@ -72,7 +72,7 @@ def configure_logging(log_format: str | None = None, level: int = logging.INFO) 
     Falls back to the text format for any unrecognised value, so a typo in `LOG_FORMAT` degrades
     to readable logs instead of taking the process down.
     """
-    chosen = (log_format or settings.log_format or "text").lower()
+    chosen = (log_format or settings.log_format).lower()
     handler = logging.StreamHandler()
     handler.setFormatter(
         StructuredFormatter() if chosen == "json" else logging.Formatter(TEXT_FORMAT)
@@ -96,6 +96,11 @@ def request_id_headers(request: Request) -> dict[str, str]:
     every user middleware. So a genuinely unhandled exception is converted to a 500 above this
     middleware, and the response never passes back through `dispatch` to be tagged — the one case
     where a caller most needs an id to quote. The app's 500 handler calls this to close that gap.
+
+    That same layering means the 500 also misses the CORS headers, so cross-origin browser JS still
+    cannot read this id; the server log remains the reliable source for it. Closing that would mean
+    generating the error response inside `CORSMiddleware`, which is a change to the app's error
+    handling rather than to its request logging.
     """
     request_id = getattr(request.state, "request_id", None)
     return {REQUEST_ID_HEADER: request_id} if request_id else {}

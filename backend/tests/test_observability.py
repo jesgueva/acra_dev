@@ -264,18 +264,16 @@ def test_configure_logging_is_idempotent():
 
 def test_json_logging_round_trips_a_real_request(client, capsys):
     """End to end: with JSON configured, the emitted line parses and carries the request fields."""
+    # No manual teardown: the autouse restore_root_logger fixture puts the handlers back.
     configure_logging("json")
-    try:
-        client.get("/items/7", headers={REQUEST_ID_HEADER: "trace-json"})
-        captured = capsys.readouterr().err
-        line = next(
-            line for line in captured.splitlines() if '"acra.request"' in line
-        )
-        payload = json.loads(line)
-        assert payload["route"] == "/items/{item_id}"
-        assert payload["status"] == 200
-        assert payload["request_id"] == "trace-json"
-        assert payload["method"] == "GET"
-        assert payload["duration_ms"] >= 0
-    finally:
-        configure_logging("text")
+    client.get("/items/7", headers={REQUEST_ID_HEADER: "trace-json"})
+
+    captured = capsys.readouterr().err
+    line = next(line for line in captured.splitlines() if '"acra.request"' in line)
+    payload = json.loads(line)
+
+    assert payload["route"] == "/items/{item_id}"
+    assert payload["status"] == 200
+    assert payload["request_id"] == "trace-json"
+    assert payload["method"] == "GET"
+    assert payload["duration_ms"] >= 0
