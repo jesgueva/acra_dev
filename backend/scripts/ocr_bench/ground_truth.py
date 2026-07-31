@@ -150,6 +150,25 @@ POOR_SCAN = BolSpec(
     mime_type="image/jpeg",
 )
 
+DEGRADED_FAX = BolSpec(
+    layout="degraded_fax",
+    supplier="Metalúrgica del Sur S.A.",
+    carrier="Transportes Álvarez",
+    bol_reference="MS-2026-0891",
+    delivery_date=date(2026, 2, 11),
+    items=(
+        BolItem("Bobina Acero Laminado", 1170.0, 9, 130),
+        BolItem("Varilla Roscada M10", 1040.0, 4, 260),
+        BolItem("Placa Antideslizante", 96.0, 2, 48),
+    ),
+    probes=(
+        "The hard end of the corpus: downscaled, heavy grain, crushed contrast, blur, skew and "
+        "aggressive JPEG. A faxed BOL photographed off a desk. Exists so the corpus has a "
+        "difficulty gradient — a bench every layout aces cannot detect a regression."
+    ),
+    mime_type="image/jpeg",
+)
+
 CORPUS: tuple[BolSpec, ...] = (
     GRIDDED,
     BORDERLESS_CRAMPED,
@@ -157,6 +176,7 @@ CORPUS: tuple[BolSpec, ...] = (
     MULTIPAGE,
     SPANISH,
     POOR_SCAN,
+    DEGRADED_FAX,
 )
 
 BY_LAYOUT: dict[str, BolSpec] = {spec.layout: spec for spec in CORPUS}

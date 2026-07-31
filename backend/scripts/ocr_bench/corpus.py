@@ -13,6 +13,7 @@ same-host stability, which is what protects a baseline.
 from __future__ import annotations
 
 import random
+import re
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -242,6 +243,31 @@ def _render_poor_scan(spec: BolSpec) -> Image.Image:
     return faded.filter(ImageFilter.GaussianBlur(0.6)).convert("RGB")
 
 
+def _render_degraded_fax(spec: BolSpec) -> Image.Image:
+    """Every degradation at once: downscale, grain, contrast crush, blur, skew, JPEG.
+
+    Deliberately the hardest document in the corpus. The gentler `poor_scan` turned out to be read
+    perfectly by both providers, which leaves a saturated bench with no power to detect a
+    regression; this one exists to find where the pipeline actually breaks.
+    """
+    base = _render_gridded(spec).convert("L")
+    # Fax resolution: throw away detail, then resample back up so the loss is baked in.
+    small_size = (int(base.width * 0.45), int(base.height * 0.45))
+    faxed = base.resize(small_size, Image.BILINEAR).resize(base.size, Image.NEAREST)
+
+    rng = random.Random(NOISE_SEED + 1)
+    noise_size = (faxed.width // 3, faxed.height // 3)
+    noise = Image.frombytes(
+        "L", noise_size, bytes(rng.randrange(256) for _ in range(noise_size[0] * noise_size[1]))
+    ).resize(faxed.size, Image.BILINEAR)
+
+    grainy = Image.blend(faxed, noise, 0.40)
+    washed = grainy.point(lambda px: int(88 + px * 0.42))
+    blurred = washed.filter(ImageFilter.GaussianBlur(1.3))
+    skewed = blurred.rotate(1.6, resample=Image.BICUBIC, expand=True, fillcolor=150)
+    return skewed.convert("RGB")
+
+
 def _render_multipage(spec: BolSpec) -> list[Image.Image]:
     """Two pages with the line items split across the break."""
     half = (len(spec.items) + 1) // 2
@@ -308,7 +334,19 @@ _RENDERERS = {
     "rotated": _render_rotated,
     "spanish": _render_spanish,
     "poor_scan": _render_poor_scan,
+    "degraded_fax": _render_degraded_fax,
 }
+
+
+#: Pillow stamps the wall-clock time into a PDF's CreationDate/ModDate, which makes two otherwise
+#: identical renders differ. Replaced with a fixed timestamp of the *same length* so the xref byte
+#: offsets stay valid.
+_PDF_DATE = re.compile(rb"D:\d{14}")
+_FROZEN_PDF_DATE = b"D:20260101000000"
+
+
+def _freeze_pdf_dates(payload: bytes) -> bytes:
+    return _PDF_DATE.sub(_FROZEN_PDF_DATE, payload)
 
 
 def render(spec: BolSpec, out_dir: Path | str) -> Path:
@@ -320,6 +358,7 @@ def render(spec: BolSpec, out_dir: Path | str) -> Path:
     if spec.layout == "multipage":
         first, *rest = _render_multipage(spec)
         first.save(path, "PDF", save_all=True, append_images=rest, resolution=150.0)
+        path.write_bytes(_freeze_pdf_dates(path.read_bytes()))
         return path
 
     img = _RENDERERS[spec.layout](spec)

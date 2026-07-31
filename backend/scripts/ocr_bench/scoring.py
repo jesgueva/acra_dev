@@ -207,29 +207,54 @@ class BolScore:
 
 @dataclass
 class CorpusScore:
-    """Micro-averaged score across documents — every field weighted equally, not every document."""
+    """Micro-averaged score across documents — every field weighted equally, not every document.
+
+    **Accuracy is computed over documents that actually returned an extraction.** A provider that
+    rate-limits or times out has an *availability* problem, not an accuracy one, and folding the
+    two together produces a badly misleading comparison: the first live run of this bench scored
+    gemini at 0.483 F1 purely because 14 of 21 calls came back 429, which reads as "the model is
+    bad at reading BOLs" when it means "the free tier allows 5 requests a minute". Failures are
+    reported separately via `error_count` / `error_rate`.
+    """
 
     documents: list[BolScore] = field(default_factory=list)
 
     @property
+    def succeeded(self) -> list[BolScore]:
+        """Documents that returned an extraction — the only ones accuracy is computed over."""
+        return [d for d in self.documents if d.error is None]
+
+    @property
+    def failed(self) -> list[BolScore]:
+        return [d for d in self.documents if d.error is not None]
+
+    @property
+    def error_count(self) -> int:
+        return len(self.failed)
+
+    @property
+    def error_rate(self) -> float:
+        return _ratio(len(self.failed), len(self.documents))
+
+    @property
     def header_accuracy(self) -> float:
         return _ratio(
-            sum(d.header_correct for d in self.documents),
-            sum(d.header_total for d in self.documents),
+            sum(d.header_correct for d in self.succeeded),
+            sum(d.header_total for d in self.succeeded),
         )
 
     @property
     def precision(self) -> float:
         return _ratio(
-            sum(len(d.matches) for d in self.documents),
-            sum(d.extracted_items for d in self.documents),
+            sum(len(d.matches) for d in self.succeeded),
+            sum(d.extracted_items for d in self.succeeded),
         )
 
     @property
     def recall(self) -> float:
         return _ratio(
-            sum(len(d.matches) for d in self.documents),
-            sum(d.expected_items for d in self.documents),
+            sum(len(d.matches) for d in self.succeeded),
+            sum(d.expected_items for d in self.succeeded),
         )
 
     @property
@@ -240,13 +265,15 @@ class CorpusScore:
     @property
     def numeric_accuracy(self) -> float:
         return _ratio(
-            sum(d.numeric_correct for d in self.documents),
-            sum(d.numeric_comparable for d in self.documents),
+            sum(d.numeric_correct for d in self.succeeded),
+            sum(d.numeric_comparable for d in self.succeeded),
         )
 
     @property
     def latencies_ms(self) -> list[float]:
-        return sorted(d.latency_ms for d in self.documents if d.latency_ms is not None)
+        """Latencies of successful calls only — a 429 rejection returns in milliseconds and would
+        otherwise flatter the percentiles."""
+        return sorted(d.latency_ms for d in self.succeeded if d.latency_ms is not None)
 
     def latency_percentile(self, pct: float) -> float | None:
         """Nearest-rank percentile. Returns None when nothing was timed."""
@@ -263,6 +290,11 @@ class CorpusScore:
             "item_recall": self.recall,
             "item_f1": self.item_f1,
             "numeric_accuracy": self.numeric_accuracy,
+            # Availability, kept distinct from accuracy on purpose — see the class docstring.
+            "calls": len(self.documents),
+            "scored": len(self.succeeded),
+            "errors": self.error_count,
+            "error_rate": self.error_rate,
             "latency_ms": {
                 "p50": self.latency_percentile(50),
                 "p95": self.latency_percentile(95),
@@ -405,6 +437,59 @@ def score_document(
 def score_corpus(scores: Iterable[BolScore]) -> CorpusScore:
     """Aggregate per-document scores into one micro-averaged result."""
     return CorpusScore(documents=list(scores))
+
+
+#: The metrics the no-regression gate enforces.
+GATE_METRICS = ("header_accuracy", "item_f1", "numeric_accuracy")
+
+#: Absolute slack allowed below the recorded baseline. Vision models are nondeterministic: the same
+#: document and model can extract differently between runs, so a gate with no tolerance would flake.
+#: If observed variance ever exceeds this, the honest fix is to widen the band and report the
+#: variance — not to tighten until the suite goes green.
+DEFAULT_TOLERANCE = 0.05
+
+
+@dataclass(frozen=True)
+class GateFailure:
+    """One metric that fell below its floor."""
+
+    metric: str
+    measured: float
+    baseline: float
+    floor: float
+
+    def __str__(self) -> str:
+        return (
+            f"{self.metric}: measured {self.measured:.4f} < floor {self.floor:.4f} "
+            f"(baseline {self.baseline:.4f} - tolerance)"
+        )
+
+
+def compare_to_baseline(
+    measured: CorpusScore | dict[str, Any],
+    baseline: dict[str, Any],
+    tolerance: float = DEFAULT_TOLERANCE,
+) -> list[GateFailure]:
+    """Check a measured run against a recorded baseline.
+
+    Returns the failing metrics — empty means the gate passes. Accepts either a `CorpusScore` or an
+    already-serialized dict so the offline negative control exercises exactly the same comparison
+    the live gate does.
+    """
+    values = measured.to_dict() if isinstance(measured, CorpusScore) else measured
+    failures = []
+    for metric in GATE_METRICS:
+        if metric not in baseline:
+            continue
+        floor = baseline[metric] - tolerance
+        actual = values.get(metric, 0.0)
+        if actual < floor:
+            failures.append(
+                GateFailure(
+                    metric=metric, measured=actual, baseline=baseline[metric], floor=round(floor, 4)
+                )
+            )
+    return failures
 
 
 def format_document_report(score: BolScore) -> str:

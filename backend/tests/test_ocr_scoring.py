@@ -20,7 +20,12 @@ from scripts.ocr_bench.ground_truth import BY_LAYOUT, CORPUS, BolItem, BolSpec
 # --------------------------------------------------------------------------------------
 
 
-def test_corpus_covers_the_six_planned_layouts():
+def test_corpus_covers_every_planned_layout():
+    """Six planned layouts plus `degraded_fax`.
+
+    The seventh was added after the first live run scored 1.000 on all six for both providers: a
+    corpus nothing fails cannot detect a regression, so the bench needed a hard end.
+    """
     assert {spec.layout for spec in CORPUS} == {
         "gridded",
         "borderless_cramped",
@@ -28,6 +33,7 @@ def test_corpus_covers_the_six_planned_layouts():
         "multipage",
         "spanish",
         "poor_scan",
+        "degraded_fax",
     }
 
 
@@ -430,6 +436,65 @@ def test_errored_document_scores_zero_and_keeps_the_reason():
     assert score.recall == 0.0
     assert score.error == "both providers failed"
     assert score.to_dict()["error"] == "both providers failed"
+
+
+def test_failed_calls_do_not_drag_down_accuracy():
+    """Availability is not accuracy.
+
+    The first live run of this bench reported gemini at 0.483 item F1. It was not misreading
+    documents — 14 of 21 calls came back HTTP 429 because the free tier allows five requests a
+    minute, and each failure was being scored as a total extraction miss. Averaging a throttled
+    call into an accuracy figure produces a false comparative claim, so accuracy is computed over
+    scored calls and failures are reported separately.
+    """
+    result = scoring.score_corpus(
+        [
+            _perfect(BY_LAYOUT["gridded"]),
+            scoring.score_document(
+                BY_LAYOUT["spanish"], None, provider="gemini", error="ClientError: 429"
+            ),
+        ]
+    )
+    assert result.header_accuracy == 1.0
+    assert result.item_f1 == 1.0
+    assert result.error_count == 1
+    assert result.error_rate == 0.5
+    assert len(result.succeeded) == 1
+
+
+def test_availability_is_reported_alongside_accuracy():
+    result = scoring.score_corpus(
+        [
+            _perfect(BY_LAYOUT["gridded"]),
+            scoring.score_document(BY_LAYOUT["rotated"], None, error="boom"),
+        ]
+    )
+    payload = result.to_dict()
+    assert payload["calls"] == 2
+    assert payload["scored"] == 1
+    assert payload["errors"] == 1
+    assert payload["error_rate"] == 0.5
+
+
+def test_failed_call_latency_is_excluded_from_percentiles():
+    """A 429 rejection returns in milliseconds and would otherwise flatter p50."""
+    scores = [
+        _perfect(BY_LAYOUT["gridded"], latency_ms=5000),
+        scoring.score_document(BY_LAYOUT["rotated"], None, latency_ms=12, error="429"),
+    ]
+    result = scoring.score_corpus(scores)
+    assert result.latencies_ms == [5000.0]
+    assert result.latency_percentile(50) == 5000.0
+
+
+def test_all_calls_failing_yields_zero_not_a_crash():
+    result = scoring.score_corpus(
+        [scoring.score_document(spec, None, error="429") for spec in CORPUS]
+    )
+    assert result.header_accuracy == 0.0
+    assert result.item_f1 == 0.0
+    assert result.error_rate == 1.0
+    assert result.latency_percentile(95) is None
 
 
 def test_latency_percentiles():
