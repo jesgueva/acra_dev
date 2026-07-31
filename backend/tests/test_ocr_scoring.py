@@ -125,6 +125,51 @@ def test_unparseable_date_is_none_not_a_guess():
     assert scoring.parse_date(None) is None
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("23/06/2026", date(2026, 6, 23)),  # day > 12 — only DD/MM is possible
+        ("06/23/2026", date(2026, 6, 23)),  # day > 12 in second position — only MM/DD
+        ("06/06/2026", date(2026, 6, 6)),   # identical — same date either way
+    ],
+)
+def test_unambiguous_numeric_dates_resolve(text, expected):
+    assert scoring.parse_date(text) == expected
+
+
+@pytest.mark.parametrize("text", ["03/08/2026", "08/03/2026", "11/02/2026", "1.2.2026"])
+def test_ambiguous_numeric_dates_are_refused_not_guessed(text):
+    """`03/08/2026` is March 8 or August 3 and nothing in the payload says which.
+
+    Resolving it positionally — as an ordered strptime format list does — is wrong in both
+    directions: it credits a wrong extraction whose misreading happens to match under the assumed
+    order, and penalises a correct one that used the other convention. Three of the seven corpus
+    documents (multipage 2026-03-08, poor_scan 2026-07-03, degraded_fax 2026-02-11) have dates of
+    exactly this shape, so the bias landed on real recorded numbers.
+    """
+    assert scoring.parse_date(text) is None
+
+
+def test_an_ambiguous_date_scores_wrong_rather_than_luckily_right():
+    """The false-positive half, at the scorer level.
+
+    multipage's ground truth is 2026-03-08. An extraction of "08/03/2026" — August 3 written
+    MM/DD, i.e. a misread — must not be credited just because reading it DD/MM happens to land on
+    the right day.
+    """
+    spec = BY_LAYOUT["multipage"]
+    assert spec.delivery_date == date(2026, 3, 8)
+    header = scoring.score_header(spec, _extraction(delivery_date="08/03/2026"))
+    assert header["delivery_date"] is False
+
+
+def test_the_iso_date_the_corpus_actually_prints_still_scores():
+    """The corpus renders ISO, so a compliant extraction is unaffected by the ambiguity rule."""
+    spec = BY_LAYOUT["multipage"]
+    header = scoring.score_header(spec, _extraction(delivery_date="2026-03-08"))
+    assert header["delivery_date"] is True
+
+
 # --------------------------------------------------------------------------------------
 # Header scoring — the D1 defect
 # --------------------------------------------------------------------------------------
@@ -182,7 +227,10 @@ def test_header_accepts_accent_and_punctuation_noise():
             supplier="FUNDICION IBERICA SL",
             carrier="Logistica del Norte",
             bol_reference="FI-2026-0733",
-            delivery_date="03/07/2026",
+            # Was "03/07/2026", which passed only because the old ordered format list happened to
+            # resolve ambiguous numeric dates as DD/MM. poor_scan is 2026-07-03, so that string is
+            # genuinely ambiguous and is now refused; the corpus prints ISO anyway.
+            delivery_date="2026-07-03",
         ),
     )
     assert all(header.values())

@@ -40,17 +40,22 @@ NUMERIC_FIELDS = ("quantity", "pallets", "units_per_pallet")
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
 
+#: Formats whose day/month order is unambiguous — year-first, or a spelled-out month.
 _DATE_FORMATS = (
     "%Y-%m-%d",
-    "%d/%m/%Y",
-    "%m/%d/%Y",
-    "%d-%m-%Y",
-    "%d.%m.%Y",
     "%Y/%m/%d",
     "%d %B %Y",
     "%B %d, %Y",
     "%d %b %Y",
+    "%b %d, %Y",
 )
+
+#: `03/08/2026` is March 8 to a US reader and August 3 to a European one, and the extractor is told
+#: to return the date in "any format you find". Matching these positionally — as an ordered format
+#: list does — silently resolves every ambiguous date one way, which both *credits* wrong
+#: extractions and *penalises* right ones. Parsed explicitly instead, so genuine ambiguity is
+#: reported as unparseable rather than guessed.
+_NUMERIC_DATE = re.compile(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$")
 
 
 def normalize_text(value: str | None) -> str:
@@ -79,7 +84,13 @@ def similarity(left: str | None, right: str | None) -> float:
 
 
 def parse_date(value: Any) -> date | None:
-    """Best-effort date parse. The extractor is told to return the date in 'any format you find'."""
+    """Best-effort date parse. The extractor is told to return the date in 'any format you find'.
+
+    Returns `None` for anything that cannot be resolved to exactly one date — including a numeric
+    date whose day/month order is genuinely ambiguous (`03/08/2026`). Refusing to guess is the
+    conservative choice for a scorer: an ambiguous answer is not credited, so the gate can never be
+    passed by a coin flip, and a wrong extraction can never be scored right by coincidence.
+    """
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -87,6 +98,23 @@ def parse_date(value: Any) -> date | None:
     if not value:
         return None
     text = str(value).strip()
+
+    numeric = _NUMERIC_DATE.match(text)
+    if numeric:
+        first, second, year = (int(g) for g in numeric.groups())
+        if first > 12 and second <= 12:
+            day, month = first, second       # 23/06/2026 — only DD/MM is possible
+        elif second > 12 and first <= 12:
+            day, month = second, first       # 06/23/2026 — only MM/DD is possible
+        elif first == second:
+            day, month = first, second       # 06/06/2026 — same date either way
+        else:
+            return None                      # 03/08/2026 — genuinely ambiguous
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
     for fmt in _DATE_FORMATS:
         try:
             return datetime.strptime(text, fmt).date()
