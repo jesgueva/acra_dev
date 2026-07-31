@@ -3,6 +3,7 @@
 **Status:** draft for review
 **Written against:** `master` @ `7649a6e` (`ticket-21: T21 — End-to-End Tests (Playwright) (#33)`)
 **Date:** 2026-07-30
+**§8 board last reconciled against Linear:** 2026-07-31, `master` @ `0547b38`
 
 Briefs: [`08_Midpoint_Technical_Evidence_Review/brief.md`](../../acra_docs/assignments/08_Midpoint_Technical_Evidence_Review/brief.md) ·
 [`10_Artifact_Hardening_Reproducibility_Check/brief.md`](../../acra_docs/assignments/10_Artifact_Hardening_Reproducibility_Check/brief.md)
@@ -235,10 +236,11 @@ Found while writing this; small, but they will read as drift if a grader hits th
 - **`ACR-31`'s Linear description is stale.** It still says to write *"inventory adjustment entries
   capturing `actual − planned`"*, but `target_schema.md` Q1 decided that delta is a **computation,
   never a movement** — writing it double-decrements stock.
-- `plans/plan_ticket_35.md:234` says the shipping-privilege grants landed in migration `012`; they
-  landed in `013_shipping_privileges.py`.
-- `backend/alembic.ini:6` carries a stale `sqlalchemy.url` on port **5432**. It is always
-  overridden, but it reads as documentation and contradicts the documented 5433.
+- `plans/plan_ticket_35.md` says the shipping-privilege grants landed in migration `012` (lines
+  **117, 192, 254** — the `:234` reference in the original draft has drifted); they landed in
+  `013_shipping_privileges.py`.
+- ~~`backend/alembic.ini:6` carries a stale `sqlalchemy.url` on port **5432**.~~ **Retired by ACR-42
+  (`098cc2e`)** — it now reads 5433, at line 8.
 - `acra_docs` has an unstaged `07_` → `08_` folder rename plus three untracked assignment folders.
 
 **Corrections to this plan itself**, found while re-measuring for ACR-42 (2026-07-30):
@@ -267,21 +269,21 @@ Legend: ⬜ not started · 🔄 in progress · ✅ done · ⏸️ blocked/deferr
 |---|---|---|---|---|
 | §2.2 | **Ledger decision gate** — Option A (build `015`) vs B (defer) | — | ⬜ open decision | — |
 | A8-1 | Parameterized seed — `seed_fake_data.py --scale N` | **ACR-41** | ✅ done — `--scale/--deliveries/--work-orders/--materials/--json`, scale-1 proven bit-identical | `ticket-41/parameterized-seed` |
-| A8-2 | Benchmark harness — run metadata, p50/p95/p99, machine-readable output | **ACR-43** | ✅ done — `app/core/benchmark.py`; first consumer `api_latency_bench.py`; `validation-run.sh` stage 6c | `ticket-43/bench-harness-request-timing` (#36) |
-| A8-3 | Request-timing middleware + structured request logs | **ACR-43** | ✅ done — `app/core/observability.py`, folded into A8-2 | `ticket-43/bench-harness-request-timing` (#36) |
-| A8-4 | OCR accuracy + provider comparison bench | **ACR-36** | 🔄 in progress — `ticket-36/ocr-accuracy-bench`, plan at `plans/plan_ticket_36.md` | — |
-| A8-5 | Comparative concurrency study (3-arm ablation) | **ACR-44** | 🔄 in progress — `ticket-44/comparative-concurrency-study`, plan at `plans/plan_ticket_44.md` | — |
-| A8-6 | Aggregation benchmark at volume (RSK-04) | **ACR-45** | ⬜ — ticket written; `inventory_lots` carries **no index at all**, so RSK-04's own mitigation is half-applied | — |
+| A8-2 | Benchmark harness — run metadata, p50/p95/p99, machine-readable output | **ACR-43** | ✅ done — `app/core/benchmark.py`, nearest-rank percentiles + `RunMetadata` provenance, paired JSON/text artifacts; first consumer `api_latency_bench.py`; `validation-run.sh` stage 6c | `d2e9520` ([PR #36](https://github.com/jesgueva/acra_dev/pull/36)) |
+| A8-3 | Request-timing middleware + structured request logs | **ACR-43** | ✅ done — `app/core/observability.py`, folded into A8-2 | `d2e9520` ([PR #36](https://github.com/jesgueva/acra_dev/pull/36)) |
+| A8-4 | OCR accuracy + provider comparison bench | **ACR-36** | ✅ done, PR open — 7-layout labelled corpus, fuzzy line-item scorer, asserted no-regression gate; retires KI-09's anecdotal claim with a measured one; plan at `plans/plan_ticket_36.md`. Own §8 edit lands with the merge, per the pattern A8-2/3/5 already set | `bd194f1` ([PR #40](https://github.com/jesgueva/acra_dev/pull/40)) |
+| A8-5 | Comparative concurrency study (3-arm ablation) | **ACR-44** | ✅ done — 4-arm sweep; ADR-02 the only arm holding 100% success and 0 lost updates at 2→32. Plan at `plans/plan_ticket_44.md` | `0547b38` ([PR #38](https://github.com/jesgueva/acra_dev/pull/38)) |
+| A8-6 | Aggregation benchmark at volume (RSK-04) | **ACR-45** | ⬜ **unblocked and unclaimed** — blocker ACR-43 is Done; no branch, no worktree. Ticket carries the half-applied-index hypothesis: `inventory_lots` carries **no index at all** while `stock_reservations` is indexed, so RSK-04's own mitigation is half-applied | — |
 | A8-7 | Subsystem diagram marking measurement points | — | ⬜ | — |
-| A10-1 | Dockerfiles for backend + frontend; whole-stack compose | **ACR-42** | 🔄 in progress | — |
+| A10-1 | Dockerfiles for backend + frontend; whole-stack compose | **ACR-42** | ✅ done — `backend/Dockerfile` + `frontend/Dockerfile`; compose is now `db` → `migrate` → `backend` → `frontend` (+ `seed` profile) | `098cc2e` ([PR #37](https://github.com/jesgueva/acra_dev/pull/37)) |
 | A10-2 | OCR offline/mock mode + committed sample fixtures | — | ⬜ | — |
-| A10-3 | CI: Playwright job, all 20 Jest files, frontend coverage gate | — | ⬜ blocked on §6 #3 + wants A10-1 first | — |
-| A10-4 | Lockfile + Node/Python version reconciliation, pin AI SDKs | **ACR-42** | 🔄 in progress — folded into A10-1 | — |
+| A10-3 | CI: Playwright job, all 20 Jest files, frontend coverage gate | — | ⬜ **A10-1 prerequisite now met** (`098cc2e` — the compose service setup §6 #3 said this would need either way, with Playwright already proven 91/91 against it); remaining blocker is the §6 #3 every-PR-vs-nightly call. **Also owns wiring `ACRA_SEED_IT_DSN`** — the 10 live-DB tests in `tests/integration/test_seed_scaling.py` skip in CI, holding the A8-1 seed module at 40% coverage | — |
+| A10-4 | Lockfile + Node/Python version reconciliation, pin AI SDKs | **ACR-42** | ✅ done — one Node (24) and one Python (3.13) named repo-wide; `backend/requirements.lock` pins 57 packages. Folded into A10-1 | `098cc2e` ([PR #37](https://github.com/jesgueva/acra_dev/pull/37)) |
 | A10-5 | Privilege-parity test (seed vs migrations); fix/delete `create_admin.py` | (ACR-40 adjacent) | ⬜ | — |
 | A10-6 | LICENSE + data-provenance doc | — | ⬜ | — |
 | A10-7 | README troubleshooting, expected-output transcript, runbook | — | ⬜ | — |
 | A10-8 | Repo hygiene (untrack `backend/.coverage`, stray PNGs, `plans/` policy) | — | ⬜ | — |
-| §7 | Doc corrections (ACR-31 description, plan_ticket_35:234, alembic.ini:6, `acra_docs` rename) | — | ⬜ | — |
+| §7 | Doc corrections (ACR-31 description, plan_ticket_35 `012`/`013`, alembic.ini, `acra_docs` rename) | — | 🔄 **1 of 4 retired** — alembic.ini's stale 5432 fixed by ACR-42; the other three stand | `098cc2e` (partial) |
 
 **A10-4 is folded into A10-1 under one ticket** (ACR-42): a correct Dockerfile cannot be written
 before the Node and Python versions are settled, and §4 already sequences A10-4 → A10-1. Splitting
@@ -293,16 +295,25 @@ middleware is the in-process source the harness reports on. §4 already runs the
 convergence point. Splitting them would mean defining the run-metadata and percentile conventions
 twice.
 
+**§8 is the only shared surface in this file, and it does conflict in practice.** Checked at
+reconcile time: `ticket-42/docker-stack-versions` and `ticket-36/ocr-accuracy-bench` add only their
+own `plans/plan_ticket_NN.md` and leave this file alone — but `ticket-44/concurrency-ablation` (PR
+#38) carried its own §8.1 and §8.2 edits inside the feature branch, and collided head-on with this
+reconcile pass. Both sides had written the same rows differently and the merge had to be resolved by
+hand. So: land §8 edits as their own small commit against fresh `master` rather than carrying them
+inside a feature branch, and **append** to §8.2 rather than rewriting neighbouring rows.
+
 ### 8.2 Completed
 
 When an item lands, append a row here rather than only flipping §8.1 — the evidence column is what
 makes the writeup citable.
 
-| # | Item | Date | Commit / PR | Evidence produced |
+| # | Item | Merged (UTC) | Commit / PR | Evidence produced |
 |---|---|---|---|---|
-| **A8-1** | Parameterized seed (ACR-41) | 2026-07-30 | `ticket-41/parameterized-seed` | See `plans/plan_ticket_41.md` §9. **Scale-1 fixture proven bit-identical** across all 14 seeded tables (per-table SHA-256 of full ordered content, captured before/after on freshly migrated databases) — the contract the 83 Playwright specs depend on. **Volume/timing:** scale 50 = 1 200 deliveries / 3 700 lots / 400 work orders in **8.9 s**; scale 200 = 14 800 lots in **31.8 s**; ~linear, so the planned bulk-insert follow-up is unnecessary. **Idempotence:** re-seeding creates 0 rows; raising the scale adds exactly one unit. **Supply/demand headroom** 176× at scale 1 vs 165× at scale 50 — the ratio-preservation claim measured, not assumed. 40 pure tests + 6 guarded live-DB tests. |
-| **A8-2 + A8-3** | Benchmark harness & request-timing middleware (ACR-43) | 2026-07-31 | `ticket-43/bench-harness-request-timing` (#36) | `app/core/benchmark.py` — nearest-rank p50/p95/p99 pinned against a known vector, `RunMetadata` capturing git SHA/tag/dirty + host + redacted DSN + exact command, JSON+text artifact pair under `validation-evidence/`. `app/core/observability.py` — per-request structured logs (status, route, duration, request id). First consumer `scripts/validation/api_latency_bench.py` over 5 read endpoints; wired as `validation-run.sh` stage 6c. **Credentials never reach an artifact** — asserted end to end on both files, not assumed. |
-| — | — | — | — | — |
+| **A8-1** | Parameterized seed (ACR-41) | 2026-07-31 | `8027c14` — [PR #35](https://github.com/jesgueva/acra_dev/pull/35), merged from `ticket-41/parameterized-seed` | See `plans/plan_ticket_41.md` §9. **Scale-1 fixture proven bit-identical** across all 14 seeded tables (per-table SHA-256 of full ordered content, captured before/after on freshly migrated databases) — the contract the 83 Playwright specs depend on. **Volume/timing:** scale 50 = 1 200 deliveries / 3 700 lots / 400 work orders in **8.9 s**; scale 200 = 14 800 lots in **31.8 s**; ~linear, so the planned bulk-insert follow-up is unnecessary. **Idempotence:** re-seeding creates 0 rows; raising the scale adds exactly one unit. **Supply/demand headroom** 176× at scale 1 vs 165× at scale 50 — the ratio-preservation claim measured, not assumed. 40 pure tests + 6 guarded live-DB tests. **Caveat:** the live-DB tests are skipped unless `ACRA_SEED_IT_DSN` is set, which CI never sets — so the seed module sits at 40% covered in CI. Wiring that in is A10-3's. |
+| **A8-2 + A8-3** | Benchmark harness & request-timing middleware (ACR-43) | 2026-07-31 | `d2e9520` — [PR #36](https://github.com/jesgueva/acra_dev/pull/36), merged from `ticket-43/bench-harness-request-timing` | `app/core/benchmark.py` — nearest-rank p50/p95/p99 defined once (`ceil(p/100 × n)`, no interpolation, **pinned against a known vector**, so every published number is an observation that happened), plus `RunMetadata` provenance: git SHA/tag/dirty, host, Python, database, UTC timestamp, exact command. Credentials stripped from the recorded DSN, asserted against both artifacts. Every run writes `<name>.json` (raw samples, so a later gate recomputes rather than trusts) + `<name>.txt` (the `validation-run.sh` `hdr()` header shape). `app/core/observability.py` — one structured line per request (method, **route template**, status, `duration_ms`, request id), `X-Request-ID` echoed and CORS-exposed, `LOG_FORMAT=json` opt-in. New `validation-run.sh` stage + `scripts/validation/api_latency_bench.py` produce real artifacts: 5 endpoints × 100 requests, `/health` p50 **0.7 ms** / p95 1.2 ms, `/api/v1/deliveries` p50 **11.1 ms** / p95 16.5 ms / p99 31.2 ms. **Retires the hand-rolled percentile index** in `test_reservation_availability.py`. pytest **405 passed** (was 354), **95%** coverage, all three new/changed core modules **100%**; Jest 20 suites / **146**; **Playwright 89/89**; smoke PASSED. Zero new dependencies. Three limitations documented rather than hidden — a 500's `X-Request-ID` is unreadable cross-origin (built above CORS), `BenchmarkRun` has no retry-rate axis yet **for A8-5 to extend**, and `BaseHTTPMiddleware` costs two task spawns per request. |
+| **A10-1 + A10-4** | Containerize the stack & pin runtime versions (ACR-42) | 2026-07-31 | `098cc2e` — [PR #37](https://github.com/jesgueva/acra_dev/pull/37), merged from `ticket-42/docker-stack-versions` | `docker compose up -d --build` brings the whole stack up from a clean clone: **0 → 2 Dockerfiles**, and services go from `db` only to `db` → `migrate` → `backend` → `frontend` (+ a `seed` profile). Plan at `plans/plan_ticket_42.md`. **Version drift closed:** Node named 4 ways (root `.nvmrc` 22, `frontend/.nvmrc` 24, `engines` >=24, `@types/node` ^22) → **one (24)**; Python named 3 ways (README ≥3.11, docs 3.13, CI 3.12) → **one (3.13**, declared in `backend/pyproject.toml`). `backend/requirements.lock` pins the **57-package** transitive closure; `google-genai` and `anthropic` were previously unpinned and **not theoretically** — two dev virtualenvs built from the same `requirements.txt` were measured running `anthropic` 0.119.0 and 0.109.2. `backend/tests/test_packaging.py` holds these as **30 negative-controlled assertions**, each failing with a message naming the offending file. **The design constraint worth citing:** `NEXT_PUBLIC_API_URL` is baked into the browser bundle at build time and must be host-reachable (`localhost:8000`), while `BACKEND_URL` is read at runtime by the auth proxy and must be the service name (`backend:8000`) — wire them the same way round and the stack reports healthy while every login fails. `scripts/compose-smoke.sh` asserts both directions, including grepping the shipped JS chunks to prove the internal hostname never reached the browser. Gates per the PR: pytest **384 passed / 94.59%**, Jest 20 suites / **146**, `next build` ok across the `@types/node` 22→24 bump, host smoke PASSED, compose smoke passed, **Playwright 91/91 against the containerized stack**. Also swept up: a duplicated `CORS_ORIGINS` in `backend/.env.example` (the file a clean-run user copies), `reset-db-and-seed.sh` / `smoke-test.sh` bare `docker compose up -d` now scoped to `db`, and `alembic.ini`'s stale 5432 — which retires one of §7's carried corrections. |
+| **A8-5** | Concurrency ablation — optimistic locking under contention (ACR-44) | 2026-07-31 | `0547b38` — [PR #38](https://github.com/jesgueva/acra_dev/pull/38), merged from `ticket-44/concurrency-ablation` | Plan at `plans/plan_ticket_44.md`. **Four arms** — `unguarded` (read-modify-write), `optimistic` (ADR-02's version guard), `serializable`, `serializable-retry` (+5 bounded retries) — over a workload held fixed at N concurrent closers drawing from one product, so the isolation control is the only variable. 5 rounds per cell, `--stock 1000000 --draw 1000`, PostgreSQL 15.18, concurrency 2→32. **The headline:** `unguarded` loses **281 updates** across the sweep and completes 3% of attempts at 32; **ADR-02 is the only arm holding 0 lost updates *and* 100% success at every level**, and the only arm whose goodput *rises* with load (95 → **227** ops/s). `serializable` also loses nothing but completes 3% at 32 (156 → 52); +5 retries buys 21% (237 → 77). **Why the study reports goodput, not throughput:** bare `serializable` posts the sweep's highest raw attempt rate (**1648 attempts/s** at 32) while finishing 3% of the work — raw throughput would have ranked the worst arm first. Extends `benchmark.py` **strictly additively at the extension point ACR-43 named** (`benchmark.py:22-29`): `Outcome`, per-outcome counts, success/retry/error rates, `p*_ok_ms`. Gates: pytest **466 passed / 10 skipped / 92%**, `benchmark.py` **100%**, Jest 20 suites / 146. 13 harness unit tests + 3 pure oracle tests + 5 live-DB arm tests, the latter **guarded per-test rather than per-module** — a module-level `pytestmark` would take the harness tests dark too, which is the trap currently pinning the seed module at 40%. Caught a real flake in the process: the barrier guarantees closers *start* together but not that they *overlap*, so a round could silently assert nothing; rounds are now pooled, 8/8 clean repeats. **Deliberately not done:** no Playwright spec, and `unguarded` is left unfixed in `inventory_service.adjust_quantity` / `shipment_service.create_shipment` — the numbers are the argument for that follow-up. Live-DB arm tests stay skipped in CI until A10-3. |
 
 ---
 
