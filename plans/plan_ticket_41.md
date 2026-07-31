@@ -90,7 +90,7 @@ round-trips for the existence checks alone, all of which could be a single pre-f
 `frontend/e2e/README.md`, `backend/tests/test_shipping_privileges.py`,
 `backend/alembic/versions/013_shipping_privileges.py`, `scripts/reset-db-and-seed.sh`.
 
-**All 83 Playwright tests log in as seeded users and read seeded rows.** Any drift in the scale-1
+**The whole Playwright suite logs in as seeded users and reads seeded rows** (13 specs, 83 `test()` declarations, 85 executed — one parameterized loop expands to three).** Any drift in the scale-1
 fixture breaks the e2e suite. This is the dominant risk on the ticket.
 
 `scripts/validation-run.sh:72` calls `./scripts/reset-db-and-seed.sh` as stage 3/7 of the evidence
@@ -135,7 +135,7 @@ def plan_work_orders(scale: int) -> list[WorkOrderSeed]: ...
 
 `create_demo_deliveries` / `create_demo_work_orders` then consume specs instead of computing them
 inline. This is what makes scale-1 fidelity testable without a database — the golden-snapshot test
-in §4.1 is the regression lock protecting the 83 e2e tests, and it runs in milliseconds.
+in §4.1 is the regression lock protecting the e2e suite, and it runs in milliseconds.
 
 ### 2.2 Replica naming
 
@@ -264,7 +264,7 @@ If `--scale 50` misses the 2-minute budget, that is the trigger for bulk inserts
 
 | # | Risk | Mitigation |
 |---|---|---|
-| R1 | **Scale-1 fixture drift breaks all 83 e2e tests** | §4.1 golden snapshot + §4.3 full Playwright run before merge |
+| R1 | **Scale-1 fixture drift breaks the whole e2e suite** | §4.1 golden snapshot + §4.3 full Playwright run before merge |
 | R2 | `allocate_inventory` RuntimeError at scale (§1.4.2) | §4.2.4 asserts it empirically at N=2 and N=10 |
 | R3 | Single transaction blows up at high N (§1.4.3) | §5 measures it; batching is a measured follow-up |
 | R4 | `delivery_date = today - index*2 days` walks ~13 years back at N=100 | Cosmetic; see open question §7.3 |
@@ -321,7 +321,7 @@ full ordered content:
 | work_orders · work_order_materials | 8 · 21 | unchanged |
 | material_allocations | 16 | unchanged |
 
-**All 14 tables bit-identical.** The 83 Playwright specs read the same rows they did on `7649a6e`.
+**All 14 tables bit-identical.** The Playwright suite reads the same rows it did on `7649a6e`, and all 85 tests pass.
 
 ### 9.2 Volume and timing
 

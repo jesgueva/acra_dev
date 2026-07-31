@@ -3,7 +3,8 @@
 `seed_fake_data` splits "decide what rows should exist" from "write them". Everything here tests
 the pure half, which is what makes the scale-1 fixture cheap to pin.
 
-**Why the golden snapshot matters:** all 83 Playwright e2e tests log in as seeded users and read
+**Why the golden snapshot matters:** the Playwright e2e suite (13 specs, 85 tests) logs in as
+seeded users and reads
 seeded rows, and `tests/test_shipping_privileges.py` reads seeded privileges. If `--scale 1` output
 drifts by one field, that suite breaks in a way that is expensive to diagnose from the e2e failure.
 `test_scale_one_matches_golden_snapshot` fails first, in milliseconds, and says exactly what moved.
@@ -60,7 +61,7 @@ def test_scale_one_matches_golden_snapshot():
     """Every field of all 24 deliveries and 72 lines is unchanged from the pre-knob script."""
     specs = plan_deliveries(SCALE_1_DELIVERIES, FIXED_TODAY)
     assert _fingerprint(specs) == GOLDEN_PLAN_SHA256, (
-        "The scale-1 demo fixture changed. This breaks the 83 Playwright e2e tests, which read "
+        "The scale-1 demo fixture changed. This breaks the Playwright e2e suite, which reads "
         "these exact rows. If the change is intentional, re-record the snapshot AND the e2e suite."
     )
 
@@ -92,8 +93,16 @@ def test_plan_work_orders_scale_one_is_the_base_seeds():
     assert plan_work_orders(SCALE_1_WORK_ORDERS) == list(WORK_ORDER_SEEDS)
 
 
-def test_work_orders_per_scale_tracks_the_seed_list():
-    assert WORK_ORDERS_PER_SCALE == len(WORK_ORDER_SEEDS)
+def test_scale_unit_constants_match_the_fixture():
+    """Pin production's scale unit to the fixture literals this file asserts against.
+
+    The SCALE_1_* values above are deliberately independent literals, not imports — if they were
+    derived from the production constants, changing `DELIVERIES_PER_SCALE` to 48 would silently
+    redefine "scale 1" and every volume test would still pass. This is the one place the two are
+    tied together, so that change fails loudly here instead.
+    """
+    assert DELIVERIES_PER_SCALE == SCALE_1_DELIVERIES
+    assert WORK_ORDERS_PER_SCALE == SCALE_1_WORK_ORDERS == len(WORK_ORDER_SEEDS)
 
 
 # ---------------------------------------------------------------------------

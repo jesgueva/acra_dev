@@ -205,9 +205,13 @@ Two properties the seeder guarantees, both covered by `backend/tests/test_seed_s
 - **Scale N is a superset of scale 1.** Deliveries are generated from the row index with no RNG, so
   re-running at a higher scale adds rows rather than conflicting with existing ones.
 
-Raising `--materials` past 6 replaces the demo fixture with a benchmark corpus, and dilutes supply
-for the six materials work orders consume. Pair it with `--work-orders 0` or more `--deliveries`;
-if allocation runs short the seeder aborts before committing and names the knob to turn.
+Only the bare invocation reproduces the demo fixture — every flag in the table above changes the
+rows the e2e suite reads. `--materials` does so in **either** direction: lowering it drops materials
+from the catalogue just as surely as raising it adds them.
+
+Raising `--materials` also dilutes supply for the six materials work orders consume. Pair it with
+`--work-orders 0` or more `--deliveries`; if allocation runs short the seeder aborts before
+committing anything and names the knob to turn.
 
 ---
 

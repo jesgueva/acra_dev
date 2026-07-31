@@ -8,9 +8,9 @@ Usage:
     python scripts/seed_fake_data.py --scale 10 --json
 
 `--scale 1` is the **demo fixture contract**: its output is bit-identical to what this script
-produced before the scale knob existed, because the 83 Playwright e2e tests log in as these users
-and read these rows. Scale N is a strict superset of scale 1 — index 1..24 always generate the same
-deliveries — so re-running at a higher scale adds rows instead of conflicting with them.
+produced before the scale knob existed, because the Playwright e2e suite logs in as these users and
+asserts against these rows. Scale N is a strict superset of scale 1 — index 1..24 always generate
+the same deliveries — so re-running at a higher scale adds rows instead of conflicting with them.
 
 There is deliberately no RNG and no `--seed`: every value is arithmetic on the row index, so two
 runs of the same arguments produce the same database without needing a seed to be recorded.
@@ -24,9 +24,9 @@ Schema: deliveries and shipments hang off delivery_notes, which carry the partne
 number and date; delivery_items and inventory_lots reference products;
 quantities are integer ×100 where applicable (inventory, delivery lines, low-stock thresholds).
 
-Note on `--materials M`: raising it past the 6 named materials changes which material each
-delivery line draws, so the fixture is no longer the demo fixture — it is a benchmark corpus.
-It also dilutes supply for the base 6 materials that work orders consume, so combine it with
+Only the bare invocation reproduces the demo fixture — every volume flag changes the rows the e2e
+suite reads. `--help` documents each flag; the one interaction worth stating here is that raising
+`--materials` dilutes supply for the six materials work orders consume, so pair it with
 `--work-orders 0` or a higher `--deliveries` if allocation runs short.
 """
 
@@ -340,7 +340,8 @@ WORK_ORDER_SEEDS = [
 #
 # Everything below decides *what rows should exist*; nothing here touches a session. Keeping the
 # decision pure is what lets `tests/test_seed_scaling.py` pin the scale-1 fixture with a golden
-# snapshot in milliseconds, which is the regression lock protecting the 83 Playwright tests.
+# snapshot in milliseconds — the regression lock protecting the Playwright e2e suite, which logs in
+# as these users and asserts against these rows.
 # ---------------------------------------------------------------------------
 
 DELIVERIES_PER_SCALE = 24  # the pre-scale-knob delivery count; one scale unit
@@ -847,13 +848,13 @@ async def create_demo_work_orders(
     specs: list[WorkOrderSeed],
     *,
     created_by: int,
+    today: date,
 ) -> tuple[int, int, int, int]:
     created_work_orders = 0
     created_work_order_materials = 0
     created_allocations = 0
     created_finished_inventory = 0
     items_by_type = await build_inventory_index(db)
-    today = date.today()
 
     # Same batching as the delivery pre-check: one query per 10 000 instead of one per work order.
     already_seeded = await _existing_values(
@@ -1014,7 +1015,12 @@ async def seed_fake_data(
             products_by_name=products_by_name,
         )
         work_order_counts = await create_demo_work_orders(
-            db, work_order_specs, created_by=user_map["supervisor1"].id
+            db,
+            work_order_specs,
+            created_by=user_map["supervisor1"].id,
+            # The same `today` the deliveries were planned against, so a run straddling midnight
+            # cannot date the two halves of one seed differently.
+            today=today,
         )
 
         await db.commit()
@@ -1065,8 +1071,10 @@ def print_summary(counts: dict[str, int]) -> None:
     print("  operator2 / demo123")
     print()
     print("Changes applied:")
-    for key, label in COUNT_LABELS.items():
-        print(f"  {label}: {counts[key]}")
+    # Drive the loop off `counts`, not off COUNT_LABELS: a count added without a label then still
+    # prints (under a derived name) instead of silently vanishing from the summary or KeyError-ing.
+    for key, value in counts.items():
+        print(f"  {COUNT_LABELS.get(key, key.replace('_', ' '))}: {value}")
 
 
 def positive_int(raw: str) -> int:
@@ -1116,8 +1124,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=positive_int,
         default=len(BASE_MATERIALS),
         metavar="M",
-        help=f"size of the raw-material catalogue (default: {len(BASE_MATERIALS)}). Past "
-        f"{len(BASE_MATERIALS)} the fixture stops being the demo fixture.",
+        help=f"size of the raw-material catalogue (default: {len(BASE_MATERIALS)}). Any other "
+        "value, higher or lower, changes which material each delivery line draws and so stops "
+        "reproducing the demo fixture.",
     )
     parser.add_argument(
         "--json",
