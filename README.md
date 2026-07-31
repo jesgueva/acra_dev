@@ -105,8 +105,9 @@ It exits `0` only if every stage passes. Flags: `SMOKE_SKIP_FRONTEND=1` (backend
 `SMOKE_SKIP_RESET=1` (don't wipe/reseed), `SMOKE_BACKEND_PORT=8001`.
 
 For a fuller, evidence-capturing pass — environment snapshot, API route inventory, smoke test,
-full backend suite + coverage, a **data-pipeline integrity trace**, and a **real OCR round-trip** —
-run the validation harness (used for the Hard Stop 3 validation package):
+full backend suite + coverage, a **data-pipeline integrity trace**, a **real OCR round-trip**, and
+an **API latency benchmark** — run the validation harness (used for the Hard Stop 3 validation
+package):
 
 ```bash
 ./scripts/validation-run.sh            # writes artifacts to ./validation-evidence/
@@ -114,6 +115,39 @@ run the validation harness (used for the Hard Stop 3 validation package):
 
 The OCR round-trip needs `GEMINI_API_KEY` (and optionally `ANTHROPIC_API_KEY`) in `backend/.env`;
 it is skipped with a clear notice if no key is present.
+
+### Benchmarks and request logs
+
+Latency numbers come from one place, `app/core/benchmark.py`, so they stay comparable: nearest-rank
+p50/p95/p99 plus a provenance record (git SHA, host, Python, database, UTC timestamp, exact command)
+stamped onto every artifact. Database credentials are stripped from the recorded DSN.
+
+Run the API benchmark on its own against an already-running backend:
+
+```bash
+PYTHONPATH=backend python scripts/validation/api_latency_bench.py validation-evidence \
+  --requests 100 [--base-url http://localhost:8000]
+```
+
+It writes `validation-evidence/api-latency-<endpoint>.{json,txt}` — the text carries the
+human-readable header, the JSON keeps the raw samples so a later regression gate can recompute
+rather than trust the summary. It reports latency and does not enforce a budget; the asserted budget
+gate lives in `backend/tests/integration/test_reservation_availability.py` (RSK-04).
+
+The API also logs one line per request (method, route **template**, status, duration, request id).
+Set `LOG_FORMAT=json` in `backend/.env` for one JSON object per line; the default `text` keeps the
+human-readable console format. Every response carries an `X-Request-ID` header — supply your own to
+trace a specific call through the logs:
+
+```bash
+curl -i -H 'X-Request-ID: my-trace-1' localhost:8000/health
+```
+
+One limitation worth knowing: a `500` from an unhandled exception is produced by Starlette's
+`ServerErrorMiddleware`, which wraps *outside* the CORS layer. That response carries the
+`X-Request-ID` header on the wire, but cross-origin browser JavaScript cannot read it because the
+response has no `Access-Control-Allow-Origin`. Read the id from the server log or from a same-origin
+request. This is a property of the app's pre-existing error handling, not of the request logging.
 
 ---
 
@@ -150,6 +184,7 @@ Configuration is via env files (both are git-ignored; commit only the `.example`
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Token lifetime. |
 | `GEMINI_API_KEY` | Google Gemini key for receiving-document extraction (primary). |
 | `ANTHROPIC_API_KEY` | Anthropic Claude key (extraction fallback). |
+| `LOG_FORMAT` | `text` (default, human-readable) or `json` (one structured object per request line). |
 
 The AI keys are only exercised by the receiving/OCR flow — the rest of the app runs without them.
 
