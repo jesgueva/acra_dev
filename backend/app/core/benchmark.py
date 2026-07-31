@@ -19,14 +19,23 @@ Percentiles are **nearest-rank**: `rank = ceil(p/100 × n)` on the sorted sample
 `[1, n]`. `statistics.quantiles` is deliberately not used — it interpolates between samples, and
 switching methods would silently move every number already published.
 
-**Known extension point.** A sample is currently one number: elapsed seconds. That covers A8-6
-(aggregation latency at volume) as-is, and concurrency levels already fit through the free-form
-`**params`. A8-5's three-arm ablation additionally needs *retry rate* and *correctness* per arm,
-which this vocabulary cannot express — so it will want an outcome tag on `record()`/`time()` and a
-counter in `stats`. That is deliberately not built yet: the three drawdown implementations fail in
-different ways (optimistic-guard retry vs. SERIALIZABLE `40001` vs. unguarded lost update), and
-guessing the schema before one exists would over-fit it. Extend here rather than starting a second
-measurement structure alongside this one.
+**Outcomes (A8-5).** A sample is a duration *and* an `Outcome`. A8-2 needed only the duration; the
+three-arm ablation needs to say which attempts won, which were told to retry, and which silently
+corrupted the books — a duration alone cannot distinguish a fast success from a fast abort, and an
+arm that fails instantly would otherwise post the best latency in the table.
+
+The vocabulary is deliberately small and maps to how the three drawdown shapes actually fail:
+
+    ok                      the attempt did the work
+    conflict                deterministic loser — ADR-02's 409
+    serialization_failure   PostgreSQL SQLSTATE 40001, SERIALIZABLE's abort
+    error                   anything else
+    lost_update             a correctness violation, recorded by the caller's oracle
+
+`Outcome.OK` is the default everywhere, and **a run that never names another outcome serialises
+exactly as it did before this was added** — `stats` keeps its original seven keys and `as_dict()`
+its original shape. That is load-bearing: A8-2's published numbers must not move because A8-5
+extended the library underneath them.
 """
 from __future__ import annotations
 
@@ -39,10 +48,12 @@ import statistics
 import subprocess
 import sys
 import time
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -50,6 +61,21 @@ from urllib.parse import urlsplit
 from app.core.config import settings
 
 DEFAULT_PERCENTILES: tuple[int, ...] = (50, 95, 99)
+
+
+class Outcome(str, Enum):
+    """How one attempt ended. See the module docstring for why duration alone is not enough."""
+
+    OK = "ok"
+    CONFLICT = "conflict"
+    SERIALIZATION_FAILURE = "serialization_failure"
+    ERROR = "error"
+    LOST_UPDATE = "lost_update"
+
+
+#: Outcomes that a caller could retry into a success. Kept separate from `ERROR`, which is a bug,
+#: and from `LOST_UPDATE`, which is silent corruption — retrying that would not help.
+RETRYABLE_OUTCOMES = frozenset({Outcome.CONFLICT, Outcome.SERIALIZATION_FAILURE})
 
 # app/core/benchmark.py -> app/core -> app -> backend -> repo root
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -164,6 +190,17 @@ class RunMetadata:
         ]
 
 
+@dataclass
+class Sample:
+    """Handle yielded by `BenchmarkRun.time()` so the caller can classify what just happened.
+
+    An attempt's outcome is usually only knowable *after* the block has run — a worksheet close
+    either wins or comes back 409 — so this is settable rather than an argument-only.
+    """
+
+    outcome: Outcome = Outcome.OK
+
+
 class BenchmarkRun:
     """Collects timing samples, then writes a JSON + text artifact pair.
 
@@ -174,31 +211,63 @@ class BenchmarkRun:
             with run.time():
                 client.get("/health")
         run.write(Path("validation-evidence"))
+
+    With outcomes (A8-5), when the attempt can fail in more than one way:
+
+        with run.time() as sample:
+            sample.outcome = Outcome.CONFLICT
     """
 
     def __init__(self, name: str, **params: Any) -> None:
         self.name = name
         self.metadata = RunMetadata.capture(**params)
         self._samples: list[float] = []
+        self._outcomes: list[Outcome] = []
 
-    def record(self, seconds: float) -> None:
-        """Append one already-measured sample, in seconds."""
+    def record(self, seconds: float, outcome: Outcome = Outcome.OK) -> None:
+        """Append one already-measured sample, in seconds, with how the attempt ended."""
         if seconds < 0:
             raise ValueError(f"sample must be non-negative, got {seconds}")
         self._samples.append(seconds)
+        self._outcomes.append(Outcome(outcome))
 
     @contextmanager
-    def time(self) -> Iterator[None]:
-        """Time the enclosed block and record it — including when it raises."""
+    def time(self, outcome: Outcome = Outcome.OK) -> Iterator[Sample]:
+        """Time the enclosed block and record it — including when it raises.
+
+        `outcome` seeds the sample; reassign `sample.outcome` inside the block to classify after
+        the fact. An exception escaping the block is recorded as `Outcome.ERROR` unless the caller
+        already said otherwise — an attempt that blew up is not a successful one, and folding it
+        into the success latencies is how a broken arm looks fast.
+        """
+        handle = Sample(outcome=Outcome(outcome))
         start = time.perf_counter()
         try:
-            yield
+            yield handle
+        except BaseException:
+            if handle.outcome is Outcome.OK:
+                handle.outcome = Outcome.ERROR
+            raise
         finally:
             self._samples.append(time.perf_counter() - start)
+            self._outcomes.append(handle.outcome)
 
     @property
     def samples_ms(self) -> list[float]:
         return [round(s * 1000, 3) for s in self._samples]
+
+    @property
+    def outcomes(self) -> list[Outcome]:
+        return list(self._outcomes)
+
+    @property
+    def _has_outcomes(self) -> bool:
+        """True once any attempt ended as something other than OK.
+
+        Gates every addition below, so a run that never classifies anything serialises byte for
+        byte as it did before outcomes existed — A8-2's published artifacts must not move.
+        """
+        return any(o is not Outcome.OK for o in self._outcomes)
 
     @property
     def stats(self) -> dict[str, float]:
@@ -206,10 +275,15 @@ class BenchmarkRun:
 
         `n` is always reported: a p99 over 20 samples is not a p99, and the artifact should make
         that impossible to hide.
+
+        When outcomes are in play this also carries per-outcome counts, the derived success/retry/
+        error rates, and a second percentile set over the successful attempts only — reported
+        alongside the all-attempt figures rather than replacing them, because both are needed to
+        read an arm honestly.
         """
         ms = [s * 1000 for s in self._samples]
         pct = percentiles(ms, DEFAULT_PERCENTILES)
-        return {
+        result: dict[str, Any] = {
             "n": len(ms),
             "min_ms": round(min(ms), 3),
             "max_ms": round(max(ms), 3),
@@ -218,14 +292,37 @@ class BenchmarkRun:
             "p95_ms": round(pct[95], 3),
             "p99_ms": round(pct[99], 3),
         }
+        if not self._has_outcomes:
+            return result
+
+        counts = Counter(self._outcomes)
+        n = len(ms)
+        result["outcomes"] = {o.value: counts[o] for o in Outcome if counts[o]}
+        result["success_rate"] = round(counts[Outcome.OK] / n, 4)
+        result["retry_rate"] = round(
+            sum(counts[o] for o in RETRYABLE_OUTCOMES) / n, 4
+        )
+        result["error_rate"] = round(counts[Outcome.ERROR] / n, 4)
+        result["lost_update_count"] = counts[Outcome.LOST_UPDATE]
+
+        ok_ms = [d for d, o in zip(ms, self._outcomes) if o is Outcome.OK]
+        if ok_ms:
+            ok_pct = percentiles(ok_ms, DEFAULT_PERCENTILES)
+            result["p50_ok_ms"] = round(ok_pct[50], 3)
+            result["p95_ok_ms"] = round(ok_pct[95], 3)
+            result["p99_ok_ms"] = round(ok_pct[99], 3)
+        return result
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "name": self.name,
             "metadata": asdict(self.metadata),
             "stats": self.stats,
             "samples_ms": self.samples_ms,
         }
+        if self._has_outcomes:
+            payload["outcomes_by_sample"] = [o.value for o in self._outcomes]
+        return payload
 
     def write(self, out_dir: Path | str) -> tuple[Path, Path]:
         """Write `<name>.json` and `<name>.txt`, returning both paths.
@@ -246,15 +343,29 @@ class BenchmarkRun:
             f"n={stats['n']}  p50={stats['p50_ms']:.1f}ms  "
             f"p95={stats['p95_ms']:.1f}ms  p99={stats['p99_ms']:.1f}ms"
         )
+        if self._has_outcomes:
+            summary += f"  success={stats['success_rate']:.0%}  retry={stats['retry_rate']:.0%}"
         lines = self.metadata.header_lines(f"benchmark: {self.name}", summary)
         if self.metadata.params:
             lines.append("")
             lines.append("Parameters")
             lines += [f"  {k:<20} {v}" for k, v in self.metadata.params.items()]
+        if self._has_outcomes:
+            # Correctness before speed, deliberately: the fastest arm here is the one that takes no
+            # locks, and a reader who meets its latency first has already been misled.
+            lines.append("")
+            lines.append("Outcomes")
+            for name, count in stats["outcomes"].items():
+                lines.append(f"  {name:<22} {count}")
+            for key in ("success_rate", "retry_rate", "error_rate", "lost_update_count"):
+                lines.append(f"  {key:<20} {stats[key]}")
         lines.append("")
         lines.append("Latency (ms)")
         for key in ("n", "min_ms", "mean_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms"):
             lines.append(f"  {key:<20} {stats[key]}")
+        if self._has_outcomes and "p50_ok_ms" in stats:
+            for key in ("p50_ok_ms", "p95_ok_ms", "p99_ok_ms"):
+                lines.append(f"  {key:<20} {stats[key]}")
 
         txt_path = out / f"{self.name}.txt"
         txt_path.write_text("\n".join(lines) + "\n")

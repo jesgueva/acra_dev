@@ -11,10 +11,17 @@ import pytest
 
 from app.core.benchmark import (
     BenchmarkRun,
+    Outcome,
     RunMetadata,
     percentiles,
     redact_dsn,
 )
+
+#: The exact `stats` and `as_dict()` shapes A8-2 published. Pinned here because A8-5 added optional
+#: keys to both, and a run that does not use outcomes must keep producing the original artifact —
+#: see `test_outcome_free_run_is_shaped_exactly_as_before`.
+A8_2_STATS_KEYS = {"n", "min_ms", "max_ms", "mean_ms", "p50_ms", "p95_ms", "p99_ms"}
+A8_2_PAYLOAD_KEYS = {"name", "metadata", "stats", "samples_ms"}
 
 # ---------------------------------------------------------------------------
 # percentiles — nearest-rank, pinned
@@ -268,3 +275,173 @@ def test_written_artifacts_never_contain_the_password(tmp_path, monkeypatch):
     assert "hunter2" not in json_path.read_text()
     assert "hunter2" not in txt_path.read_text()
     assert "localhost:5435/acra_db" in json_path.read_text()
+
+
+# ---------------------------------------------------------------------------
+# Outcomes (A8-5) — the three-arm ablation's vocabulary
+#
+# The backward-compatibility tests come first on purpose: A8-2's numbers are already published, and
+# the whole extension is only safe if a run that ignores outcomes is untouched by it.
+
+
+def test_outcome_free_run_is_shaped_exactly_as_before(tmp_path):
+    """The regression guard. A run that never names an outcome must serialise as it did in A8-2.
+
+    Asserted as exact key *sets*, not `>=`: a superset check would pass while quietly adding the
+    outcome block to every existing artifact, which is the exact failure this guards.
+    """
+    run = BenchmarkRun("api-latency", endpoint="/health", requests=3)
+    for seconds in (0.010, 0.020, 0.030):
+        run.record(seconds)
+
+    assert set(run.stats) == A8_2_STATS_KEYS
+    assert set(run.as_dict()) == A8_2_PAYLOAD_KEYS
+
+    _, txt_path = run.write(tmp_path)
+    text = txt_path.read_text()
+    assert "Outcomes" not in text
+    assert "success=" not in text
+    assert "_ok_ms" not in text
+
+
+def test_explicitly_ok_outcomes_still_count_as_outcome_free(tmp_path):
+    """Passing `Outcome.OK` by hand is not "using outcomes" — it is the default said aloud."""
+    run = BenchmarkRun("demo")
+    run.record(0.001, Outcome.OK)
+    with run.time(Outcome.OK):
+        pass
+
+    assert set(run.stats) == A8_2_STATS_KEYS
+    assert "Outcomes" not in run.write(tmp_path)[1].read_text()
+
+
+def test_time_defaults_to_ok():
+    run = BenchmarkRun("demo")
+    with run.time():
+        pass
+    assert run.outcomes == [Outcome.OK]
+
+
+def test_outcome_counts_and_rates():
+    run = BenchmarkRun("arm")
+    run.record(0.001, Outcome.OK)
+    run.record(0.002, Outcome.OK)
+    run.record(0.003, Outcome.CONFLICT)
+    run.record(0.004, Outcome.SERIALIZATION_FAILURE)
+    run.record(0.005, Outcome.ERROR)
+
+    stats = run.stats
+    assert stats["n"] == 5
+    assert stats["outcomes"] == {
+        "ok": 2,
+        "conflict": 1,
+        "serialization_failure": 1,
+        "error": 1,
+    }
+    assert stats["success_rate"] == 0.4
+    # conflict + serialization_failure — the two a caller could retry into a success.
+    assert stats["retry_rate"] == 0.4
+    assert stats["error_rate"] == 0.2
+
+
+def test_lost_update_is_counted_but_never_called_retryable():
+    """Retrying silent corruption does not fix it, so it must not inflate the retry rate."""
+    run = BenchmarkRun("unguarded")
+    run.record(0.001, Outcome.OK)
+    run.record(0.002, Outcome.LOST_UPDATE)
+
+    stats = run.stats
+    assert stats["lost_update_count"] == 1
+    assert stats["retry_rate"] == 0.0
+    assert stats["error_rate"] == 0.0
+
+
+def test_success_percentiles_are_reported_separately():
+    """A fast abort is not a fast operation.
+
+    The failures here are deliberately the *quick* samples: if aborts were folded into the headline
+    percentiles, the arm would look faster than it is. p50 over everything and p50 over successes
+    must therefore disagree — that disagreement is the point of the split.
+    """
+    run = BenchmarkRun("arm")
+    for seconds in (0.001, 0.002):
+        run.record(seconds, Outcome.CONFLICT)
+    for seconds in (0.100, 0.200):
+        run.record(seconds, Outcome.OK)
+
+    stats = run.stats
+    assert stats["p50_ms"] == 2.0
+    assert stats["p50_ok_ms"] == 100.0
+
+
+def test_success_percentiles_omitted_when_nothing_succeeded():
+    """An arm can lose every attempt; that must produce a report, not a ValueError."""
+    run = BenchmarkRun("arm")
+    run.record(0.001, Outcome.CONFLICT)
+
+    stats = run.stats
+    assert stats["success_rate"] == 0.0
+    assert "p50_ok_ms" not in stats
+
+
+def test_time_marks_an_escaping_exception_as_error():
+    """An attempt that blew up is not a successful one."""
+    run = BenchmarkRun("arm")
+    with pytest.raises(RuntimeError):
+        with run.time():
+            raise RuntimeError("boom")
+
+    assert run.outcomes == [Outcome.ERROR]
+    assert run.stats["error_rate"] == 1.0
+
+
+def test_caller_classification_survives_an_exception():
+    """A 40001 that the driver already recognised must not be relabelled as a generic error."""
+    run = BenchmarkRun("arm")
+    with pytest.raises(RuntimeError):
+        with run.time() as sample:
+            sample.outcome = Outcome.SERIALIZATION_FAILURE
+            raise RuntimeError("could not serialize access")
+
+    assert run.outcomes == [Outcome.SERIALIZATION_FAILURE]
+    assert run.stats["retry_rate"] == 1.0
+
+
+def test_outcome_set_inside_the_block_is_recorded():
+    run = BenchmarkRun("arm")
+    with run.time() as sample:
+        sample.outcome = Outcome.CONFLICT
+    assert run.outcomes == [Outcome.CONFLICT]
+
+
+def test_record_accepts_the_string_form():
+    """Drivers deserialising an arm name from argv should not have to import the enum."""
+    run = BenchmarkRun("arm")
+    run.record(0.001, "conflict")
+    assert run.outcomes == [Outcome.CONFLICT]
+
+
+def test_record_rejects_an_unknown_outcome():
+    with pytest.raises(ValueError):
+        BenchmarkRun("arm").record(0.001, "probably_fine")
+
+
+def test_outcomes_reach_both_artifacts(tmp_path):
+    run = BenchmarkRun("ablation-optimistic-8", arm="optimistic", level=8)
+    run.record(0.010, Outcome.OK)
+    run.record(0.020, Outcome.CONFLICT)
+
+    json_path, txt_path = run.write(tmp_path)
+
+    payload = json.loads(json_path.read_text())
+    assert payload["stats"]["outcomes"] == {"ok": 1, "conflict": 1}
+    # Per-sample outcomes ride along so a later gate can recompute rather than trust the summary,
+    # matching why raw samples_ms is already written.
+    assert payload["outcomes_by_sample"] == ["ok", "conflict"]
+
+    text = txt_path.read_text()
+    assert "Outcomes" in text
+    assert "success=50%" in text
+    assert text.index("Outcomes") < text.index("Latency (ms)"), (
+        "correctness must be read before speed — the fastest arm is the incorrect one"
+    )
