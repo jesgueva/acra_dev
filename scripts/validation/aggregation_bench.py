@@ -23,9 +23,9 @@ that proves nothing, and the first two are why the naive version of this measure
     returns nothing: `stock_reservations` is empty at every `--scale`. Benchmarking `availability`
     against seeded data alone compares a sequential scan over N lots against an index scan over an
     *empty table* — which is not the indexed/unindexed asymmetry the ticket is about, and would
-    flatter the index enormously. So this script seeds its own reservations, in the same
-    `(product_id, state)` distribution as the lots it measures against, with a realistic
-    active/released mix.
+    flatter the index enormously. So this script seeds its own reservations: spread across the same
+    products as the lots, all in the `in_storage` state the sweep actually queries, and half of them
+    `released` so the `status = 'active'` filter has something to discriminate.
 
 2.  **Stale planner statistics.** PostgreSQL picks plans from `pg_statistic`, not from row counts.
     Immediately after a bulk insert, and again immediately after `CREATE INDEX`, those statistics
@@ -46,7 +46,11 @@ seconds, at exact row counts, which is what makes the curve repeatable. The seed
 still present and still counted: it is the realistic ambient content of the table, reported as
 `ambient_lots` in every artifact.
 
-Every row this script creates is tagged `storage_location = 'A86-BENCH'` and torn down afterwards.
+Everything this script creates is tagged so teardown removes exactly its own rows: lots by
+`storage_location = 'A86-BENCH'`, products and the bench user by an `A86-BENCH` name prefix, and
+reservations — which have no `storage_location` column — by the sentinel
+`production_worksheet_line_id = -86`. The index it creates is restored to whatever was found at
+startup, because `INDEX_NAME` is deliberately migration 015's own index name.
 
 Usage (needs a **scratch** database — this writes tens of thousands of rows and creates/drops an
 index; never point it at anything you care about):
@@ -94,8 +98,9 @@ BENCH_TAG = "A86-BENCH"
 INDEX_NAME = "ix_inventory_lots_item_state"
 
 #: The candidates from the plan's §5.1. They disagree about which path they help, which is the
-#: point: `list_alerts` has no WHERE clause, so a plain (product_id, status) index does nothing for
-#: it, while a covering index can serve its GROUP BY as an index-only scan.
+#: point. `list_alerts` has no WHERE clause and groups over the whole table, so no variant here
+#: changes its plan — measured, it stays a `Seq Scan` at every volume even with the covering index
+#: (the INCLUDE column does shave heap reads off the aggregate, but the scan remains sequential).
 INDEX_VARIANTS = {
     "plain": f"CREATE INDEX {INDEX_NAME} ON inventory_lots (product_id, status)",
     "covering": (
@@ -129,11 +134,14 @@ def scan_kind(explain_text: str, table: str) -> str:
 
     Returns `index-only`, `index`, `seq`, or `none` when the table does not appear at all.
 
-    Only lines naming the table count, because a plan for `availability` touches `products` and
-    `inventory_lots` in the same output and a bare "is there a Seq Scan anywhere" check would
-    report the wrong node. `Index Only` is tested before `Index`, and `Index` before `Seq`, since
-    an index-only scan line contains neither of the weaker spellings but a bitmap plan mentions
-    both an index node and a heap node.
+    Only lines naming the table count. `_measure` already filters captured statements to those
+    touching the table, so today every plan reaching here is single-table; the filter is defensive,
+    for the multi-table plan a join in a future service function would produce, where a bare "is
+    there a Seq Scan anywhere" check would classify the wrong node.
+
+    `Index Only` is tested before `Index`, and `Index` before `Seq`, since an index-only scan line
+    contains neither of the weaker spellings but a bitmap plan mentions both an index node and a
+    heap node.
     """
     relevant = [line for line in explain_text.splitlines() if table in line]
     if not relevant:

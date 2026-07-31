@@ -1,7 +1,7 @@
 """A8-6 integration — the four aggregation read paths, against real rows at real volume.
 
 RSK-04 is about behaviour that only exists in PostgreSQL: which plan the optimiser picks, and how
-that plan scales. A mocked session proves none of it. These tests seed a few thousand lots, run the
+that plan scales. A mocked session proves none of it. These tests seed ten thousand lots, run the
 **real service functions**, and assert two different things:
 
 * **Correctness at volume** — the numbers must not move because an index was added. An index that
@@ -13,7 +13,9 @@ that plan scales. A mocked session proves none of it. These tests seed a few tho
   exactly like one that works.
 
 Requires a running PostgreSQL with migrations applied — same contract as `tests/test_schema.py`.
-Every row created here is tagged `storage_location = 'A86-IT'` and removed afterwards.
+Everything created here is tagged so teardown removes exactly its own rows: lots by
+`storage_location = 'A86-IT'`, products by an `A86-IT` name prefix, and reservations — which have
+no `storage_location` column — by the sentinel `production_worksheet_line_id = -87`.
 
 The seed is an async context manager rather than a pytest fixture on purpose: an async fixture is
 torn down in a different event loop than the test body, which breaks asyncpg with MissingGreenlet.
@@ -281,7 +283,7 @@ async def test_list_alerts_totals_match_an_independent_sum():
 
         assert len(mine) == 1
         assert mine[0].current_quantity == expected
-        assert mine[0].is_triggered is False  # 5 000 lots of stock is far above a threshold of 10
+        assert mine[0].is_triggered is False  # 500 lots of stock is far above a threshold of 10
 
         await session.execute(
             text("DELETE FROM low_stock_alerts WHERE product_id = :pid"), {"pid": product_id}
@@ -290,7 +292,7 @@ async def test_list_alerts_totals_match_an_independent_sum():
 
 
 async def test_list_inventory_pages_without_gap_or_duplicate_at_volume():
-    """Pagination stability — the `order_by(id)` total order at `inventory_service.py:41-46`.
+    """Pagination stability — the `order_by(id)` total order at `inventory_service.py:43-48`.
 
     Without a total order PostgreSQL may return rows in a different order per page request, so
     paging past page 1 can show a row twice and skip another. That is silent data loss, and it only

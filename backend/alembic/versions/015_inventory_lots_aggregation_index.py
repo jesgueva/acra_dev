@@ -10,21 +10,27 @@ This revision closes that asymmetry, and unlike the 010 index it is landing with
 behind it (ACR-45, ``validation-evidence/aggregation-bench-summary.json``). Server-side execution
 time for the ``_on_hand`` aggregate, real service calls against a seeded database:
 
-===========  ==============  ============  =========
+===========  ==============  ============  =============================
 bench lots   without index   with index    plan
-===========  ==============  ============  =========
-1 000        2.688 ms        0.036 ms      Seq Scan -> Index Only Scan
-10 000       3.365 ms        0.024 ms      Seq Scan -> Index Only Scan
-===========  ==============  ============  =========
+===========  ==============  ============  =============================
+1 000        2.871 ms        0.034 ms      Seq Scan -> Index Only Scan
+10 000       2.554 ms        0.038 ms      Seq Scan -> Index Only Scan
+50 000       3.943 ms        0.009 ms      Seq Scan -> Index Only Scan
+200 000      14.134 ms       0.029 ms      Seq Scan -> Index Only Scan
+===========  ==============  ============  =============================
+
+The shape matters more than any single ratio: unindexed cost grows with the table while indexed
+cost stays flat and sub-0.04 ms across the whole sweep.
 
 ``INCLUDE (quantity_on_hand)`` is what makes those *index-only* scans: the aggregate sums that
 column, so carrying it in the index leaf means the query never touches the heap. The narrower
 ``(product_id, status)`` index still helps, but leaves a heap fetch per matching row.
 
-**Scope, deliberately.** This index serves the point-lookup aggregate only. It does **not** help
-``inventory_service.list_alerts``, which groups over the entire table with no ``WHERE`` clause and
-measured unchanged at ~5 ms either way — that path stays a sequential scan and A8-6 reports it as
-such rather than claiming a win the numbers do not support.
+**Scope, deliberately.** This index serves the point-lookup aggregate only. It does **not** change
+the plan for ``inventory_service.list_alerts``, which groups over the entire table with no ``WHERE``
+clause: that path stays a ``Seq Scan`` at every volume measured (45.6 ms -> 29.7 ms at 200 000 lots
+— the INCLUDE column shaves heap reads off the aggregate, but the scan remains sequential). A8-6
+reports that rather than claiming a win the numbers do not support.
 
 Revision ID: 015
 Revises: 014
