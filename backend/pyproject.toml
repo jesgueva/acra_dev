@@ -1,0 +1,14 @@
+# Declares the single supported Python version for the backend (ACR-42 / A10-4).
+#
+# Before this file, the repo named three different Pythons — README said ">= 3.11 (verified on
+# 3.13)", docs/architecture.md said 3.13, and CI ran 3.12. `requires-python` is the machine-readable
+# source of truth; tests/test_packaging.py asserts CI and the docs agree with it.
+#
+# Note: pytest configuration deliberately stays in pytest.ini (which takes precedence over
+# pyproject.toml) so this file does not change test discovery or rootdir.
+
+[project]
+name = "acra-mes-backend"
+version = "1.0.0"
+description = "ACRA Integrated Manufacturing Execution System — FastAPI backend"
+requires-python = ">=3.13"

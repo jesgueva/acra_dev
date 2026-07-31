@@ -63,7 +63,10 @@ if [[ "${SMOKE_SKIP_RESET:-0}" == "1" ]]; then
   # SMOKE_SKIP_DOCKER=1 — the database is managed outside this compose file. Parallel worktrees
   # cannot each run it: `container_name: acra-postgres` and host port 5433 are single-occupancy.
   if [[ "${SMOKE_SKIP_DOCKER:-0}" != "1" ]]; then
-    docker compose up -d >/dev/null
+    # `db` explicitly — since ACR-42 the compose file also defines backend/frontend, and starting
+    # those here would bind port 8000 out from under the uvicorn this script launches itself.
+    # For the containerized stack use scripts/compose-smoke.sh instead.
+    docker compose up -d db >/dev/null
   fi
   ( cd "$ROOT/backend" && $ALEMBIC upgrade head >/dev/null ) && ok "migrations at head (reset skipped)"
 else

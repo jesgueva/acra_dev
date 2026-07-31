@@ -28,21 +28,80 @@ Docker Compose for local infrastructure.
 
 ## Prerequisites
 
-Install these before you start. Versions below are what the baseline was verified against
-(see [`docs/architecture.md`](docs/architecture.md) for the full snapshot); nearby versions work.
+**If you run the stack with Docker (below), you only need Docker and git** — Python and Node come
+from the images.
 
-- **Python** ≥ 3.11 (verified on 3.13)
-- **Node.js** ≥ 20 (verified on 24) + npm
-- **Docker** with the Compose plugin (`docker compose`) — used for PostgreSQL
+For a local (non-container) install, these are the supported versions. They are the *only* versions
+named anywhere in this repo — `backend/pyproject.toml` and `.nvmrc` are the machine-readable source
+of truth, and `backend/tests/test_packaging.py` fails the build if a doc drifts from them.
+
+- **Python** 3.13 — declared in [`backend/pyproject.toml`](backend/pyproject.toml)
+- **Node.js** 24 + npm — declared in [`.nvmrc`](.nvmrc) / [`frontend/.nvmrc`](frontend/.nvmrc)
+- **Docker** with the Compose plugin (`docker compose`)
 - **git**
 
 You do **not** need a local PostgreSQL install — Docker Compose provides it on host port **5433**.
 
 ---
 
-## Quickstart
+## Quickstart A — Docker (whole stack, no toolchain install)
 
-A peer should be able to go from a clean clone to a running stack with the steps below.
+Clean clone to running system in three commands. Nothing but Docker and git required.
+
+```bash
+git clone git@github.com:jesgueva/acra_dev.git
+cd acra_dev
+cp .env.example .env                            # defaults work as-is for local use
+
+docker compose up -d --build                    # Postgres + migrations + API + web
+docker compose --profile seed run --rm seed     # demo data (opt-in)
+```
+
+Open **http://localhost:3000** and sign in with a [seeded account](#seeded-demo-logins). The API is
+at **http://localhost:8000** (docs at `/docs`).
+
+| Service | What it does |
+|---|---|
+| `db` | PostgreSQL 15, published on `5433` |
+| `migrate` | One-shot `alembic upgrade head`, then exits. The API waits for it to succeed. |
+| `backend` | FastAPI on `8000` |
+| `frontend` | Next.js production server on `3000` |
+| `seed` | Demo data. Behind the `seed` profile, so `up` never repopulates a database by surprise. |
+
+Useful commands:
+
+```bash
+docker compose logs -f backend        # follow a service
+docker compose run --rm backend pytest tests/   # run the suite with no local Python*
+docker compose down                   # stop, keep data
+docker compose down -v                # stop and wipe the database volume
+./scripts/compose-smoke.sh            # assert the containerized stack end to end
+```
+
+\* Expect **`379 passed, 7 skipped`**. The backend image is built from `backend/` alone, so files
+outside that directory — `.nvmrc`, `frontend/package.json`, `.github/workflows/ci.yml`,
+`frontend/Dockerfile`, and the frontend/root `.env.example` templates — are not in the image. The
+`backend/tests/test_packaging.py` checks that compare against them skip here and run normally on a
+checkout and in CI. Nothing is failing; that skip count is the expected result.
+
+**If a port is already taken** (common — this repo is often checked out into several worktrees),
+override it in `.env` or inline:
+
+```bash
+ACRA_DB_PORT=5442 ACRA_BACKEND_PORT=8042 ACRA_FRONTEND_PORT=3042 \
+  docker compose -p acr42 up -d --build
+```
+
+> **Changing `ACRA_BACKEND_PORT` requires `--build`, not just a restart.** `NEXT_PUBLIC_API_URL` is
+> compiled into the browser bundle at build time rather than read at runtime, so the frontend image
+> is tied to the API port it was built for. This is a property of Next.js's `NEXT_PUBLIC_*`
+> handling, not a bug in the compose file.
+
+---
+
+## Quickstart B — Local processes (for active development)
+
+Use this when you want hot reload. Requires the Python and Node versions listed above.
 
 ```bash
 # 1. Clone
@@ -54,10 +113,13 @@ cp backend/.env.example backend/.env
 cp frontend/.env.local.example frontend/.env.local
 
 # 3. Backend dependencies (isolated virtualenv)
+#    requirements.lock is the full resolved set — it is what CI and the containers install, so
+#    installing it gets you exactly their versions. Use requirements.txt only when ADDING a
+#    dependency, then regenerate the lock (see backend/requirements.lock's header).
 cd backend
 python3 -m venv .venv
 ./.venv/bin/python -m pip install --upgrade pip
-./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python -m pip install -r requirements.lock
 cd ..
 
 # 4. Frontend dependencies
@@ -265,7 +327,7 @@ acra_dev/
 │   └── messages/       #   next-intl catalogs (en.json, es.json)
 ├── scripts/            # reset-db-and-seed.sh, smoke-test.sh, validation-run.sh, validation/
 ├── docs/               # architecture.md, RISK_LOG.md
-├── docker-compose.yml  # PostgreSQL 15 on host port 5433
+├── docker-compose.yml  # full stack: db → migrate → backend → frontend (+ seed profile)
 ├── CHANGELOG.md · KNOWN_ISSUES.md · CONTRIBUTING.md
 └── CLAUDE.md           # engineering memory (conventions, patterns)
 ```

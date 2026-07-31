@@ -29,6 +29,12 @@ frontend/coverage/
 Thumbs.db
 */worktrees/
 
+# Ticket-verification screenshots. CONTRIBUTING.md puts screenshots in the documentation archive,
+# not here, but they land at the repo root and otherwise sit in `git status` indefinitely — one
+# `git add -A` away from being committed. Anchored to the root so frontend/acra_logo.png is
+# unaffected.
+/*.png
+
 # Validation harness output (scripts/validation-run.sh)
 validation-evidence/
 
