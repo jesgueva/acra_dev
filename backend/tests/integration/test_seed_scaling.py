@@ -18,6 +18,7 @@ The database must already have `alembic upgrade head` applied. A10-3 wires this 
 then it is skipped by default, which is recorded as a known gap on the ticket.
 """
 import os
+from datetime import date
 
 import pytest
 from sqlalchemy import func, select, text
@@ -147,6 +148,54 @@ async def test_allocation_does_not_starve_at_scale(scale):
     )
     assert counts["work_orders"] == WORK_ORDERS_PER_UNIT * scale
     assert counts["material_allocations"] > 0
+
+
+async def test_existence_precheck_survives_the_bind_parameter_limit():
+    """The batched pre-check must not reintroduce a scale ceiling.
+
+    asyncpg binds one parameter per IN element and the wire protocol caps a statement at 32 767.
+    Measured on this schema: 24 000 elements succeed, 65 000 raise InterfaceError. An unchunked
+    pre-check would therefore have failed somewhere around --scale 1 365. This asserts the chunking
+    holds well past that, using the query directly so the test stays cheap — actually seeding
+    40 000 deliveries would take minutes.
+    """
+    await _truncate()
+    references = [f"DEMO-BOL-2026-{i:03d}" for i in range(1, 40_001)]
+
+    engine = create_async_engine(SEED_IT_DSN)
+    try:
+        async with AsyncSession(engine) as session:
+            found = await seeder._existing_values(
+                session,
+                DeliveryNote.document_number,
+                references,
+                DeliveryNote.type == DeliveryNoteType.INBOUND.value,
+            )
+    finally:
+        await engine.dispose()
+
+    assert found == set()  # truncated table, but the query must not raise
+
+
+async def test_existence_precheck_finds_seeded_rows():
+    """Chunking must not lose rows — the pre-check is what makes re-seeding idempotent."""
+    await _truncate()
+    await seeder.seed_fake_data(delivery_count=48, work_order_count=0)
+
+    planned = [s.bol_reference for s in seeder.plan_deliveries(48, date.today())]
+    engine = create_async_engine(SEED_IT_DSN)
+    try:
+        async with AsyncSession(engine) as session:
+            found = await seeder._existing_values(
+                session,
+                DeliveryNote.document_number,
+                planned,
+                DeliveryNote.type == DeliveryNoteType.INBOUND.value,
+            )
+    finally:
+        await engine.dispose()
+
+    assert found == set(planned)
 
 
 async def test_extended_catalogue_creates_distinct_products():

@@ -501,6 +501,24 @@ def resolve_volumes(args: argparse.Namespace) -> tuple[int, int, int]:
     return deliveries, work_orders, args.materials
 
 
+# asyncpg binds one parameter per IN element and the PostgreSQL wire protocol caps a statement at
+# 32 767 of them. Measured: a 24 000-element IN succeeds, 65 000 raises InterfaceError. Chunking
+# keeps the existence pre-checks O(1) queries per 10 000 rows instead of one per row, without
+# reintroducing a ceiling — unchunked, --scale would have died around 1 365.
+IN_CLAUSE_CHUNK = 10_000
+
+
+async def _existing_values(db: AsyncSession, column, values: list[str], *extra_where) -> set[str]:
+    """Which of `values` already exist in `column`, fetched in bind-parameter-safe chunks."""
+    found: set[str] = set()
+    for start in range(0, len(values), IN_CLAUSE_CHUNK):
+        chunk = values[start : start + IN_CLAUSE_CHUNK]
+        stmt = select(column).where(column.in_(chunk), *extra_where)
+        rows = await db.execute(stmt)
+        found.update(row[0] for row in rows.fetchall())
+    return found
+
+
 async def ensure_contact(db: AsyncSession, name: str, type_: str) -> Contact:
     result = await db.execute(
         select(Contact).where(Contact.name == name, Contact.type == type_)
@@ -640,15 +658,14 @@ async def create_demo_deliveries(
     created_delivery_items = 0
     created_inventory_lots = 0
 
-    # One pre-fetch instead of a SELECT per delivery: at scale 100 that is 2 400 round-trips
-    # replaced by one.
-    existing_rows = await db.execute(
-        select(DeliveryNote.document_number).where(
-            DeliveryNote.type == DeliveryNoteType.INBOUND.value,
-            DeliveryNote.document_number.in_([s.bol_reference for s in specs]),
-        )
+    # One pre-fetch per 10 000 deliveries instead of a SELECT per delivery: at scale 100 that is
+    # 2 400 round-trips replaced by one.
+    already_seeded = await _existing_values(
+        db,
+        DeliveryNote.document_number,
+        [s.bol_reference for s in specs],
+        DeliveryNote.type == DeliveryNoteType.INBOUND.value,
     )
-    already_seeded = {row[0] for row in existing_rows.fetchall()}
 
     for spec in specs:
         if spec.bol_reference in already_seeded:
@@ -838,13 +855,10 @@ async def create_demo_work_orders(
     items_by_type = await build_inventory_index(db)
     today = date.today()
 
-    # Same batching as the delivery pre-check: one query instead of one per work order.
-    existing_rows = await db.execute(
-        select(WorkOrder.product).where(
-            WorkOrder.product.in_([s.product for s in specs])
-        )
+    # Same batching as the delivery pre-check: one query per 10 000 instead of one per work order.
+    already_seeded = await _existing_values(
+        db, WorkOrder.product, [s.product for s in specs]
     )
-    already_seeded = {row[0] for row in existing_rows.fetchall()}
 
     for sequence, spec in enumerate(specs, start=1):
         if spec.product in already_seeded:

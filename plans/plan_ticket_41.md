@@ -359,8 +359,26 @@ rather than assumed. `--materials` dilution is real but far weaker than feared: 
 combined with a large `--work-orders` before anything starves. When it does, the seeder exits 1
 with a message naming the knobs to turn, and commits nothing.
 
-### 9.5 Deviation from the plan
+### 9.5 A ceiling the optimisation introduced, and removed
+
+§2.4's batched existence pre-check — one `IN` query replacing 24N round-trips — quietly imposed a
+scale ceiling that the per-row `SELECT` it replaced did not have. asyncpg binds one parameter per
+`IN` element and the PostgreSQL wire protocol caps a statement at **32 767** of them.
+
+Measured against this schema: a 24 000-element `IN` succeeds; 65 000 raises `InterfaceError`. At 24
+delivery references per scale unit that puts the failure somewhere around **`--scale 1365`** — past
+anything benchmarked here, but a confusing driver-level error rather than an honest limit.
+
+Fixed by chunking both pre-checks at 10 000 (`_existing_values`), which keeps the round-trip saving
+without the ceiling. Two integration tests cover it: one drives 40 000 references through the query,
+the other proves chunking does not *lose* rows, since the pre-check is what makes re-seeding
+idempotent.
+
+Found by probing the limit directly rather than by review — worth noting because the same trap
+applies to any other `IN`-batched lookup added for A8-5/A8-6.
+
+### 9.6 Deviation from the plan
 
 §2.4 proposed keeping the existing flush structure and optimising only if the budget was missed. The
-budget was met by a wide margin, so no further optimisation was done — the only performance change
-that shipped is the batched existence pre-check (one query replacing 24N).
+budget was met by a wide margin (8.9 s against 120 s), so no further optimisation was done — the
+only performance change that shipped is the chunked existence pre-check above.
