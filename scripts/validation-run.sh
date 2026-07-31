@@ -13,6 +13,7 @@
 #   ocr-roundtrip.txt            real vision-LLM BOL extraction (skipped w/o API key)
 #   sample_bol.png               the synthetic BOL used for the OCR round-trip
 #   api-latency-*.json/.txt      per-endpoint p50/p95/p99 latency (A8-2 benchmark harness)
+#   concurrency-*.json/.txt      three-arm stock-drawdown ablation (A8-5 comparative study)
 #
 # Usage (from repo root):
 #   ./scripts/validation-run.sh [OUTPUT_DIR]      # default: ./validation-evidence
@@ -109,6 +110,16 @@ say "    6c  API latency benchmark"
   > "$OUT/api-latency-bench.log" 2>&1 \
   && echo "  API latency benchmark captured" \
   || { echo "  API latency benchmark FAILED (see api-latency-bench.log)"; tail -5 "$OUT/api-latency-bench.log"; }
+
+say "    6d  Comparative concurrency study (A8-5)"
+# Also self-provenanced, so no hdr() wrapper. A reduced sweep: the committed evidence run uses the
+# full 2,4,8,16,32 x 5, which takes minutes and is not what a validation pass is for.
+# Safe against the seeded database — every row it creates is uuid-tagged and torn down by id.
+( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/concurrency_bench.py" "$OUT" \
+    --levels 2,8,32 --rounds 3 ) \
+  > "$OUT/concurrency-bench.log" 2>&1 \
+  && echo "  Concurrency ablation captured" \
+  || { echo "  Concurrency ablation FAILED (see concurrency-bench.log)"; tail -5 "$OUT/concurrency-bench.log"; }
 
 say "7/7  Done"
 kill "$BPID" 2>/dev/null; BPID=""

@@ -109,8 +109,9 @@ carried by `MovementType` and `StockReservation` for the future ledger, and by
 
 The authoritative build target — table shapes, the delete/add/migrate list from the ACR-25 decision
 gate, and which ticket owns each piece — is `acra_docs/reference/target_schema.md` (ACR-26).
-Alembic revisions `010` (stock reservations), `011` (production worksheets) and `012` (delivery
-notes) are taken; the next available revision is **`013`**.
+Alembic revisions `010` (stock reservations), `011` (production worksheets), `012` (delivery
+notes), `013` (shipping privileges) and `014` (shipment invoices) are taken; the next available
+revision is **`015`**.
 
 ### ADR-02 — worksheet-close concurrency (spiked in ACR-30)
 
@@ -133,6 +134,36 @@ Verified by TC-02 (`backend/tests/integration/test_worksheet_close_concurrency.p
 PostgreSQL: 8 parallel closes × 5 rounds, one winner and correct on-hand every run. The suite is
 mutation-verified — deleting the version guard turns two tests red, deleting the row locks turns
 the oversell test red — so it cannot pass by accident.
+
+#### Measured against the alternatives (A8-5, ACR-44)
+
+Step 1 rejected SERIALIZABLE on the assertion that it "needs a retry loop to be usable at all".
+`scripts/validation/concurrency_bench.py` turns that into a number. One workload — N concurrent
+closers drawing stock from one product — with only the concurrency control varied; 5 rounds per
+cell, `--stock 1000000 --draw 1000`, PostgreSQL 15.18:
+
+| arm | lost updates | success @32 | goodput @2 → @32 (closes/s) |
+|---|---|---|---|
+| unguarded read-modify-write | **281 across the sweep** | 3% | 128 → **10** |
+| **ADR-02 optimistic + row locks** | **0** | **100%** | 95 → **227** |
+| SERIALIZABLE, no retry | 0 | 3% | 156 → 52 |
+| SERIALIZABLE + 5 bounded retries | 0 | 21% | 237 → 77 |
+
+Three findings:
+
+1. **ADR-02's protocol is the only arm that scales.** It is alone in holding 100% success and zero
+   lost updates at every level from 2 to 32, and alone in *gaining* goodput as concurrency rises
+   (95 → 227 closes/s). Every other arm's goodput collapses.
+2. **A bounded retry loop does not rescue SERIALIZABLE.** Five retries hold 100% only to 4 closers;
+   by 32 the arm still drops 79% of its work. "Needs a retry loop" understates it — it needs an
+   *unbounded* one, and that is a queue, not a retry.
+3. **Raw throughput inverts the result, which is why the study reports goodput.** Bare SERIALIZABLE
+   posts the highest attempts/second in the entire sweep (1648/s at 32) while completing 3% of the
+   work, because an abort is nearly free. An evidence table quoting attempts/second would recommend
+   the arm that does almost nothing.
+
+The unguarded row is not hypothetical: `inventory_service.adjust_quantity` and
+`shipment_service.create_shipment` still carry that shape today (ISS-06).
 
 **Carried forward to ACR-31.** Two findings do not transfer for free when the close moves onto the
 append-only ledger:

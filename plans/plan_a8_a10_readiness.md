@@ -267,11 +267,11 @@ Legend: ⬜ not started · 🔄 in progress · ✅ done · ⏸️ blocked/deferr
 |---|---|---|---|---|
 | §2.2 | **Ledger decision gate** — Option A (build `015`) vs B (defer) | — | ⬜ open decision | — |
 | A8-1 | Parameterized seed — `seed_fake_data.py --scale N` | **ACR-41** | ✅ done — `--scale/--deliveries/--work-orders/--materials/--json`, scale-1 proven bit-identical | `ticket-41/parameterized-seed` |
-| A8-2 | Benchmark harness — run metadata, p50/p95/p99, machine-readable output | **ACR-43** | 🔄 in progress — `ticket-43/bench-harness-request-timing`, worktree cut at `7649a6e` | — |
-| A8-3 | Request-timing middleware + structured request logs | **ACR-43** | 🔄 in progress — folded into A8-2 | — |
+| A8-2 | Benchmark harness — run metadata, p50/p95/p99, machine-readable output | **ACR-43** | ✅ done — `app/core/benchmark.py`; first consumer `api_latency_bench.py`; `validation-run.sh` stage 6c | `ticket-43/bench-harness-request-timing` (#36) |
+| A8-3 | Request-timing middleware + structured request logs | **ACR-43** | ✅ done — `app/core/observability.py`, folded into A8-2 | `ticket-43/bench-harness-request-timing` (#36) |
 | A8-4 | OCR accuracy + provider comparison bench | **ACR-36** | 🔄 in progress — `ticket-36/ocr-accuracy-bench`, plan at `plans/plan_ticket_36.md` | — |
-| A8-5 | Comparative concurrency study (3-arm ablation) | — | ⬜ | — |
-| A8-6 | Aggregation benchmark at volume (RSK-04) | — | ⬜ | — |
+| A8-5 | Comparative concurrency study (3-arm ablation) | **ACR-44** | 🔄 in progress — `ticket-44/comparative-concurrency-study`, plan at `plans/plan_ticket_44.md` | — |
+| A8-6 | Aggregation benchmark at volume (RSK-04) | **ACR-45** | ⬜ — ticket written; `inventory_lots` carries **no index at all**, so RSK-04's own mitigation is half-applied | — |
 | A8-7 | Subsystem diagram marking measurement points | — | ⬜ | — |
 | A10-1 | Dockerfiles for backend + frontend; whole-stack compose | **ACR-42** | 🔄 in progress | — |
 | A10-2 | OCR offline/mock mode + committed sample fixtures | — | ⬜ | — |
@@ -301,6 +301,7 @@ makes the writeup citable.
 | # | Item | Date | Commit / PR | Evidence produced |
 |---|---|---|---|---|
 | **A8-1** | Parameterized seed (ACR-41) | 2026-07-30 | `ticket-41/parameterized-seed` | See `plans/plan_ticket_41.md` §9. **Scale-1 fixture proven bit-identical** across all 14 seeded tables (per-table SHA-256 of full ordered content, captured before/after on freshly migrated databases) — the contract the 83 Playwright specs depend on. **Volume/timing:** scale 50 = 1 200 deliveries / 3 700 lots / 400 work orders in **8.9 s**; scale 200 = 14 800 lots in **31.8 s**; ~linear, so the planned bulk-insert follow-up is unnecessary. **Idempotence:** re-seeding creates 0 rows; raising the scale adds exactly one unit. **Supply/demand headroom** 176× at scale 1 vs 165× at scale 50 — the ratio-preservation claim measured, not assumed. 40 pure tests + 6 guarded live-DB tests. |
+| **A8-2 + A8-3** | Benchmark harness & request-timing middleware (ACR-43) | 2026-07-31 | `ticket-43/bench-harness-request-timing` (#36) | `app/core/benchmark.py` — nearest-rank p50/p95/p99 pinned against a known vector, `RunMetadata` capturing git SHA/tag/dirty + host + redacted DSN + exact command, JSON+text artifact pair under `validation-evidence/`. `app/core/observability.py` — per-request structured logs (status, route, duration, request id). First consumer `scripts/validation/api_latency_bench.py` over 5 read endpoints; wired as `validation-run.sh` stage 6c. **Credentials never reach an artifact** — asserted end to end on both files, not assumed. |
 | — | — | — | — | — |
 
 ---
