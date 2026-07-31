@@ -83,7 +83,7 @@ acra_dev/
 │   ├── src/components/      # feature + layout components (shadcn/ui design system)
 │   └── messages/            # next-intl catalogs → C-10 i18n
 ├── scripts/                 # reset-db-and-seed.sh, smoke-test.sh
-├── docker-compose.yml       # PostgreSQL 15 (host 5433) — the DB container
+├── docker-compose.yml       # full stack: db → migrate → backend → frontend (+ seed profile)
 └── docs/                    # this note + RISK_LOG.md
 ```
 

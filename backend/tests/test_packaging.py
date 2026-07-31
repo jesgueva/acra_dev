@@ -38,6 +38,17 @@ ENV_TEMPLATES = [
     REPO_ROOT / ".env.example",
 ]
 
+# The backend container image is built with `backend/` as its context, so the repo-root files these
+# parity tests compare against (.nvmrc, frontend/package.json, .github/workflows/ci.yml, README.md,
+# docs/architecture.md) simply are not there. Skip rather than fail in that environment: the tests
+# still run on a developer checkout and in CI, which is where the drift they guard against happens.
+REPO_ROOT_AVAILABLE = (REPO_ROOT / "frontend").is_dir() and (REPO_ROOT / ".github").is_dir()
+
+requires_repo_root = pytest.mark.skipif(
+    not REPO_ROOT_AVAILABLE,
+    reason="repo-root files are absent (running inside the backend image, whose context is backend/)",
+)
+
 
 # --------------------------------------------------------------------------- helpers
 
@@ -95,6 +106,7 @@ def _requires_python_floor() -> str:
 # --------------------------------------------------------------------------- Node
 
 
+@requires_repo_root
 def test_node_version_is_consistent_across_the_repo():
     """Root .nvmrc, frontend/.nvmrc and engines.node must name one Node major.
 
@@ -110,6 +122,7 @@ def test_node_version_is_consistent_across_the_repo():
     )
 
 
+@requires_repo_root
 def test_types_node_major_matches_the_node_runtime():
     """@types/node must track the Node major actually used, or types lie about the runtime."""
     types_node = _major(_package_json()["devDependencies"]["@types/node"])
@@ -123,6 +136,7 @@ def test_types_node_major_matches_the_node_runtime():
 # --------------------------------------------------------------------------- Python
 
 
+@requires_repo_root
 def test_requires_python_matches_ci_python_version():
     """The declared Python and the Python CI actually runs must be the same major.minor."""
     assert _requires_python_floor() == _ci_python_version(), (
@@ -131,6 +145,7 @@ def test_requires_python_matches_ci_python_version():
     )
 
 
+@requires_repo_root
 def test_readme_and_architecture_docs_name_the_declared_python():
     """Docs must not advertise a Python the project does not declare."""
     declared = _requires_python_floor()

@@ -46,6 +46,11 @@ services:
     environment:
       # alembic/env.py:16 reads os.environ["DATABASE_URL"] directly — KeyError without it.
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/acra_db
+    # Inherited from the backend image, which curls /health — a server this one-shot job never
+    # starts. Harmless (it exits long before start-period) but it reports "unhealthy" in
+    # `docker compose ps`, which is a misleading thing for a migration job to say.
+    healthcheck:
+      disable: true
     depends_on:
       db:
         condition: service_healthy
@@ -104,6 +109,9 @@ services:
     command: ["python", "scripts/seed_fake_data.py"]
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/acra_db
+    # Same reason as `migrate`: this is a one-shot job, not a server.
+    healthcheck:
+      disable: true
     depends_on:
       db:
         condition: service_healthy

@@ -25,13 +25,30 @@ else
   PY="python"
 fi
 
-echo "==> Stopping Postgres and removing data volume (docker compose down -v)..."
-docker compose down -v
+echo "==> Stopping Postgres and removing its data volume..."
+# Everything here is scoped to `db` on purpose. Since ACR-42 the compose file also defines
+# migrate/backend/frontend, so the `docker compose down -v` this used to run would tear down a
+# developer's entire containerized stack — including the one README's "Quickstart A — Docker"
+# tells them to bring up. This script exists to give a HOST-run backend a clean database, so it
+# must touch Postgres and nothing else.
+#
+# Resolve the actual data volume from the db container before removing it, so the right volume is
+# wiped regardless of what the compose project is named. `rm --volumes` alone only drops anonymous
+# volumes, never the named one.
+db_container="$(docker compose ps -aq db 2>/dev/null | head -1)"
+db_volume=""
+if [[ -n "$db_container" ]]; then
+  db_volume="$(docker inspect \
+    -f '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' \
+    "$db_container" 2>/dev/null)"
+fi
+
+docker compose rm --stop --force --volumes db >/dev/null 2>&1 || true
+if [[ -n "$db_volume" ]]; then
+  docker volume rm -f "$db_volume" >/dev/null 2>&1 || true
+fi
 
 echo "==> Starting Postgres..."
-# `db` explicitly: since ACR-42 the compose file also defines migrate/backend/frontend, and a bare
-# `up -d` would build and start the entire containerized stack. This script exists to give a
-# HOST-run backend a database, so it must start Postgres and nothing else.
 docker compose up -d db
 
 echo "==> Waiting for Postgres to accept connections..."

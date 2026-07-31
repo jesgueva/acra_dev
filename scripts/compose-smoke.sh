@@ -186,26 +186,44 @@ fi
 step "Browser bundle points at the host, not the compose network"
 # NEXT_PUBLIC_API_URL is compiled into the shipped JS. If it were wired to http://backend:8000 the
 # stack would look perfectly healthy above while every browser XHR failed with a DNS error.
+# Every chunk, not a `head -N` slice: the whole point is to prove a string is ABSENT, and a
+# truncated search can only ever prove it absent from the part we looked at.
 BUNDLE="$(curl -fsS "${WEB}/en/login" \
-  | grep -o '/_next/static/chunks/[^"]*\.js' | sort -u | head -20)"
-FOUND_HOST=0
-FOUND_INTERNAL=0
-for chunk in $BUNDLE; do
-  BODY="$(curl -fsS "${WEB}${chunk}" 2>/dev/null)"
-  grep -q "localhost:${ACRA_BACKEND_PORT}" <<<"$BODY" && FOUND_HOST=1
-  grep -q "backend:8000" <<<"$BODY" && FOUND_INTERNAL=1
-done
+  | grep -o '/_next/static/chunks/[^"]*\.js' | sort -u)"
+CHUNK_COUNT="$(printf '%s' "$BUNDLE" | grep -c . || true)"
 
-if [[ "$FOUND_HOST" == "1" ]]; then
-  pass "bundle references localhost:${ACRA_BACKEND_PORT}"
+# Guard the negative assertion. Without this, an empty chunk list (login page failed to load, or
+# the markup stopped matching the grep) leaves FOUND_INTERNAL at 0 and the script cheerfully
+# reports "does not leak the internal service name" having inspected nothing at all — passing on
+# the exact bug this section exists to catch.
+if [[ "$CHUNK_COUNT" -eq 0 ]]; then
+  fail "no JS chunks found on ${WEB}/en/login — cannot verify the bundle (checks below would be vacuous)"
 else
-  fail "bundle never references localhost:${ACRA_BACKEND_PORT} — NEXT_PUBLIC_API_URL build arg?"
-fi
+  pass "discovered ${CHUNK_COUNT} JS chunk(s) to scan"
 
-if [[ "$FOUND_INTERNAL" == "0" ]]; then
-  pass "bundle does not leak the internal service name"
-else
-  fail "bundle contains 'backend:8000' — the browser cannot resolve that"
+  FOUND_HOST=0
+  FOUND_INTERNAL=0
+  SCANNED=0
+  for chunk in $BUNDLE; do
+    BODY="$(curl -fsS "${WEB}${chunk}" 2>/dev/null)" || continue
+    SCANNED=$((SCANNED + 1))
+    grep -q "localhost:${ACRA_BACKEND_PORT}" <<<"$BODY" && FOUND_HOST=1
+    grep -q "backend:8000" <<<"$BODY" && FOUND_INTERNAL=1
+  done
+
+  if [[ "$SCANNED" -eq 0 ]]; then
+    fail "every chunk fetch failed — nothing was actually inspected"
+  elif [[ "$FOUND_HOST" == "1" ]]; then
+    pass "bundle references localhost:${ACRA_BACKEND_PORT} (${SCANNED} chunks scanned)"
+  else
+    fail "bundle never references localhost:${ACRA_BACKEND_PORT} — NEXT_PUBLIC_API_URL build arg?"
+  fi
+
+  if [[ "$SCANNED" -gt 0 && "$FOUND_INTERNAL" == "0" ]]; then
+    pass "bundle does not leak the internal service name"
+  elif [[ "$FOUND_INTERNAL" == "1" ]]; then
+    fail "bundle contains 'backend:8000' — the browser cannot resolve that"
+  fi
 fi
 
 # ---------------------------------------------------------------------------- verdict

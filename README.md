@@ -72,11 +72,16 @@ Useful commands:
 
 ```bash
 docker compose logs -f backend        # follow a service
-docker compose run --rm backend pytest tests/   # run the suite with no local Python
+docker compose run --rm backend pytest tests/   # run the suite with no local Python*
 docker compose down                   # stop, keep data
 docker compose down -v                # stop and wipe the database volume
 ./scripts/compose-smoke.sh            # assert the containerized stack end to end
 ```
+
+\* The backend image is built from `backend/` alone, so the repo-root files the version-parity tests
+compare (`.nvmrc`, `frontend/package.json`, `.github/workflows/ci.yml`) are not in it. Those four
+tests in `backend/tests/test_packaging.py` skip when run this way and still run on a checkout and in
+CI. Everything else runs.
 
 **If a port is already taken** (common — this repo is often checked out into several worktrees),
 override it in `.env` or inline:
@@ -253,7 +258,7 @@ acra_dev/
 │   └── messages/       #   next-intl catalogs (en.json, es.json)
 ├── scripts/            # reset-db-and-seed.sh, smoke-test.sh, validation-run.sh, validation/
 ├── docs/               # architecture.md, RISK_LOG.md
-├── docker-compose.yml  # PostgreSQL 15 on host port 5433
+├── docker-compose.yml  # full stack: db → migrate → backend → frontend (+ seed profile)
 ├── CHANGELOG.md · KNOWN_ISSUES.md · CONTRIBUTING.md
 └── CLAUDE.md           # engineering memory (conventions, patterns)
 ```
