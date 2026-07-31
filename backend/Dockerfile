@@ -39,11 +39,19 @@ RUN apt-get update \
 COPY --from=deps /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
 
-COPY . .
-
-# Run as an unprivileged user. Done after COPY so the copied tree is owned correctly.
+# Create the unprivileged user BEFORE copying, so the copy sets ownership directly. A `COPY . .`
+# followed by `chown -R` writes every file twice — once in the copy layer, again in the chown layer
+# — which measured ~735 KB of pure duplication here.
+#
+# The `chown` on /app itself is NOT recursive and is not redundant with --chown: WORKDIR created
+# that directory as root, and --chown only covers the files placed INTO it. Without this, /app
+# stays root-owned and `docker compose run --rm backend pytest tests/` cannot write .pytest_cache,
+# which is a capability README documents. One directory, so it duplicates nothing.
 RUN useradd --create-home --uid 1001 acra \
-    && chown -R acra:acra /app
+    && chown acra:acra /app
+
+COPY --chown=acra:acra . .
+
 USER acra
 
 EXPOSE 8000

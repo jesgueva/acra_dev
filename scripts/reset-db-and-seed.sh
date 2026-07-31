@@ -36,21 +36,35 @@ echo "==> Stopping Postgres and removing its data volume..."
 # wiped regardless of what the compose project is named. `rm --volumes` alone only drops anonymous
 # volumes, never the named one.
 #
-# The `|| true` on both lookups is load-bearing: this script runs under `set -euo pipefail`, and
-# on a fresh clone (or with the daemon down) `docker compose ps` exits non-zero, which would abort
-# the script here with no message at all instead of failing later with a useful one. An empty
-# result is a legitimate answer — it just means there is no volume to wipe yet.
-db_container="$(docker compose ps -aq db 2>/dev/null | head -1 || true)"
-db_volume=""
-if [[ -n "$db_container" ]]; then
-  db_volume="$(docker inspect \
-    -f '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' \
-    "$db_container" 2>/dev/null || true)"
+# The volume is resolved by Compose's own project/volume LABELS rather than by inspecting a running
+# db container's mounts. That distinction matters: after a plain `docker compose down` — which this
+# repo's README documents as "stop, keep data" — the container is gone but the volume remains, and
+# a container-inspection lookup finds nothing and silently skips the wipe, leaving stale data
+# behind while the script cheerfully reports success. Labels are present whether or not any
+# container exists.
+#
+# The `|| true` guards are load-bearing: this script runs under `set -euo pipefail`, and on a fresh
+# clone (or with the daemon down) these commands exit non-zero, which would abort the script here
+# with no message at all instead of failing later with a useful one. An empty result is a
+# legitimate answer — it just means there is no volume to wipe yet.
+compose_project="${COMPOSE_PROJECT_NAME:-}"
+if [[ -z "$compose_project" ]]; then
+  compose_project="$(docker compose config --format json 2>/dev/null \
+    | sed -n 's/^[[:space:]]*"name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true)"
 fi
 
+# `rm --volumes` only drops ANONYMOUS volumes, never the named one, so the named volume still has
+# to go explicitly below. `rm` (rather than `down`) is what keeps this from cascading into the
+# backend/frontend containers that depend on db.
 docker compose rm --stop --force --volumes db >/dev/null 2>&1 || true
-if [[ -n "$db_volume" ]]; then
-  docker volume rm -f "$db_volume" >/dev/null 2>&1 || true
+
+if [[ -n "$compose_project" ]]; then
+  docker volume ls -q \
+    --filter "label=com.docker.compose.project=${compose_project}" \
+    --filter "label=com.docker.compose.volume=acra-postgres-data" 2>/dev/null \
+    | while read -r volume; do
+        [[ -n "$volume" ]] && docker volume rm -f "$volume" >/dev/null 2>&1
+      done || true
 fi
 
 echo "==> Starting Postgres..."

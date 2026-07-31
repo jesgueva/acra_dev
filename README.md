@@ -78,10 +78,11 @@ docker compose down -v                # stop and wipe the database volume
 ./scripts/compose-smoke.sh            # assert the containerized stack end to end
 ```
 
-\* The backend image is built from `backend/` alone, so the repo-root files the version-parity tests
-compare (`.nvmrc`, `frontend/package.json`, `.github/workflows/ci.yml`) are not in it. Those four
-tests in `backend/tests/test_packaging.py` skip when run this way and still run on a checkout and in
-CI. Everything else runs.
+\* Expect **`379 passed, 7 skipped`**. The backend image is built from `backend/` alone, so files
+outside that directory — `.nvmrc`, `frontend/package.json`, `.github/workflows/ci.yml`,
+`frontend/Dockerfile`, and the frontend/root `.env.example` templates — are not in the image. The
+`backend/tests/test_packaging.py` checks that compare against them skip here and run normally on a
+checkout and in CI. Nothing is failing; that skip count is the expected result.
 
 **If a port is already taken** (common — this repo is often checked out into several worktrees),
 override it in `.env` or inline:

@@ -27,10 +27,12 @@ REPO_ROOT = BACKEND_DIR.parent
 REQUIREMENTS = BACKEND_DIR / "requirements.txt"
 LOCKFILE = BACKEND_DIR / "requirements.lock"
 PYPROJECT = BACKEND_DIR / "pyproject.toml"
+BACKEND_DOCKERFILE = BACKEND_DIR / "Dockerfile"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 ROOT_NVMRC = REPO_ROOT / ".nvmrc"
 FRONTEND_NVMRC = REPO_ROOT / "frontend" / ".nvmrc"
 PACKAGE_JSON = REPO_ROOT / "frontend" / "package.json"
+FRONTEND_DOCKERFILE = REPO_ROOT / "frontend" / "Dockerfile"
 
 ENV_TEMPLATES = [
     BACKEND_DIR / ".env.example",
@@ -157,6 +159,51 @@ def test_readme_and_architecture_docs_name_the_declared_python():
             f"{doc.name} names Python {sorted(versions - {declared})} "
             f"but the project declares {declared}"
         )
+
+
+# --------------------------------------------------------------------------- container base images
+#
+# The Dockerfiles hardcode their base-image tags, which makes them a source of truth for the very
+# versions this file exists to keep aligned. Without these two tests, bumping `.nvmrc` would leave
+# `node:24-alpine` behind in three places and every other test here would still pass — the exact
+# drift the module docstring describes, reintroduced by the containers themselves.
+
+
+def _dockerfile_base_tag(dockerfile: Path, image: str) -> str:
+    """The tag off a `FROM <image>:<tag>` line, e.g. 'python' -> '3.13-slim'."""
+    tags = re.findall(
+        rf"^FROM\s+{re.escape(image)}:(\S+)", dockerfile.read_text(), flags=re.MULTILINE
+    )
+    assert tags, f"no `FROM {image}:...` line found in {dockerfile}"
+    assert len(set(tags)) == 1, (
+        f"{dockerfile.name} builds on more than one {image} tag: {sorted(set(tags))}"
+    )
+    return tags[0]
+
+
+def test_backend_dockerfile_python_matches_requires_python():
+    """The image Python and the declared Python must agree.
+
+    `python:3.13-slim` vs `requires-python = ">=3.13"` — if these drift, the containers run a
+    different interpreter than CI and the docs claim.
+    """
+    tag = _dockerfile_base_tag(BACKEND_DOCKERFILE, "python")
+    declared = _requires_python_floor()
+
+    assert tag.startswith(declared), (
+        f"backend/Dockerfile builds on python:{tag} but the project declares Python {declared}"
+    )
+
+
+@requires_repo_root
+def test_frontend_dockerfile_node_matches_nvmrc():
+    """Every `FROM node:` stage must match the Node major in .nvmrc."""
+    tag = _dockerfile_base_tag(FRONTEND_DOCKERFILE, "node")
+    declared = _major(FRONTEND_NVMRC.read_text())
+
+    assert _major(tag) == declared, (
+        f"frontend/Dockerfile builds on node:{tag} but .nvmrc declares Node {declared}"
+    )
 
 
 # --------------------------------------------------------------------------- dependency pinning
