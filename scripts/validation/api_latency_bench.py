@@ -5,14 +5,19 @@ provenance-stamped artifact pair via `app.core.benchmark`. This is the harness's
 A8-5 (comparative concurrency) and A8-6 (aggregation at volume) call the same library rather than
 re-deriving percentile math.
 
-Usage (backend must already be up on :8000):
-    PYTHONPATH=backend python scripts/validation/api_latency_bench.py [OUT_DIR] [--requests N]
+Usage (backend must already be up):
+    PYTHONPATH=backend python scripts/validation/api_latency_bench.py [OUT_DIR] \
+        [--requests N] [--base-url URL]
+
+`--base-url` defaults to $ACRA_API_BASE, then http://localhost:8000 — a second worktree running
+its backend on another port can point this at it without editing the script.
 
 Exit code 0 unless authentication or an endpoint fails outright. It reports latency; it does not
 assert a budget — the budget gate lives in the integration suite (RSK-04), and a benchmark that
 fails the build on a noisy laptop is a benchmark people stop running.
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -20,15 +25,16 @@ import httpx
 
 from app.core.benchmark import BenchmarkRun
 
-BASE = "http://localhost:8000"
+DEFAULT_BASE = os.getenv("ACRA_API_BASE", "http://localhost:8000")
 WARMUP = 5
 
 # (label, method, path) — read-only endpoints, so the benchmark is repeatable against one seed.
 ENDPOINTS = [
     ("health", "GET", "/health"),
-    ("inventory-list", "GET", "/api/v1/inventory/lots?limit=50"),
+    ("inventory-list", "GET", "/api/v1/inventory"),
     ("products-list", "GET", "/api/v1/products"),
     ("deliveries-list", "GET", "/api/v1/deliveries"),
+    ("work-orders-list", "GET", "/api/v1/work-orders"),
 ]
 
 
@@ -36,11 +42,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="ACRA MES API latency benchmark")
     parser.add_argument("out_dir", nargs="?", default="validation-evidence")
     parser.add_argument("--requests", type=int, default=100, help="samples per endpoint")
+    parser.add_argument("--base-url", default=DEFAULT_BASE, help="backend base URL")
     args = parser.parse_args()
 
-    client = httpx.Client(base_url=BASE, timeout=30.0)
+    client = httpx.Client(base_url=args.base_url, timeout=30.0)
 
-    print(f"== Authenticating against {BASE} ==")
+    print(f"== Authenticating against {args.base_url} ==")
     login = client.post(
         "/api/v1/auth/login", json={"username": "admin", "password": "admin123"}
     )
