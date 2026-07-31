@@ -43,6 +43,7 @@ def _load_bench_module():
 _bench = _load_bench_module()
 AttemptResult = _bench.AttemptResult
 _apply_correctness_oracle = _bench._apply_correctness_oracle
+_comparison_lines = _bench._comparison_lines
 _on_hand = _bench._on_hand
 _run_attempt = _bench._run_attempt
 _seed = _bench._seed
@@ -122,17 +123,20 @@ async def _run_arm_rounds(
     claims to measure has actually happened.
     """
     pooled: list = []
-    total_lost = 0
+    #: Units, not updates. `lost_updates` floors the discrepancy by `draw`, so a drift smaller than a
+    #: single close reports as 0 — and an arm asserting only `lost == 0` would pass over a ledger that
+    #: is provably wrong. Summing units is the exactness check, and it subsumes the whole-update one.
+    drift = 0
     total_over = 0
     limit = max(rounds, max_rounds) if until else rounds
     for completed in range(limit):
         results, _, verdict = await _run_arm(sessionmaker_, arm)
         pooled += results
-        total_lost += verdict.lost_updates
+        drift += verdict.lost_units
         total_over += verdict.overconsumed_units
         if until and completed + 1 >= rounds and until(pooled):
             break
-    return pooled, total_lost, total_over
+    return pooled, drift, total_over
 
 
 def _saw_lost_update(results) -> bool:
@@ -154,10 +158,10 @@ async def test_unguarded_arm_loses_updates(sessionmaker_):
     Asserted, not observed: a clean result here would mean the harness never actually raced the
     closers, and every other arm's zero would be meaningless by association.
     """
-    results, lost, _ = await _run_arm_rounds(sessionmaker_, "unguarded", until=_saw_lost_update)
+    results, drift, _ = await _run_arm_rounds(sessionmaker_, "unguarded", until=_saw_lost_update)
 
-    assert lost > 0, (
-        f"the unguarded arm must lose updates under {CLOSERS}-way contention within {MAX_ROUNDS} "
+    assert drift > 0, (
+        f"the unguarded arm must lose stock under {CLOSERS}-way contention within {MAX_ROUNDS} "
         "rounds. If this is clean the closers are not overlapping and the whole study is asleep."
     )
     assert _saw_lost_update(results), (
@@ -186,18 +190,22 @@ async def test_optimistic_arm_is_correct_and_loses_nothing(sessionmaker_):
     The negative control in a different test function cannot do this job: it proves the mechanism
     can collide on *its* invocation, not on this one.
     """
-    witness, witness_lost, _ = await _run_arm_rounds(
+    witness, witness_drift, _ = await _run_arm_rounds(
         sessionmaker_, "unguarded", until=_saw_lost_update
     )
-    assert witness_lost > 0, (
+    assert witness_drift > 0, (
         "contention witness failed: the unguarded arm lost nothing, so these conditions did not "
         "produce a race at all. The optimistic result below would be vacuous — fix the harness "
         f"rather than trusting it. Outcomes: {[r.outcome.value for r in witness]}"
     )
 
-    results, lost, over = await _run_arm_rounds(sessionmaker_, "optimistic")
+    results, drift, over = await _run_arm_rounds(sessionmaker_, "optimistic")
 
-    assert lost == 0
+    # Counted in units rather than whole updates, so on-hand must land on exactly what the successes
+    # claim — a drift of even one unit fails. `close_worksheet` draws FIFO across lots, and a
+    # truncation in that loop is precisely a sub-`draw` discrepancy that a whole-update count floors
+    # to zero and reports as clean.
+    assert drift == 0, "on-hand must match exactly what won, to the unit"
     assert over == 0, "the books must not move further than the successes claim either"
     assert all(r.outcome is Outcome.OK for r in results), [r.outcome for r in results]
 
@@ -213,9 +221,9 @@ async def test_serializable_arm_is_correct_but_aborts_losers(sessionmaker_):
     Aborts must surface as SQLSTATE 40001 rather than as a generic error: the whole retry argument
     depends on the caller being able to tell a retryable abort from a bug.
     """
-    results, lost, over = await _run_arm_rounds(sessionmaker_, "serializable", until=_saw_abort)
+    results, drift, over = await _run_arm_rounds(sessionmaker_, "serializable", until=_saw_abort)
 
-    assert lost == 0, "SERIALIZABLE must not corrupt the books"
+    assert drift == 0, "SERIALIZABLE must not corrupt the books, to the unit"
     assert over == 0, "SERIALIZABLE must not over-consume either"
     assert _saw_abort(results), (
         f"expected 40001 aborts within {MAX_ROUNDS} rounds, got {[r.outcome for r in results]}"
@@ -233,13 +241,13 @@ async def test_serializable_retry_arm_actually_retries(sessionmaker_):
     Without the retry-counter assertion this test passes on a machine where the closers happen not
     to collide, which would silently turn ADR-02's central claim into an untested one.
     """
-    results, lost, _ = await _run_arm_rounds(
+    results, drift, _ = await _run_arm_rounds(
         sessionmaker_,
         "serializable-retry",
         until=lambda pooled: sum(r.retries for r in pooled) > 0,
     )
 
-    assert lost == 0
+    assert drift == 0
     assert sum(r.retries for r in results) > 0, (
         f"no attempt retried in {MAX_ROUNDS} rounds — the arm cannot be said to have measured the "
         "retry loop"
@@ -344,3 +352,52 @@ def test_oracle_reports_a_partial_discrepancy_that_is_not_a_whole_update():
 
     assert verdict.lost_updates == 1
     assert verdict.lost_units == 1_500, "the 500-unit remainder must not vanish from the report"
+
+
+def test_oracle_catches_a_discrepancy_smaller_than_a_single_draw():
+    """The case a whole-update count cannot see at all.
+
+    One success claims 1000 of 10000, and 9200 remains — 200 units short of the 9000 the ledger
+    should show. `lost_updates` floors that to 0 and nothing is relabelled, so `lost_units` is the
+    *only* surviving signal that the books are wrong. `close_worksheet` draws FIFO across lots, so a
+    truncation in that loop lands exactly here.
+    """
+    results = [AttemptResult(Outcome.OK, 0.01)]
+
+    verdict = _apply_correctness_oracle(results, final_on_hand=9_200, stock=10_000, draw=1_000)
+
+    assert verdict.lost_updates == 0, "200 is less than one draw, so no whole update was lost"
+    assert verdict.lost_units == 200, (
+        "a sub-draw discrepancy is still a corrupt ledger — if this is 0, every caller asserting "
+        "only on lost_updates is passing over books that do not balance"
+    )
+    assert all(r.outcome is Outcome.OK for r in results)
+
+
+# ---------------------------------------------------------------------------
+# 5 — the report the oracle feeds
+
+
+def test_comparison_table_shows_a_sub_draw_discrepancy():
+    """A wrong ledger must never render as a clean row.
+
+    `lost` alone floors a sub-draw discrepancy to 0, so the table carries `lostu` beside it. Pure —
+    `_comparison_lines` takes plain dicts — so this guards the reporting path without a database.
+    """
+    row = {
+        "arm": "unguarded",
+        "concurrency": 8,
+        "lost_updates": 0,
+        "lost_units": 200,
+        "overconsumed_units": 0,
+        "success_rate": 1.0,
+        "retry_rate": 0.0,
+        "p50_ms": 1.0,
+        "p95_ms": 2.0,
+        "goodput_ops_s": 100.0,
+        "throughput_ops_s": 100.0,
+    }
+
+    body = _comparison_lines([row])[2]
+
+    assert "200" in body, f"the 200 lost units must appear in the row, got: {body!r}"

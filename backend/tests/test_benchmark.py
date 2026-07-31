@@ -14,6 +14,7 @@ from app.core.benchmark import (
     Outcome,
     RunMetadata,
     percentiles,
+    redact_command,
     redact_dsn,
 )
 
@@ -104,6 +105,37 @@ def test_redact_dsn_drops_the_password():
     assert "hunter2" not in redact_dsn(
         "postgresql+asyncpg://postgres:hunter2@localhost:5435/acra_db"
     )
+
+
+def test_redact_command_drops_a_password_passed_as_a_flag():
+    """`database` was redacted while `command` was captured verbatim — one leak reopens the other.
+
+    `concurrency_bench.py` accepts `--dsn` on the command line, so the password reaches an artifact
+    that gets committed under `validation-evidence/` unless the *command* is redacted too.
+    """
+    command = redact_command(
+        ["bench.py", "--dsn", "postgresql+asyncpg://postgres:hunter2@localhost:5435/acra_db"]
+    )
+
+    assert "hunter2" not in command
+    assert "localhost:5435/acra_db" in command, "the useful part of the DSN must survive"
+
+
+def test_redact_command_handles_the_joined_spelling():
+    """`--dsn=<url>` is one argv entry, so a per-argument check that only looks at bare values
+    would walk straight past it."""
+    command = redact_command(
+        ["bench.py", "--dsn=postgresql://postgres:hunter2@db.example.com/acra"]
+    )
+
+    assert "hunter2" not in command
+    assert "--dsn=db.example.com/acra" in command
+
+
+def test_redact_command_leaves_ordinary_arguments_alone():
+    argv = ["bench.py", "out/", "--levels", "2,8,32", "--rounds", "5"]
+
+    assert redact_command(argv) == "bench.py out/ --levels 2,8,32 --rounds 5"
 
 
 # ---------------------------------------------------------------------------

@@ -383,6 +383,7 @@ async def _run_level(sessionmaker_, arm: str, level: int, args) -> tuple[Benchma
     )
     totals = {
         "lost_updates": 0,
+        "lost_units": 0,
         "overconsumed_units": 0,
         "retries": 0,
         "rounds": 0,
@@ -414,6 +415,7 @@ async def _run_level(sessionmaker_, arm: str, level: int, args) -> tuple[Benchma
             for result in results:
                 run.record(result.seconds, result.outcome)
             totals["lost_updates"] += verdict.lost_updates
+            totals["lost_units"] += verdict.lost_units
             totals["overconsumed_units"] += verdict.overconsumed_units
             totals["retries"] += sum(r.retries for r in results)
             totals["rounds"] += 1
@@ -427,21 +429,24 @@ async def _run_level(sessionmaker_, arm: str, level: int, args) -> tuple[Benchma
 def _comparison_lines(rows: list[dict]) -> list[str]:
     """Correctness column first — the fastest arm here is the one that takes no locks."""
     header = (
-        f"  {'arm':<20} {'conc':>5} {'lost':>6} {'over':>6} {'success':>8} {'retry':>7} "
-        f"{'p50ms':>8} {'p95ms':>8} {'goodput':>9} {'attempts':>9}"
+        f"  {'arm':<20} {'conc':>5} {'lost':>6} {'lostu':>8} {'over':>8} {'success':>8} "
+        f"{'retry':>7} {'p50ms':>8} {'p95ms':>8} {'goodput':>9} {'attempts':>9}"
     )
     lines = [header, "  " + "-" * (len(header) - 2)]
     for row in rows:
         lines.append(
             f"  {row['arm']:<20} {row['concurrency']:>5} {row['lost_updates']:>6} "
-            f"{row['overconsumed_units']:>6} "
-            f"{row['success_rate']:>7.0%} {row['retry_rate']:>6.0%} "
+            f"{row['lost_units']:>8} {row['overconsumed_units']:>8} "
+            f"{row['success_rate']:>8.0%} {row['retry_rate']:>7.0%} "
             f"{row['p50_ms']:>8.1f} {row['p95_ms']:>8.1f} "
             f"{row['goodput_ops_s']:>9.1f} {row['throughput_ops_s']:>9.1f}"
         )
     lines += [
         "",
-        "  lost     = committed work erased by another closer (correctness; lower is better)",
+        "  lost     = whole closes' worth of committed work erased by another closer",
+        "  lostu    = units erased. Reported beside `lost` because the discrepancy need not be a",
+        "             whole multiple of --draw: a remainder floors to lost=0 and would otherwise",
+        "             print as a clean row over a ledger that is wrong.",
         "  over     = units consumed beyond what the successes claim — corruption the other way",
         "  goodput  = successful closes/second — the honest throughput column",
         "  attempts = all closes/second including aborts, which are nearly free",
@@ -471,6 +476,7 @@ async def _sweep(args) -> int:
                     "arm": arm,
                     "concurrency": level,
                     "lost_updates": totals["lost_updates"],
+                    "lost_units": totals["lost_units"],
                     "overconsumed_units": totals["overconsumed_units"],
                     "retries": totals["retries"],
                     "success_rate": stats.get("success_rate", 1.0),
@@ -486,7 +492,8 @@ async def _sweep(args) -> int:
                 }
                 rows.append(row)
                 print(
-                    f"   lost={row['lost_updates']}  success={row['success_rate']:.0%}  "
+                    f"   lost={row['lost_updates']} ({row['lost_units']}u)  "
+                    f"over={row['overconsumed_units']}u  success={row['success_rate']:.0%}  "
                     f"retry={row['retry_rate']:.0%}  p50={row['p50_ms']:.1f}ms  "
                     f"{row['goodput_ops_s']:.1f} goodput/s ({row['throughput_ops_s']:.1f} attempts/s)",
                     flush=True,
@@ -504,10 +511,16 @@ async def _sweep(args) -> int:
         stock=args.stock,
         draw=args.draw,
     )
+    # Every direction the ledger can be wrong belongs in the one line a reader skims. Summarising on
+    # `lost_updates` alone would headline "0 lost updates" over a sweep that over-consumed, or over
+    # one whose discrepancy was smaller than a single --draw and floored away.
     total_lost = sum(r["lost_updates"] for r in rows)
+    total_lost_units = sum(r["lost_units"] for r in rows)
+    total_over = sum(r["overconsumed_units"] for r in rows)
     lines = meta.header_lines(
         "benchmark: concurrency-ablation",
-        f"{len(rows)} cells, {total_lost} lost updates",
+        f"{len(rows)} cells, {total_lost} lost updates "
+        f"({total_lost_units}u lost, {total_over}u over-consumed)",
     )
     lines += ["", "Comparison (correctness first)"] + _comparison_lines(rows)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -550,6 +563,11 @@ def _parse_args(argv: list[str] | None = None):
     args.levels = [int(x) for x in args.levels.split(",") if x.strip()]
     if not args.dsn:
         parser.error("no database: pass --dsn or export DATABASE_URL")
+    # A zero draw would turn the whole sweep into theatre: no closer consumes anything, the oracle
+    # divides by `draw` so it short-circuits to a clean verdict, and the stock guard below degenerates
+    # to `stock < 0`. Every arm would report 100% success over an untested ledger.
+    if args.draw < 1:
+        parser.error("--draw must be at least 1; a zero draw consumes nothing and tests nothing")
     # Abundant stock is not a nicety: if the lot can run dry, "insufficient stock" stands in for the
     # guard and a broken arm looks correct. Same reason TC-02 has ABUNDANT_STOCK.
     if args.stock < max(args.levels) * args.draw * args.rounds:

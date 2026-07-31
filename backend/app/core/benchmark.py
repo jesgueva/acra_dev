@@ -141,6 +141,28 @@ def redact_dsn(url: str) -> str:
     return f"{host}{parts.path}"
 
 
+def redact_command(argv: list[str]) -> str:
+    """`shlex.join(argv)` with any argument that looks like a database URL reduced to host/db.
+
+    `redact_dsn` keeps the password out of the `database` field, but the *command* is captured
+    verbatim — so a bench invoked as `--dsn postgresql://user:password@host/db` writes the password
+    straight into an artifact that gets committed under `validation-evidence/` and pasted into
+    writeups. The redaction has to cover both paths or it only covers the one nobody uses.
+
+    Both spellings are handled: `--dsn <url>` as two argv entries, and `--dsn=<url>` as one.
+    """
+    cleaned: list[str] = []
+    for arg in argv:
+        flag, sep, value = arg.partition("=")
+        if sep and "://" in value:
+            cleaned.append(f"{flag}={redact_dsn(value)}")
+        elif "://" in arg:
+            cleaned.append(redact_dsn(arg))
+        else:
+            cleaned.append(arg)
+    return shlex.join(cleaned)
+
+
 @dataclass(frozen=True)
 class RunMetadata:
     """Everything needed to repeat a run, captured at the moment it happened."""
@@ -173,7 +195,7 @@ class RunMetadata:
             # populating os.environ, so the provenance would silently lose the database it ran on.
             database=redact_dsn(os.getenv("DATABASE_URL") or settings.database_url),
             captured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            command=shlex.join(sys.argv) if sys.argv else _UNKNOWN,
+            command=redact_command(sys.argv) if sys.argv else _UNKNOWN,
             params=dict(params),
         )
 
