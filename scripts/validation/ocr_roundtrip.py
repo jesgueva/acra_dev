@@ -38,9 +38,6 @@ BASELINE_PATH = (
     Path(__file__).resolve().parents[2] / "backend" / "tests" / "fixtures" / "ocr" / "baseline.json"
 )
 
-_MIME_SUFFIX = {"image/png": ".png", "image/jpeg": ".jpg", "application/pdf": ".pdf"}
-
-
 def _login(client: httpx.Client) -> str:
     response = client.post(
         "/api/v1/auth/login", json={"username": "admin", "password": "admin123"}
@@ -65,8 +62,10 @@ def main() -> int:
 
     scores = []
     for spec in CORPUS:
+        # Name comes from the rendered path itself — `corpus.render()` already owns the
+        # mime-to-extension mapping, and duplicating it here let the two drift silently.
         payload = rendered[spec.layout].read_bytes()
-        filename = f"bol_{spec.layout}{_MIME_SUFFIX[spec.mime_type]}"
+        filename = rendered[spec.layout].name
 
         response = client.post(
             "/api/v1/deliveries/ocr",

@@ -9,6 +9,7 @@ that made `scripts/validation/ocr_roundtrip.py`'s positional `got_items[gi]` com
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -67,6 +68,24 @@ def test_render_all_writes_every_document(tmp_path):
     assert set(written) == {spec.layout for spec in CORPUS}
     for path in written.values():
         assert path.exists() and path.stat().st_size > 0
+
+
+def test_committed_sample_matches_a_fresh_render(tmp_path):
+    """The one committed corpus image must stay in step with the generator that produced it.
+
+    `sample_bol_gridded.png` is a second copy of data whose source of truth is `ground_truth.GRIDDED`
+    plus `corpus.render`. Without this, editing the spec (say, correcting a label) would silently
+    leave the committed PNG showing stale values, and anything using it as an offline fixture would
+    be exercising a document the ground truth no longer describes.
+    """
+    committed = Path(__file__).resolve().parent / "fixtures" / "ocr" / "sample_bol_gridded.png"
+    assert committed.exists(), f"missing committed sample: {committed}"
+
+    fresh = corpus.render(BY_LAYOUT["gridded"], tmp_path)
+    assert committed.read_bytes() == fresh.read_bytes(), (
+        "sample_bol_gridded.png has drifted from ground_truth.GRIDDED — regenerate it with "
+        "`python -m scripts.ocr_bench.corpus` and copy bol_gridded.png over the fixture"
+    )
 
 
 def test_multipage_renders_a_two_page_pdf(tmp_path):
