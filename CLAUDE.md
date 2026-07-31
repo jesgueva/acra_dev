@@ -28,9 +28,33 @@ acra_dev/
 │   │   └── lib/
 │   ├── messages/     # next-intl (en.json, es.json)
 │   └── package.json
-├── docker-compose.yml  # Postgres on host port 5433 → container 5432
+├── docker-compose.yml  # full stack: db → migrate → backend → frontend
 └── CLAUDE.md
 ```
+
+## Runtime versions (single source of truth)
+
+- **Python 3.13** — declared in `backend/pyproject.toml` (`requires-python`).
+- **Node 24** — declared in `.nvmrc` and `frontend/.nvmrc`.
+
+`backend/tests/test_packaging.py` fails the build if the README, `docs/architecture.md`, CI, or
+`@types/node` drifts from these. Don't "fix" a mismatch by editing only one file.
+
+Backend dependencies: `requirements.txt` is the human-edited **direct** list, every line exactly
+pinned; `requirements.lock` is the generated transitive closure and is what CI and the images
+install. Adding a dependency means editing both.
+
+## Docker
+
+`docker compose up -d --build` brings up the whole stack; `docker compose --profile seed run --rm
+seed` loads demo data. Host ports are overridable (`ACRA_DB_PORT`, `ACRA_BACKEND_PORT`,
+`ACRA_FRONTEND_PORT`) because several worktrees run at once. Verify with
+`./scripts/compose-smoke.sh`.
+
+**The one gotcha:** `NEXT_PUBLIC_API_URL` is baked into the browser bundle at *build* time and must
+be host-reachable (`http://localhost:8000`); `BACKEND_URL` is read at *runtime* by the server-side
+auth proxy and must be the compose service name (`http://backend:8000`). Swapping them leaves the
+stack reporting healthy while every login fails.
 
 ## Run Commands
 

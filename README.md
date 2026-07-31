@@ -44,9 +44,58 @@ You do **not** need a local PostgreSQL install — Docker Compose provides it on
 
 ---
 
-## Quickstart
+## Quickstart A — Docker (whole stack, no toolchain install)
 
-A peer should be able to go from a clean clone to a running stack with the steps below.
+Clean clone to running system in three commands. Nothing but Docker and git required.
+
+```bash
+git clone git@github.com:jesgueva/acra_dev.git
+cd acra_dev
+cp .env.example .env                            # defaults work as-is for local use
+
+docker compose up -d --build                    # Postgres + migrations + API + web
+docker compose --profile seed run --rm seed     # demo data (opt-in)
+```
+
+Open **http://localhost:3000** and sign in with a [seeded account](#seeded-demo-logins). The API is
+at **http://localhost:8000** (docs at `/docs`).
+
+| Service | What it does |
+|---|---|
+| `db` | PostgreSQL 15, published on `5433` |
+| `migrate` | One-shot `alembic upgrade head`, then exits. The API waits for it to succeed. |
+| `backend` | FastAPI on `8000` |
+| `frontend` | Next.js production server on `3000` |
+| `seed` | Demo data. Behind the `seed` profile, so `up` never repopulates a database by surprise. |
+
+Useful commands:
+
+```bash
+docker compose logs -f backend        # follow a service
+docker compose run --rm backend pytest tests/   # run the suite with no local Python
+docker compose down                   # stop, keep data
+docker compose down -v                # stop and wipe the database volume
+./scripts/compose-smoke.sh            # assert the containerized stack end to end
+```
+
+**If a port is already taken** (common — this repo is often checked out into several worktrees),
+override it in `.env` or inline:
+
+```bash
+ACRA_DB_PORT=5442 ACRA_BACKEND_PORT=8042 ACRA_FRONTEND_PORT=3042 \
+  docker compose -p acr42 up -d --build
+```
+
+> **Changing `ACRA_BACKEND_PORT` requires `--build`, not just a restart.** `NEXT_PUBLIC_API_URL` is
+> compiled into the browser bundle at build time rather than read at runtime, so the frontend image
+> is tied to the API port it was built for. This is a property of Next.js's `NEXT_PUBLIC_*`
+> handling, not a bug in the compose file.
+
+---
+
+## Quickstart B — Local processes (for active development)
+
+Use this when you want hot reload. Requires the Python and Node versions listed above.
 
 ```bash
 # 1. Clone
@@ -58,10 +107,13 @@ cp backend/.env.example backend/.env
 cp frontend/.env.local.example frontend/.env.local
 
 # 3. Backend dependencies (isolated virtualenv)
+#    requirements.lock is the full resolved set — it is what CI and the containers install, so
+#    installing it gets you exactly their versions. Use requirements.txt only when ADDING a
+#    dependency, then regenerate the lock (see backend/requirements.lock's header).
 cd backend
 python3 -m venv .venv
 ./.venv/bin/python -m pip install --upgrade pip
-./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python -m pip install -r requirements.lock
 cd ..
 
 # 4. Frontend dependencies

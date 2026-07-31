@@ -29,7 +29,10 @@ echo "==> Stopping Postgres and removing data volume (docker compose down -v)...
 docker compose down -v
 
 echo "==> Starting Postgres..."
-docker compose up -d
+# `db` explicitly: since ACR-42 the compose file also defines migrate/backend/frontend, and a bare
+# `up -d` would build and start the entire containerized stack. This script exists to give a
+# HOST-run backend a database, so it must start Postgres and nothing else.
+docker compose up -d db
 
 echo "==> Waiting for Postgres to accept connections..."
 ready=0
