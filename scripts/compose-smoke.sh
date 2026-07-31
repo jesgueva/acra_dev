@@ -213,16 +213,18 @@ else
 
   if [[ "$SCANNED" -eq 0 ]]; then
     fail "every chunk fetch failed — nothing was actually inspected"
-  elif [[ "$FOUND_HOST" == "1" ]]; then
-    pass "bundle references localhost:${ACRA_BACKEND_PORT} (${SCANNED} chunks scanned)"
   else
-    fail "bundle never references localhost:${ACRA_BACKEND_PORT} — NEXT_PUBLIC_API_URL build arg?"
-  fi
+    if [[ "$FOUND_HOST" == "1" ]]; then
+      pass "bundle references localhost:${ACRA_BACKEND_PORT} (${SCANNED} chunks scanned)"
+    else
+      fail "bundle never references localhost:${ACRA_BACKEND_PORT} — NEXT_PUBLIC_API_URL build arg?"
+    fi
 
-  if [[ "$SCANNED" -gt 0 && "$FOUND_INTERNAL" == "0" ]]; then
-    pass "bundle does not leak the internal service name"
-  elif [[ "$FOUND_INTERNAL" == "1" ]]; then
-    fail "bundle contains 'backend:8000' — the browser cannot resolve that"
+    if [[ "$FOUND_INTERNAL" == "0" ]]; then
+      pass "bundle does not leak the internal service name"
+    else
+      fail "bundle contains 'backend:8000' — the browser cannot resolve that"
+    fi
   fi
 fi
 
