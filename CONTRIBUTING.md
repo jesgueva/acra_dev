@@ -49,7 +49,10 @@ Keep commits small and self-contained so history reads as a sequence of reviewab
 - Open a PR from your `ticket-NN/*` branch into `master`.
 - CI (`.github/workflows/ci.yml`) must pass before merge:
   - **Backend:** install deps → apply migrations → `pytest` with an **85% coverage floor** on `app.*`.
-  - **Frontend:** install → Jest test subset → `eslint` → `next build`.
+  - **Frontend:** install → full Jest suite with a coverage gate (`frontend/jest.config.ts`) →
+    `eslint` → `next build`.
+  - **E2E:** the containerized stack (`docker compose`, A10-1) seeded with demo data → the full
+    Playwright suite (`e2e-playwright` job).
 - Prefer squash or a tidy merge so `master` history stays legible.
 
 ## Versioning & tags
