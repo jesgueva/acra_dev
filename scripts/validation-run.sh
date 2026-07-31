@@ -149,3 +149,13 @@ kill "$BPID" 2>/dev/null; BPID=""
 rm -f "$OUT/.reseed.log" "$OUT/.backend.log"
 echo "Artifacts written to: $OUT"
 ls -1 "$OUT"
+
+# The header promises "exit code is 0 only if ... the OCR accuracy gate" passes. `ls` above always
+# succeeds, so without this the script reported success even after printing "OCR accuracy gate
+# FAILED" — the exact shape of defect ACR-36 set out to remove, reintroduced in the harness that
+# runs the gate.
+if [[ "$OCR_FAILED" -ne 0 ]]; then
+  echo
+  echo "FAILED — the OCR accuracy gate regressed; see $OUT/ocr-roundtrip.txt"
+  exit 1
+fi
