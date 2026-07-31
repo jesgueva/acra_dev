@@ -49,8 +49,11 @@ echo "==> Stopping Postgres and removing its data volume..."
 # legitimate answer — it just means there is no volume to wipe yet.
 compose_project="${COMPOSE_PROJECT_NAME:-}"
 if [[ -z "$compose_project" ]]; then
+  # Exactly two leading spaces: compose emits the top-level project name at that indent, while the
+  # nested network/volume `"name"` keys (which carry the project PREFIX, not the project) sit at
+  # six. Matching loosely and taking the first hit would work today only by ordering luck.
   compose_project="$(docker compose config --format json 2>/dev/null \
-    | sed -n 's/^[[:space:]]*"name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true)"
+    | sed -n 's/^  "name": *"\([^"]*\)".*/\1/p' | head -1 || true)"
 fi
 
 # `rm --volumes` only drops ANONYMOUS volumes, never the named one, so the named volume still has

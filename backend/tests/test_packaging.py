@@ -170,9 +170,14 @@ def test_readme_and_architecture_docs_name_the_declared_python():
 
 
 def _dockerfile_base_tag(dockerfile: Path, image: str) -> str:
-    """The tag off a `FROM <image>:<tag>` line, e.g. 'python' -> '3.13-slim'."""
+    """The tag off a `FROM <image>:<tag>` line, e.g. 'python' -> '3.13-slim'.
+
+    Tolerates flags like `FROM --platform=$BUILDPLATFORM node:24-alpine`.
+    """
     tags = re.findall(
-        rf"^FROM\s+{re.escape(image)}:(\S+)", dockerfile.read_text(), flags=re.MULTILINE
+        rf"^FROM\s+(?:--\S+\s+)*{re.escape(image)}:(\S+)",
+        dockerfile.read_text(),
+        flags=re.MULTILINE,
     )
     assert tags, f"no `FROM {image}:...` line found in {dockerfile}"
     assert len(set(tags)) == 1, (
@@ -181,16 +186,26 @@ def _dockerfile_base_tag(dockerfile: Path, image: str) -> str:
     return tags[0]
 
 
+def _tag_version(tag: str) -> str:
+    """'3.13-slim' -> '3.13'; '24-alpine' -> '24'."""
+    match = re.match(r"(\d+(?:\.\d+)?)", tag)
+    assert match, f"could not parse a version out of the base-image tag {tag!r}"
+    return match.group(1)
+
+
 def test_backend_dockerfile_python_matches_requires_python():
     """The image Python and the declared Python must agree.
 
     `python:3.13-slim` vs `requires-python = ">=3.13"` — if these drift, the containers run a
     different interpreter than CI and the docs claim.
+
+    Compares parsed major.minor rather than a string prefix: `"3.130-slim".startswith("3.13")` is
+    True, so a prefix check would wave through a wildly different interpreter.
     """
     tag = _dockerfile_base_tag(BACKEND_DOCKERFILE, "python")
     declared = _requires_python_floor()
 
-    assert tag.startswith(declared), (
+    assert _tag_version(tag) == declared, (
         f"backend/Dockerfile builds on python:{tag} but the project declares Python {declared}"
     )
 
