@@ -111,7 +111,7 @@ def test_redact_command_drops_a_password_passed_as_a_flag():
     """`database` was redacted while `command` was captured verbatim — one leak reopens the other.
 
     `concurrency_bench.py` accepts `--dsn` on the command line, so the password reaches an artifact
-    that gets committed under `validation-evidence/` unless the *command* is redacted too.
+    that gets pasted into writeups and attached to tickets, unless the *command* is redacted too.
     """
     command = redact_command(
         ["bench.py", "--dsn", "postgresql+asyncpg://postgres:hunter2@localhost:5435/acra_db"]
@@ -164,6 +164,106 @@ def test_redact_command_fails_closed_on_an_unparseable_url():
     command = redact_command(["bench.py", "--dsn", "postgresql://user:hunter2@[::1/acra"])
 
     assert "hunter2" not in command
+
+
+def test_redact_command_fails_closed_on_a_malformed_port():
+    """`parts.port` validates lazily — reading it raises rather than the split doing so.
+
+    An earlier version read it outside the `try`, so a bad port escaped the fail-closed guard as an
+    uncaught ValueError and took `RunMetadata.capture()` down with it mid-run.
+    """
+    command = redact_command(["bench.py", "--dsn", "postgresql://u:hunter2@host:NOTAPORT/db"])
+
+    assert "hunter2" not in command
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql+asyncpg://localhost:5441/acra?user=postgres&password=hunter2",
+        "postgresql://localhost/acra?sslpassword=hunter2",
+        "postgresql://user:hunter2@/acra?host=/var/run/postgresql",
+    ],
+)
+def test_redact_command_strips_a_password_carried_in_the_query_string(dsn):
+    """libpq takes every connection parameter as a query arg, so a DSN can carry a password with
+    no userinfo at all — `parts.username` and `parts.password` are both empty and a userinfo-only
+    check waves it straight through into a committed artifact."""
+    assert "hunter2" not in redact_command(["bench.py", "--dsn", dsn])
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        # `parse_qsl` splits on `&` only (Python dropped `;` for CVE-2021-23336), so this comes
+        # back as the single non-secret key `a` and a parse-only check waves it straight through.
+        "postgresql://h/db?a=1;password=hunter2",
+        # The secret rides inside another parameter's value, so no *key* is ever secret.
+        "postgresql://h/db?options=password=hunter2",
+    ],
+)
+def test_redact_command_drops_a_query_whose_raw_text_names_a_secret(dsn):
+    """The parse decides how much to remove, never whether to.
+
+    Both of these have a password in plain sight and no secret *key* for `parse_qsl` to find.
+    """
+    assert "hunter2" not in redact_command(["bench.py", "--dsn", dsn])
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        # scheme `jdbc`, empty netloc, the whole DSN in `path` — `parts.username` sees nothing.
+        ["bench.py", "--dsn", "jdbc:postgresql://user:hunter2@host/db"],
+        # two URLs in one token: the second one's netloc is invisible to the split.
+        ["bench.py", "--opt=postgresql://h1/db1,postgresql://u:hunter2@h2/db2"],
+        # the first `=` falls *inside* the URL, so `flag` holds the credential and `value` is
+        # innocuous — redacting `value` and echoing `flag` would reproduce the password verbatim.
+        ["bench.py", "postgresql://u:hunter2@h/db?options=x://y"],
+    ],
+)
+def test_redact_command_fails_closed_on_a_token_that_is_not_exactly_one_url(argv):
+    """`username`/`password` are read off the netloc, which only exists after `scheme://`.
+
+    Every shape here has a credential that the userinfo check cannot see, so the argument must be
+    refused rather than trusted — the contract is fail-closed.
+    """
+    assert "hunter2" not in redact_command(argv)
+
+
+def test_redact_command_keeps_the_non_secret_query_when_it_redacts():
+    """`?host=` and `?sslmode=` decide whether the command reproduces at all.
+
+    Dropping the whole query — which reducing this to `redact_dsn` would do — makes the record
+    useless without making it any safer.
+    """
+    command = redact_command(
+        ["bench.py", "--dsn", "postgresql://u:hunter2@/acra?host=/var/run/postgresql"]
+    )
+
+    assert "hunter2" not in command
+    assert "postgresql:///acra?host=/var/run/postgresql" in command, (
+        "the socket path and database must survive, and the // marker with them"
+    )
+
+
+def test_redact_command_fails_closed_on_a_schemeless_url():
+    """Without a scheme there is nothing to rebuild a runnable URL from, so it cannot be echoed.
+
+    `urlsplit` parses `://u:pw@host/db` to an empty scheme rather than raising, so this misses the
+    ValueError guard above and needs its own.
+    """
+    command = redact_command(["bench.py", "--dsn", "://user:hunter2@host/db"])
+
+    assert "hunter2" not in command
+
+
+def test_redact_command_keeps_an_ipv6_literal_bracketed():
+    """`parts.hostname` strips the brackets, and `::1:5432` is not a parseable URL."""
+    command = redact_command(["bench.py", "--dsn", "postgresql://u:hunter2@[::1]:5432/db"])
+
+    assert "hunter2" not in command
+    assert "postgresql://[::1]:5432/db" in command
 
 
 # ---------------------------------------------------------------------------
