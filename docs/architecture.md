@@ -75,7 +75,7 @@ acra_dev/
 │   │   ├── routers/         # HTTP adapters (one per component surface)
 │   │   └── services/        # business logic + transactions
 │   ├── alembic/versions/    # migrations — schema evolution (001→008, + Phase 2 stub)
-│   ├── scripts/             # create_admin.py, seed_fake_data.py (deterministic local data)
+│   ├── scripts/             # create_admin.py, seed_fake_data.py (deterministic local data, --scale N)
 │   └── tests/               # pytest: unit (mocked) + integration/ + schema (live DB)
 ├── frontend/
 │   ├── app/[locale]/        # operator-facing route surfaces (dashboard, inventory, receiving, …)

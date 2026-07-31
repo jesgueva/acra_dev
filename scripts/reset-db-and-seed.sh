@@ -2,7 +2,11 @@
 # Reset local Docker Postgres (wipes volume), apply migrations, and run seed_fake_data.py.
 #
 # Usage (from repo root):
-#   ./scripts/reset-db-and-seed.sh
+#   ./scripts/reset-db-and-seed.sh                  # the demo fixture (scale 1)
+#   ./scripts/reset-db-and-seed.sh --scale 50       # 50x volume, for benchmarking
+#   ./scripts/reset-db-and-seed.sh --deliveries 480 --work-orders 0 --materials 60
+#
+# Arguments are forwarded verbatim to seed_fake_data.py; run it with --help for the full set.
 #
 # Requires: Docker with Compose, Python deps installed for backend (see CLAUDE.md).
 # Expects Postgres from docker-compose.yml on host port 5433 unless DATABASE_URL overrides.
@@ -31,10 +35,6 @@ echo "==> Stopping Postgres and removing its data volume..."
 # developer's entire containerized stack — including the one README's "Quickstart A — Docker"
 # tells them to bring up. This script exists to give a HOST-run backend a clean database, so it
 # must touch Postgres and nothing else.
-#
-# Resolve the actual data volume from the db container before removing it, so the right volume is
-# wiped regardless of what the compose project is named. `rm --volumes` alone only drops anonymous
-# volumes, never the named one.
 #
 # The volume is resolved by Compose's own project/volume LABELS rather than by inspecting a running
 # db container's mounts. That distinction matters: after a plain `docker compose down` — which this
@@ -111,7 +111,7 @@ echo "==> Applying migrations (alembic upgrade head)..."
 echo "==> Seeding fake data..."
 (
   cd "$ROOT/backend"
-  "$PY" scripts/seed_fake_data.py
+  "$PY" scripts/seed_fake_data.py "$@"
 )
 
 echo "==> Done. Default demo logins: admin / admin123, supervisor1 / demo123 (see seed script)."

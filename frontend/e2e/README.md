@@ -7,6 +7,8 @@ Next.js build. They are not run by `npx jest` — `jest.config.ts` excludes this
 
 ```bash
 # 1. Database: migrations + seed data (wipes the volume)
+#    Run it with NO arguments. These specs assert against the scale-1 demo fixture, and every
+#    volume flag (--scale, --deliveries, --work-orders, --materials) changes the rows they read.
 ./scripts/reset-db-and-seed.sh
 
 # 2. Backend

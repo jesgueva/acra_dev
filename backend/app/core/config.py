@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     # documented dev port; override it to run the stack anywhere else (a second worktree, an e2e
     # run on a free port, a deployed environment) without editing code.
     cors_origins: str = "http://localhost:3000"
+    # Request-log format. "text" keeps the human-readable console format developers expect;
+    # "json" emits one structured object per line for CI, containers and log shipping. Opt-in
+    # rather than default so flipping it is a deliberate deployment choice.
+    log_format: str = "text"
 
     model_config = {"env_file": ".env", "case_sensitive": False}
 

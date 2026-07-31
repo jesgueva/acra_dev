@@ -167,8 +167,9 @@ It exits `0` only if every stage passes. Flags: `SMOKE_SKIP_FRONTEND=1` (backend
 `SMOKE_SKIP_RESET=1` (don't wipe/reseed), `SMOKE_BACKEND_PORT=8001`.
 
 For a fuller, evidence-capturing pass — environment snapshot, API route inventory, smoke test,
-full backend suite + coverage, a **data-pipeline integrity trace**, and a **real OCR round-trip** —
-run the validation harness (used for the Hard Stop 3 validation package):
+full backend suite + coverage, a **data-pipeline integrity trace**, a **real OCR round-trip**, and
+an **API latency benchmark** — run the validation harness (used for the Hard Stop 3 validation
+package):
 
 ```bash
 ./scripts/validation-run.sh            # writes artifacts to ./validation-evidence/
@@ -176,6 +177,39 @@ run the validation harness (used for the Hard Stop 3 validation package):
 
 The OCR round-trip needs `GEMINI_API_KEY` (and optionally `ANTHROPIC_API_KEY`) in `backend/.env`;
 it is skipped with a clear notice if no key is present.
+
+### Benchmarks and request logs
+
+Latency numbers come from one place, `app/core/benchmark.py`, so they stay comparable: nearest-rank
+p50/p95/p99 plus a provenance record (git SHA, host, Python, database, UTC timestamp, exact command)
+stamped onto every artifact. Database credentials are stripped from the recorded DSN.
+
+Run the API benchmark on its own against an already-running backend:
+
+```bash
+PYTHONPATH=backend python scripts/validation/api_latency_bench.py validation-evidence \
+  --requests 100 [--base-url http://localhost:8000]
+```
+
+It writes `validation-evidence/api-latency-<endpoint>.{json,txt}` — the text carries the
+human-readable header, the JSON keeps the raw samples so a later regression gate can recompute
+rather than trust the summary. It reports latency and does not enforce a budget; the asserted budget
+gate lives in `backend/tests/integration/test_reservation_availability.py` (RSK-04).
+
+The API also logs one line per request (method, route **template**, status, duration, request id).
+Set `LOG_FORMAT=json` in `backend/.env` for one JSON object per line; the default `text` keeps the
+human-readable console format. Every response carries an `X-Request-ID` header — supply your own to
+trace a specific call through the logs:
+
+```bash
+curl -i -H 'X-Request-ID: my-trace-1' localhost:8000/health
+```
+
+One limitation worth knowing: a `500` from an unhandled exception is produced by Starlette's
+`ServerErrorMiddleware`, which wraps *outside* the CORS layer. That response carries the
+`X-Request-ID` header on the wire, but cross-origin browser JavaScript cannot read it because the
+response has no `Access-Control-Allow-Origin`. Read the id from the server log or from a same-origin
+request. This is a property of the app's pre-existing error handling, not of the request logging.
 
 ---
 
@@ -212,6 +246,7 @@ Configuration is via env files (both are git-ignored; commit only the `.example`
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Token lifetime. |
 | `GEMINI_API_KEY` | Google Gemini key for receiving-document extraction (primary). |
 | `ANTHROPIC_API_KEY` | Anthropic Claude key (extraction fallback). |
+| `LOG_FORMAT` | `text` (default, human-readable) or `json` (one structured object per request line). |
 
 The AI keys are only exercised by the receiving/OCR flow — the rest of the app runs without them.
 
@@ -242,6 +277,39 @@ cd frontend && npm run build
 ./scripts/reset-db-and-seed.sh
 ```
 
+### Seeding at volume
+
+`seed_fake_data.py` takes a scale knob, so the same fixture can be grown for benchmarking. All
+arguments are forwarded through `reset-db-and-seed.sh`.
+
+```bash
+./scripts/reset-db-and-seed.sh --scale 50    # 1 200 deliveries / 3 600 lots / 400 work orders
+cd backend && ./.venv/bin/python scripts/seed_fake_data.py --help
+```
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--scale N` | `1` | Multiplies both volume axes: 24 deliveries and 8 work orders per unit |
+| `--deliveries N` | from `--scale` | Absolute delivery count, overriding `--scale` on that axis |
+| `--work-orders N` | from `--scale` | Absolute work-order count (`0` builds a lots-only corpus) |
+| `--materials M` | `6` | Size of the raw-material catalogue, for stressing per-product aggregation |
+| `--json` | off | Machine-readable summary (params, elapsed, per-table counts) |
+
+Two properties the seeder guarantees, both covered by `backend/tests/test_seed_scaling.py`:
+
+- **`--scale 1` is the demo fixture**, byte-for-byte. The e2e suite reads these exact rows, so the
+  default output is pinned by a golden-snapshot test.
+- **Scale N is a superset of scale 1.** Deliveries are generated from the row index with no RNG, so
+  re-running at a higher scale adds rows rather than conflicting with existing ones.
+
+Only the bare invocation reproduces the demo fixture — every flag in the table above changes the
+rows the e2e suite reads. `--materials` does so in **either** direction: lowering it drops materials
+from the catalogue just as surely as raising it adds them.
+
+Raising `--materials` also dilutes supply for the six materials work orders consume. Pair it with
+`--work-orders 0` or more `--deliveries`; if allocation runs short the seeder aborts before
+committing anything and names the knob to turn.
+
 ---
 
 ## Repository layout
@@ -251,7 +319,7 @@ acra_dev/
 ├── backend/            # FastAPI app (router → service → repository), Alembic, pytest
 │   ├── app/            #   main.py, core/ (config, db, security, rbac, audit), models, routers, schemas, services
 │   ├── alembic/        #   migrations (versions/)
-│   ├── scripts/        #   create_admin.py, seed_fake_data.py
+│   ├── scripts/        #   create_admin.py, seed_fake_data.py (--scale N for volume)
 │   └── tests/          #   pytest suite (+ integration/)
 ├── frontend/           # Next.js 16 App Router + shadcn/ui
 │   ├── app/            #   [locale]/ routes, api/auth/ server proxies, layout

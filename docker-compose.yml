@@ -69,6 +69,9 @@ services:
       # The origin the BROWSER sends, which is the published host port — not the internal 3000.
       # A mismatch here shows up as every XHR being CORS-blocked.
       CORS_ORIGINS: http://localhost:${ACRA_FRONTEND_PORT:-3000}
+      # Request-log format (ACR-43): "text" or "json". `docker compose logs` is the natural place
+      # to want the structured form, so it is exposed here rather than left at the code default.
+      LOG_FORMAT: ${LOG_FORMAT:-text}
       # Optional; only the OCR path needs them.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

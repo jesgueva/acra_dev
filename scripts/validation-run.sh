@@ -12,6 +12,7 @@
 #   data-pipeline-validation.log receiving -> inventory integrity trace (real HTTP)
 #   ocr-roundtrip.txt            real vision-LLM BOL extraction (skipped w/o API key)
 #   sample_bol.png               the synthetic BOL used for the OCR round-trip
+#   api-latency-*.json/.txt      per-endpoint p50/p95/p99 latency (A8-2 benchmark harness)
 #
 # Usage (from repo root):
 #   ./scripts/validation-run.sh [OUTPUT_DIR]      # default: ./validation-evidence
@@ -101,6 +102,13 @@ else
   echo "ACRA MES — real OCR round-trip SKIPPED (no GEMINI_API_KEY / ANTHROPIC_API_KEY in backend/.env)." > "$OUT/ocr-roundtrip.txt"
   echo "  OCR round-trip SKIPPED (no API key)"
 fi
+
+say "    6c  API latency benchmark"
+# Writes its own provenance-stamped artifacts via app.core.benchmark, so no hdr() wrapper here.
+( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/api_latency_bench.py" "$OUT" ) \
+  > "$OUT/api-latency-bench.log" 2>&1 \
+  && echo "  API latency benchmark captured" \
+  || { echo "  API latency benchmark FAILED (see api-latency-bench.log)"; tail -5 "$OUT/api-latency-bench.log"; }
 
 say "7/7  Done"
 kill "$BPID" 2>/dev/null; BPID=""
