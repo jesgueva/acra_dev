@@ -1,0 +1,26 @@
+# Keep the frontend build context small and free of host- or secret-specific files.
+
+# Reinstalled by `npm ci` in the deps stage — and a host node_modules is both huge and possibly
+# built for a different platform.
+node_modules/
+
+# Build output; the image builds its own.
+.next/
+out/
+
+# Test and tooling output
+coverage/
+test-results/
+playwright-report/
+blob-report/
+*.tsbuildinfo
+
+# e2e specs are not needed to build or serve the app.
+e2e/
+
+# Secrets. Only the .example template belongs in an image.
+.env.local
+.env.*.local
+!.env.local.example
+
+.DS_Store
