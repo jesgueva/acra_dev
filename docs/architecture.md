@@ -212,3 +212,49 @@ CI and the container images install from. Frontend: `frontend/package-lock.json`
 > Until ACR-42, `google-genai` and `anthropic` were the two lines in `requirements.txt` carrying a
 > `>=` range rather than a pin — and two developer virtualenvs built from that same file were
 > measured running `anthropic` **0.119.0** and **0.109.2**. Same spec, different code.
+
+## Measurement points (A8-7)
+
+`scripts/validation-run.sh` is a 6-stage evidence harness (stage 6a–6f below); this section marks
+where each stage actually sits in the system decomposition above, so a number in the A8 writeup can
+be traced back to the boundary it was taken at without reading the shell script.
+
+Same shape as the [system decomposition](#system-decomposition) diagram above, with each edge
+tagged by the stage(s) measured there:
+
+```
+┌──────────────┐   REST/JSON over HTTP   ┌─────────────────────────┐   SQLAlchemy async   ┌──────────────┐
+│ Next.js 16   │ ──────────[6a]─────────▶ │ FastAPI backend          │ ────────[6a,6f]─────▶ │ PostgreSQL 15│
+│ App Router   │                         │ router → service → repo  │                       │              │
+│ SSR + i18n   │ ◀────────────────────── │ observability.py [6c]     │ ◀─────────────────── │              │
+└──────────────┘                         │ (every route, C-01..C-09)│                       └──────────────┘
+                                          └───────────┬─────────────┘
+                                                     │ image + extraction schema
+                                                    [6b,6e]
+                                                     ▼
+                                            ┌──────────────────────┐
+                                            │ Hosted vision-LLM     │  (Gemini ↔ Claude fallback)
+                                            │ receiving-doc OCR     │
+                                            └──────────────────────┘
+```
+
+Stock-drawdown boundary — C-04/C-05, all three concurrency-control shapes, measured together as
+**[6d]**: `inventory_service.adjust_quantity` · `shipment_service.create_shipment` ·
+`allocation_service.allocate_materials` · worksheet close (ADR-02, above).
+
+| Stage | Script | Component(s) crossed | What it measures | Ticket |
+|---|---|---|---|---|
+| **6a** | `scripts/validation/pipeline_trace.py` | C-03 → C-04 → C-09, real HTTP against a live backend | Data-pipeline integrity: a receiving document lands correctly in inventory and the audit trail | — (pre-A8 harness) |
+| **6b** | `scripts/validation/ocr_roundtrip.py` | C-03, vision-LLM boundary | Real OCR round-trip vs. the recorded accuracy baseline (skipped without an API key) | A8-4 (ACR-36) |
+| **6c** | `scripts/validation/api_latency_bench.py` | Router layer, all routes, via `app/core/observability.py` + `app/core/benchmark.py` | p50/p95/p99 request latency, 5 endpoints × 100 requests | A8-2/A8-3 (ACR-43) |
+| **6d** | `scripts/validation/concurrency_bench.py` | C-04/C-05 boundary — the 4 stock-drawdown implementations named above | Correctness (lost updates, over-consumption) and goodput at 2→32 concurrent closers | A8-5 (ACR-44) |
+| **6e** | `python -m scripts.ocr_bench.run_bench` | C-03, vision-LLM boundary | Gemini vs. Claude head-to-head accuracy/latency over the 7-layout labelled corpus | A8-4 (ACR-36) |
+| **6f** | `scripts/validation/aggregation_bench.py` | C-04, `inventory_lots` / migration `015` | Indexed vs. unindexed aggregate-read cost at volume (1k→200k lots) | A8-6 (ACR-45) |
+
+`app/core/benchmark.py` (shared percentiles, provenance) and `app/core/observability.py`
+(per-request structured logging) are the two cross-cutting modules every stage above either calls
+directly (6c, 6d, 6f) or runs underneath (6a, 6b, 6e all execute inside a running backend that
+`observability.py` is instrumenting regardless). Neither appears as its own row in the
+[component map](#component-map--repository) — both live under the `core/` cross-cutting bullet in
+[Repository tree → design](#repository-tree--design) — which is why they're called out here rather
+than assigned a `C-NN` of their own.
