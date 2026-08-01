@@ -75,6 +75,9 @@ services:
       # Optional; only the OCR path needs them.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # ACR-50: set to "true" to run the receiving/OCR flow on a canned extraction result instead
+      # of calling Gemini/Claude — no API key needed. Opt-in; unset/false preserves today's behavior.
+      OCR_MOCK_MODE: ${OCR_MOCK_MODE:-false}
     ports:
       - "${ACRA_BACKEND_PORT:-8000}:8000"
     depends_on:
