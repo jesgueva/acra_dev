@@ -18,6 +18,9 @@
 #   ocr-bench/ocr-bench.json     gemini vs claude head-to-head, machine-readable (A8-4)
 #   ocr-bench/ocr-bench.md       the same comparison as a table for the writeup
 #
+# See docs/architecture.md#measurement-points-a8-7 for where each stage (6a-6f) below sits in the
+# system decomposition — which component boundary it crosses and what it measures.
+#
 # Usage (from repo root):
 #   ./scripts/validation-run.sh [OUTPUT_DIR]      # default: ./validation-evidence
 #
