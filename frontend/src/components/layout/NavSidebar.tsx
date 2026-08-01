@@ -40,8 +40,10 @@ export default function NavSidebar() {
   }
 
   async function handleLogout() {
+    // AuthGate reacts to isAuthenticated flipping false and redirects to /login itself; an
+    // explicit navigation here raced it — two navigations to the same URL, one hard one soft —
+    // and Playwright would occasionally catch the login page mid-transition (ACR-36).
     await logout();
-    window.location.href = `/${locale}/login`;
   }
 
   return (
