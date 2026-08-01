@@ -42,6 +42,23 @@ of truth, and `backend/tests/test_packaging.py` fails the build if a doc drifts 
 
 You do **not** need a local PostgreSQL install — Docker Compose provides it on host port **5433**.
 
+### Hardware assumptions
+
+Measured on a clean `docker compose up -d --build` (three images built: `acra-backend:local` ~305
+MB, `acra-frontend:local` ~223 MB, `postgres:15` ~467 MB — **~1 GB total**):
+
+- **RAM:** the four running containers together use well under 500 MB at idle (Postgres ~25 MB,
+  backend ~130 MB, frontend ~50 MB); the build itself is the real peak. **4 GB free** is comfortable;
+  budget more if Docker Desktop is also running other stacks.
+- **CPU:** no requirement beyond "a machine Docker Desktop runs on" — nothing in this repo does
+  local ML inference; OCR extraction is a hosted API call. 2 cores is enough to build and run.
+- **Disk:** ~1 GB for the three images plus whatever Docker's build cache accumulates (image layers
+  are cached between builds, so a second `--build` is much smaller).
+- **OS:** anything Docker Desktop (macOS/Windows) or native Docker Engine (Linux) supports. No
+  OS-specific application code.
+- **Network:** fully local/offline except the receiving/OCR flow, which needs outbound HTTPS to
+  reach `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` — everything else runs with no internet access.
+
 ---
 
 ## Quickstart A — Docker (whole stack, no toolchain install)
@@ -59,6 +76,62 @@ docker compose --profile seed run --rm seed     # demo data (opt-in)
 
 Open **http://localhost:3000** and sign in with a [seeded account](#seeded-demo-logins). The API is
 at **http://localhost:8000** (docs at `/docs`).
+
+<details>
+<summary><b>Expected output</b> — what a clean <code>docker compose up -d --build</code> prints (captured, not hand-written; image build logs elided)</summary>
+
+```
+ Image acra-backend:local Built
+ Image acra-backend:local Built
+ Image acra-frontend:local Built
+ Container acra-postgres Creating
+ Container acra-postgres Created
+ Container acra-migrate Creating
+ Container acra-migrate Created
+ Container acra-backend Creating
+ Container acra-backend Created
+ Container acra-frontend Creating
+ Container acra-frontend Created
+ Container acra-postgres Starting
+ Container acra-postgres Started
+ Container acra-postgres Waiting
+ Container acra-postgres Healthy
+ Container acra-migrate Starting
+ Container acra-migrate Started
+ Container acra-migrate Waiting
+ Container acra-postgres Waiting
+ Container acra-postgres Healthy
+ Container acra-migrate Exited
+ Container acra-backend Starting
+ Container acra-backend Started
+ Container acra-backend Waiting
+ Container acra-backend Healthy
+ Container acra-frontend Starting
+ Container acra-frontend Started
+```
+
+Then `docker compose ps` should show all three long-running services `Up ... (healthy)`:
+
+```
+NAME              IMAGE                 SERVICE    STATUS
+acra-backend      acra-backend:local    backend    Up (healthy)
+acra-frontend     acra-frontend:local   frontend   Up (healthy)
+acra-postgres     postgres:15           db         Up (healthy)
+```
+
+And `curl -i http://localhost:8000/health` returns:
+
+```
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"status":"ok"}
+```
+
+If your run diverges from this — a container stuck `Creating`, `migrate` never exiting, no
+`healthy` status — see [Troubleshooting](#troubleshooting) below.
+
+</details>
 
 | Service | What it does |
 |---|---|
@@ -213,6 +286,23 @@ request. This is a property of the app's pre-existing error handling, not of the
 
 ---
 
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `docker compose up` fails with a port already in use | Another worktree/stack is holding `5433`/`8000`/`3000` — common, since this repo is routinely checked out into several worktrees at once | Override the ports — see [Quickstart A](#quickstart-a--docker-whole-stack-no-toolchain-install) or [`docs/RUNBOOK.md`](docs/RUNBOOK.md#running-multiple-stacks-side-by-side) |
+| Stack is up and `healthy`, but login/API calls fail with CORS errors in the browser console | `NEXT_PUBLIC_API_URL` is baked into the frontend bundle at **build** time; if you changed `ACRA_BACKEND_PORT` and only restarted (no `--build`), the browser is still calling the old port | Re-run with `--build` after changing `ACRA_BACKEND_PORT` — a restart alone doesn't recompile the bundle |
+| `migrate` never finishes / `backend` waits on it forever | `migrate` is a one-shot job (`alembic upgrade head`, then exits) with its healthcheck explicitly disabled in `docker-compose.yml` — it should just exit, not report a health status | Check its actual outcome with `docker compose logs migrate`; it should show the container exited `0`. A non-zero exit means a real migration failure |
+| `backend` never becomes healthy / stuck waiting on `migrate` | Usually a failed migration against a stale volume from a previous, incompatible schema | `docker compose logs migrate` for the real error; if it's a schema mismatch, `docker compose down -v` (wipes the Postgres volume) and retry |
+| Receiving/OCR upload doesn't auto-fill fields, or logs a clear "skipped" notice | Expected without `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` set in `backend/.env` — the rest of the app runs fine without them | Add a key to try the real path, or treat the skip as expected — there is currently no offline/mock fallback for this flow |
+| Local (non-Docker) run: `alembic upgrade head` fails or `DATABASE_URL` errors | Postgres not running locally, wrong port (Compose Postgres is `5433`, a local install is usually `5432`), or `backend/.env` was never copied from the template | `cp backend/.env.example backend/.env` and confirm `DATABASE_URL` points at the Postgres you actually have running |
+| Frontend build fails after pulling latest `master` | Node version drift on your machine vs. the pinned version | `.nvmrc` / `frontend/.nvmrc` both pin **Node 24** (`backend/tests/test_packaging.py` asserts they stay in sync) — `nvm use` and retry |
+| `pytest --cov` passes in CI but fails your coverage floor locally | Wrong `--cov` target — the 85% floor is measured on `app.*`, not on whatever the bare command happens to cover | Use the dot-notation form from [Common commands](#common-commands): `pytest tests/ --cov=app --cov-report=term-missing` |
+
+For the full bring-up sequence and packaging shape referenced above, see [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+
+---
+
 ## Implementation status
 
 What a reader can exercise **right now** vs. what is still partial at this baseline
@@ -352,6 +442,7 @@ and [`CONTRIBUTING.md`](CONTRIBUTING.md) for branch strategy and conventions.
 | Document | What it covers |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | System decomposition, layering, repo→design map, version snapshot |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Packaging diagram, bring-up/health-check/teardown commands, running multiple stacks side by side |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branch strategy, naming, commits, tags, artifact storage, PR/CI flow |
 | [`CHANGELOG.md`](CHANGELOG.md) | Notable changes per release (Keep a Changelog) |
 | [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | Current known limitations and rough edges |
