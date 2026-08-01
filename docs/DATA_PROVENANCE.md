@@ -10,8 +10,9 @@ Everything the app runs on locally is generated, not real:
 
 - **Seed data** — `backend/scripts/seed_fake_data.py`. Deterministic: every value is arithmetic on
   a row index, no RNG, no `--seed` flag needed, so two runs with the same arguments produce the
-  same database. `--scale N` controls volume; `--scale 1` (no arguments) is the fixture the 83
-  Playwright specs assert against and must stay bit-identical. Fully redistributable — regenerate
+  same database. `--scale N` controls volume; `--scale 1` (no arguments) is the fixture the
+  Playwright suite (105 tests across 17 files) asserts against and must stay bit-identical. Fully
+  redistributable — regenerate
   it with `python scripts/seed_fake_data.py`.
 - **OCR bench corpus** — `backend/scripts/ocr_bench/`. Deterministic Pillow-rendered synthetic
   bills of lading (7 layouts: gridded, borderless/cramped, rotated, multi-page, Spanish-language,

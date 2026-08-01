@@ -47,9 +47,10 @@ You do **not** need a local PostgreSQL install — Docker Compose provides it on
 Measured on a clean `docker compose up -d --build` (three images built: `acra-backend:local` ~305
 MB, `acra-frontend:local` ~223 MB, `postgres:15` ~467 MB — **~1 GB total**):
 
-- **RAM:** the four running containers together use well under 500 MB at idle (Postgres ~25 MB,
-  backend ~130 MB, frontend ~50 MB); the build itself is the real peak. **4 GB free** is comfortable;
-  budget more if Docker Desktop is also running other stacks.
+- **RAM:** the three long-running containers together use **~220 MB at idle** — well under 500 MB
+  (Postgres ~43 MB, backend ~128 MB, frontend ~52 MB; `migrate` exits and holds nothing). The build
+  itself is the real peak. **4 GB free** is comfortable; budget more if Docker Desktop is also
+  running other stacks.
 - **CPU:** no requirement beyond "a machine Docker Desktop runs on" — nothing in this repo does
   local ML inference; OCR extraction is a hosted API call. 2 cores is enough to build and run.
 - **Disk:** ~1 GB for the three images plus whatever Docker's build cache accumulates (image layers
@@ -110,7 +111,10 @@ at **http://localhost:8000** (docs at `/docs`).
  Container acra-frontend Started
 ```
 
-Then `docker compose ps` should show all three long-running services `Up ... (healthy)`:
+Then `docker compose ps` should show all three long-running services `Up ... (healthy)`. **Give it a
+few seconds** — `up -d` returns as soon as the containers are started, so running `ps` immediately
+after usually catches the frontend at `(health: starting)`. That is the expected intermediate state,
+not a failure:
 
 ```
 NAME              IMAGE                 SERVICE    STATUS
