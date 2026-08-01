@@ -10,11 +10,15 @@ FINDING rows are defects this trace surfaced and the package logs honestly;
 they are verified deterministically but reported separately, not as pass/fail.
 Exit code 0 only if every CHECK passes.
 """
+import os
 import sys
 import json
 import httpx
 
-BASE = "http://localhost:8000"
+# Matches api_latency_bench.py / ocr_roundtrip.py, which already read this. Hardcoding the port meant
+# validation-run.sh could move its throwaway backend and this trace would keep measuring :8000 —
+# whatever happened to be listening there.
+BASE = os.environ.get("ACRA_API_BASE") or "http://localhost:8000"
 checks, findings = [], []
 
 
