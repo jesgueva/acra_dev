@@ -35,6 +35,7 @@ from tests.test_privilege_parity import (
     AUTHENTICATED,
     enforced_privileges,
     frontend_referenced_privileges,
+    requires_frontend,
 )
 
 DATABASE_URL = os.getenv(
@@ -55,6 +56,11 @@ async def _migration_granted_privileges() -> set[str]:
     return privileges
 
 
+# One half of `used` is read out of `frontend/src/lib/privileges.ts`, which is not in the backend
+# image. Without this the test reports a FileNotFoundError there rather than skipping — and it
+# cannot simply drop the frontend half, since a privilege referenced only by a `PrivilegeGate`
+# would then read as an orphaned grant.
+@requires_frontend
 async def test_no_orphaned_migration_grants():
     used = enforced_privileges() | frontend_referenced_privileges()
     granted = await _migration_granted_privileges()

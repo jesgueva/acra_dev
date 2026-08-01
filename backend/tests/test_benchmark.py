@@ -270,16 +270,38 @@ def test_redact_command_keeps_an_ipv6_literal_bracketed():
 # RunMetadata
 
 
+def _git_can_answer() -> bool:
+    """Whether `git` can resolve a working tree here — the exact precondition `capture()` needs.
+
+    The backend image is built from `backend/` alone and ships no `.git`, so this is False inside
+    the container. Probing git itself rather than testing for a `.git` path also covers git not
+    being installed at all, which is the actual situation there.
+    """
+    try:
+        subprocess.run(["git", "rev-parse", "--git-dir"], capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return True
+
+
+GIT_CAN_ANSWER = _git_can_answer()
+
+
 def test_metadata_capture_records_provenance(monkeypatch):
     monkeypatch.setenv(
         "DATABASE_URL", "postgresql+asyncpg://postgres:hunter2@localhost:5435/acra_db"
     )
     meta = RunMetadata.capture(scale=10)
 
-    # Not just "non-empty" — the _UNKNOWN sentinel is itself a non-empty string, so a truthiness
-    # check cannot tell a captured SHA from git having failed outright.
-    assert meta.git_sha != "unknown", "provenance must be a real SHA, not the failure sentinel"
-    assert all(c in "0123456789abcdef" for c in meta.git_sha)
+    if GIT_CAN_ANSWER:
+        # Not just "non-empty" — the _UNKNOWN sentinel is itself a non-empty string, so a truthiness
+        # check cannot tell a captured SHA from git having failed outright.
+        assert meta.git_sha != "unknown", "provenance must be a real SHA, not the failure sentinel"
+        assert all(c in "0123456789abcdef" for c in meta.git_sha)
+    else:
+        # Asserted rather than skipped: where git cannot answer, falling back to the sentinel *is*
+        # the contract, and a bogus SHA invented here would be worse than no SHA.
+        assert meta.git_sha == "unknown", "absent git must yield the sentinel, not a fabricated SHA"
     assert meta.captured_at.endswith("+00:00"), "timestamp must be explicit UTC"
     assert meta.python_version.count(".") == 2
     assert meta.database == "localhost:5435/acra_db"
