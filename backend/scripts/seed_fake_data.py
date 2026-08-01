@@ -79,6 +79,7 @@ ROLE_DEFINITIONS: dict[str, dict[str, object]] = {
             "deliveries.view",
             "inventory.view",
             "inventory.adjust",
+            "inventory.reserve",
             "work_orders.view",
             "work_orders.create",
             "work_orders.assign",
@@ -87,6 +88,7 @@ ROLE_DEFINITIONS: dict[str, dict[str, object]] = {
             "work_orders.allocate",
             "users.manage",
             "audit.view",
+            "master_data.view",
             "master_data.manage",
             "production.worksheet.view",
             "production.worksheet.create",
@@ -111,6 +113,7 @@ ROLE_DEFINITIONS: dict[str, dict[str, object]] = {
         "privileges": {
             "authenticated",
             "inventory.view",
+            "inventory.reserve",
             "shipping.view",
             "work_orders.view",
             "work_orders.create",
