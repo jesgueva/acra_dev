@@ -65,7 +65,8 @@ docker compose --profile seed run --rm seed
 ```bash
 curl -i http://localhost:8000/health         # backend — expect 200 {"status":"ok"}
 curl -i http://localhost:3000/en/login       # frontend — expect 200 (unprefixed "/" redirects to "/en/...")
-docker compose ps                        # all services should read "healthy", not just "Up"
+docker compose ps                            # db/backend/frontend should read "healthy"; migrate
+                                              # has no health status (disabled) and shows Exited(0)
 ```
 
 ## Logs
