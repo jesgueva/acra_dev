@@ -91,6 +91,10 @@ acra_dev/
 computational methods, `alembic/versions/` ↔ the migration design, `frontend/app/[locale]/` ↔ the
 operator surfaces.
 
+The `docker-compose.yml` bring-up sequence shown above is expanded into a packaging diagram and a
+day-2 runbook (health checks, teardown, running multiple stacks side by side) in
+[`docs/RUNBOOK.md`](RUNBOOK.md).
+
 ## Phase 2 direction (where the next sprint lands)
 
 The realignment replaces the lot-centric inventory model with an **append-only `StockMovement`
