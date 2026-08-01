@@ -24,11 +24,11 @@ MIGRATIONS_DIR = _BACKEND / "alembic" / "versions"
 # deliberately not a row in the table (see `app/core/rbac.py`).
 _SENTINEL_PRIVILEGES = {"authenticated"}
 
-# Privileges enforced by a router that no migration grants. Same defect as ACR-35, different
-# privilege: `master_data.*` is required by routers/contacts.py and routers/products.py but seeded
-# only by scripts/seed_fake_data.py, so contacts and products 403 on a migrations-only database.
-# Tracked separately — deliberately out of ACR-35's scope rather than silently widened into it.
-_UNSEEDED_KNOWN_GAPS = {"master_data.view", "master_data.manage"}
+# Privileges enforced by a router that no migration grants, and deliberately not yet fixed.
+# `master_data.view` / `master_data.manage` lived here until A10-5's migration `016` closed that
+# gap (ACR-40) — kept empty, not deleted, so the next real gap has a place to land and this test's
+# "assert none of the allowlist is seeded" guard still has something to prove.
+_UNSEEDED_KNOWN_GAPS: set[str] = set()
 
 # The mapping migration 013 seeds, restated rather than imported so a bad edit there fails here.
 EXPECTED_SHIPPING_GRANTS = {

@@ -319,7 +319,7 @@ acra_dev/
 ├── backend/            # FastAPI app (router → service → repository), Alembic, pytest
 │   ├── app/            #   main.py, core/ (config, db, security, rbac, audit), models, routers, schemas, services
 │   ├── alembic/        #   migrations (versions/)
-│   ├── scripts/        #   create_admin.py, seed_fake_data.py (--scale N for volume)
+│   ├── scripts/        #   seed_fake_data.py (--scale N for volume)
 │   └── tests/          #   pytest suite (+ integration/)
 ├── frontend/           # Next.js 16 App Router + shadcn/ui
 │   ├── app/            #   [locale]/ routes, api/auth/ server proxies, layout
