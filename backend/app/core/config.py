@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     # failure before falling back to Claude, so Flash stays the default until the key has Pro quota.
     gemini_model: str = "gemini-2.5-flash"
     anthropic_model: str = "claude-sonnet-4-6"
+    # Skip both vision-LLM providers and return a canned extraction result instead. Opt-in so the
+    # receiving/OCR flow is runnable end-to-end (demos, CI, a clean clone) without provisioning
+    # GEMINI_API_KEY/ANTHROPIC_API_KEY — never the default, so production behavior is unaffected.
+    ocr_mock_mode: bool = False
     # Browser origins allowed to call this API, comma-separated. The default is the frontend's
     # documented dev port; override it to run the stack anywhere else (a second worktree, an e2e
     # run on a free port, a deployed environment) without editing code.
