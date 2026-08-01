@@ -20,9 +20,15 @@ frontend/coverage/
 *.tsbuildinfo
 
 # Environment
+# Catch-all rather than a list: `.env`, `.env.local` and `.env.*.local` left siblings like
+# `.env.backup` / `.env.a8-backup` untracked but NOT ignored, so they sat in `git status` as `??`
+# holding live GEMINI_API_KEY / ANTHROPIC_API_KEY values — one `git add -A` away from committing
+# real secrets to a public repo. That is RSK-08 / KI-03's exact scenario, and a naming convention
+# is not a control. The `!` lines keep the templates a clean clone needs.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.*.example
 
 # OS
 .DS_Store
