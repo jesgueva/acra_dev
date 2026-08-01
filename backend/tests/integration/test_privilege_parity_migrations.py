@@ -20,7 +20,10 @@ revoking a privilege granted by an *earlier* migration. Reading `role_privilege_
 A locally-seeded dev database also has ``scripts/seed_fake_data.py``'s grants layered on top of
 the migrations' own. That's fine: ``test_privilege_parity.py`` already asserts every seed grant
 corresponds to something enforced or frontend-referenced, so any extra rows a seeded database adds
-here are already known-good and cannot produce a false "orphaned grant" failure.
+here are already known-good and cannot produce a false "orphaned grant" failure — with one
+exception, handled explicitly below: ``ensure_role_privileges`` seeds ``"authenticated"`` as a
+literal row per role (it iterates each role's whole privilege set, sentinel included), even though
+it is never a real grant a router looks up (see ``AUTHENTICATED`` in ``test_privilege_parity.py``).
 """
 import os
 
@@ -28,7 +31,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.models.user import RolePrivilegeAssignment
-from tests.test_privilege_parity import enforced_privileges, frontend_referenced_privileges
+from tests.test_privilege_parity import (
+    AUTHENTICATED,
+    enforced_privileges,
+    frontend_referenced_privileges,
+)
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -41,9 +48,11 @@ async def _migration_granted_privileges() -> set[str]:
     try:
         async with engine.connect() as conn:
             result = await conn.execute(select(RolePrivilegeAssignment.privilege_name).distinct())
-            return {row[0] for row in result}
+            privileges = {row[0] for row in result}
     finally:
         await engine.dispose()
+    privileges.discard(AUTHENTICATED)
+    return privileges
 
 
 async def test_no_orphaned_migration_grants():
