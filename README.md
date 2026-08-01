@@ -8,9 +8,13 @@ access control, an append-only audit trail, and a bilingual (EN/ES) UI.
 This is a **monorepo**: a FastAPI backend, a Next.js frontend, and a PostgreSQL database, with
 Docker Compose for local infrastructure.
 
-> **Status:** Phase 2 engineering baseline (`v0.2.0-sprint1-baseline`). The Phase 1 feature
-> surface is merged and CI-gated; Phase 2 realigns inventory onto an append-only `StockMovement`
-> ledger (see [`docs/architecture.md`](docs/architecture.md)).
+> **Status:** Phase 2, past the midpoint. The Phase 1 feature surface is merged and CI-gated, and
+> the concurrency, scale and extraction-accuracy evidence is captured. Phase 2 still has to realign
+> inventory onto an append-only `StockMovement` ledger, which remains a stub (see
+> [`docs/architecture.md`](docs/architecture.md) and KI-04 in
+> [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md)). The most recent tags — `v0.2.0-sprint1-baseline`,
+> `v0.2.1-validation` — are historical checkpoints; `master` is well past both, so cite a commit
+> rather than a tag when you need a fixed point.
 
 ---
 
@@ -301,7 +305,7 @@ request. This is a property of the app's pre-existing error handling, not of the
 | Stack is up and `healthy`, but login/API calls fail with CORS errors in the browser console | `NEXT_PUBLIC_API_URL` is baked into the frontend bundle at **build** time; if you changed `ACRA_BACKEND_PORT` and only restarted (no `--build`), the browser is still calling the old port | Re-run with `--build` after changing `ACRA_BACKEND_PORT` — a restart alone doesn't recompile the bundle |
 | `migrate` never finishes / `backend` waits on it forever | `migrate` is a one-shot job (`alembic upgrade head`, then exits) with its healthcheck explicitly disabled in `docker-compose.yml` — it should just exit, not report a health status | Check its actual outcome with `docker compose logs migrate`; it should show the container exited `0`. A non-zero exit means a real migration failure |
 | `backend` never becomes healthy / stuck waiting on `migrate` | Usually a failed migration against a stale volume from a previous, incompatible schema | `docker compose logs migrate` for the real error; if it's a schema mismatch, `docker compose down -v` (wipes the Postgres volume) and retry |
-| Receiving/OCR upload doesn't auto-fill fields, or logs a clear "skipped" notice | Expected without `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` set in `backend/.env` — the rest of the app runs fine without them | Add a key to try the real path, or treat the skip as expected — there is currently no offline/mock fallback for this flow |
+| Receiving/OCR upload doesn't auto-fill fields, or logs a clear "skipped" notice | Expected without `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` — the rest of the app runs fine without them | Set **`OCR_MOCK_MODE=true`** to run the flow end to end on a canned extraction with no key and no network call (see [Running OCR without an API key](#running-ocr-without-an-api-key)), or add a real key to exercise the providers |
 | Local (non-Docker) run: `alembic upgrade head` fails or `DATABASE_URL` errors | Postgres not running locally, wrong port (Compose Postgres is `5433`, a local install is usually `5432`), or `backend/.env` was never copied from the template | `cp backend/.env.example backend/.env` and confirm `DATABASE_URL` points at the Postgres you actually have running |
 | Frontend build fails after pulling latest `master` | Node version drift on your machine vs. the pinned version | `.nvmrc` / `frontend/.nvmrc` both pin **Node 24** (`backend/tests/test_packaging.py` asserts they stay in sync) — `nvm use` and retry |
 | `pytest --cov` passes in CI but fails your coverage floor locally | Wrong `--cov` target — the 85% floor is measured on `app.*`, not on whatever the bare command happens to cover | Use the dot-notation form from [Common commands](#common-commands): `pytest tests/ --cov=app --cov-report=term-missing` |
@@ -312,8 +316,9 @@ For the full bring-up sequence and packaging shape referenced above, see [`docs/
 
 ## Implementation status
 
-What a reader can exercise **right now** vs. what is still partial at this baseline
-(`v0.2.0-sprint1-baseline`). Re-verified end to end on 2026-06-23 via `scripts/validation-run.sh`.
+What a reader can exercise **right now** vs. what is still partial. Re-verified on 2026-08-01 at
+commit `8490fd0` by a clean-clone reproducibility pass (clone → `up --build` → seed → suite → login),
+and by `scripts/validation-run.sh` for the measured evidence.
 
 | Capability | State | Notes |
 |---|---|---|
@@ -322,7 +327,7 @@ What a reader can exercise **right now** vs. what is still partial at this basel
 | Inventory (filter / adjust / split / move / CSV / alerts / trace) | ✅ Live (UI + API) | On-hand stored as integer ×100; per-lot transaction log. |
 | Master data (contacts, products), Dashboard | ✅ Live (UI + API) | |
 | Work Orders (incl. SERIALIZABLE FIFO allocation), Users, Audit-log read | ⚙️ Backend complete, **UI placeholder** | Endpoints + tests exist; pages render "Coming Soon"; nav links commented out. |
-| Shipments | ⚙️ Backend complete, **not reachable** | Endpoints + UI exist, but `shipping.*` privileges are unseeded → 403 for all roles (KI-08). |
+| Shipments | ✅ Live (UI + API) | Migration `013_shipping_privileges` seeds `shipping.view` / `shipping.create` and the Shipping nav link is surfaced to holders (KI-08 **resolved**, ACR-35). `tests/test_shipping_privileges.py` now fails if any router enforces a privilege no migration grants. |
 | StockMovement ledger (C-04); Production / Forklift worksheets (C-06 / C-07) | 🚧 Phase-2 stub | Ledger model/service/router are placeholders (`501` / `NotImplementedError`, KI-04); inventory still runs on the Phase-1 lot model. |
 
 Known rough edges are tracked in [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) and [`docs/RISK_LOG.md`](docs/RISK_LOG.md).
