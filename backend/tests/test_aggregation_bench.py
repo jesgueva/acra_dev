@@ -21,6 +21,15 @@ def _load_bench_module():
     tests/<this file> -> tests -> backend -> repo root.
     """
     path = Path(__file__).resolve().parents[2] / "scripts" / "validation" / "aggregation_bench.py"
+    if not path.is_file():
+        # The backend image is built from `backend/` alone, so the repo-root `scripts/` tree is not
+        # in the container. That is a packaging boundary, not a broken test — skip the module the way
+        # `test_packaging.py`'s `requires_repo_root` does. Raising here fails *collection*, which
+        # takes the whole suite down rather than this file.
+        pytest.skip(
+            "repo-root scripts/validation/ not available (running from the backend image)",
+            allow_module_level=True,
+        )
     spec = importlib.util.spec_from_file_location("acra_aggregation_bench", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
