@@ -34,7 +34,7 @@ condition is met.
        │ service_healthy
        ▼
 ┌──────────────┐   image: acra-frontend:local
-│ acra-frontend│   Next.js standalone server, healthcheck: curl /
+│ acra-frontend│   Next.js standalone server, healthcheck: curl /en/login
 └──────────────┘
 
 ┌──────────────┐   image: acra-backend:local        profile: seed (opt-in only,
@@ -63,8 +63,8 @@ docker compose --profile seed run --rm seed
 ## Health checks
 
 ```bash
-curl -i http://localhost:8000/health     # backend — expect 200 {"status":"ok"}
-curl -i http://localhost:3000            # frontend — expect 200
+curl -i http://localhost:8000/health         # backend — expect 200 {"status":"ok"}
+curl -i http://localhost:3000/en/login       # frontend — expect 200 (unprefixed "/" redirects to "/en/...")
 docker compose ps                        # all services should read "healthy", not just "Up"
 ```
 
