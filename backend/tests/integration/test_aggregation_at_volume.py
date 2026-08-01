@@ -14,8 +14,9 @@ that plan scales. A mocked session proves none of it. These tests seed ten thous
 
 Requires a running PostgreSQL with migrations applied — same contract as `tests/test_schema.py`.
 Everything created here is tagged so teardown removes exactly its own rows: lots by
-`storage_location = 'A86-IT'`, products by an `A86-IT` name prefix, and reservations — which have
-no `storage_location` column — by the sentinel `production_worksheet_line_id = -87`.
+`storage_location = 'A86-IT'`, products and the fixture user by an `A86-IT` name prefix, and
+reservations — which have no `storage_location` column — by the sentinel
+`production_worksheet_line_id = -87`.
 
 The seed is an async context manager rather than a pytest fixture on purpose: an async fixture is
 torn down in a different event loop than the test body, which breaks asyncpg with MissingGreenlet.
@@ -103,8 +104,18 @@ async def seeded_volume():
     engine = create_async_engine(DATABASE_URL)
     session = AsyncSession(engine, expire_on_commit=False)
     product_id = None
+    user_id = None
     try:
-        user_id = await session.scalar(text("SELECT id FROM users ORDER BY id LIMIT 1"))
+        user_id = await session.scalar(
+            text(
+                "INSERT INTO users (username, password_hash, full_name, status)"
+                " VALUES (:username, 'not-used', :full_name, 'active') RETURNING id"
+            ),
+            {
+                "username": f"{TAG.lower()}-{time.time_ns()}",
+                "full_name": f"{TAG} Fixture User",
+            },
+        )
         product_id = await session.scalar(
             text("INSERT INTO products (name, category) VALUES (:n, 'raw') RETURNING id"),
             {"n": f"{TAG} Fixture Item"},
@@ -180,8 +191,12 @@ async def seeded_volume():
 
         yield {"session": session, "product_id": product_id, "user_id": user_id}
     finally:
+        await session.rollback()
         if product_id is not None:
-            await session.rollback()
+            await session.execute(
+                text("DELETE FROM low_stock_alerts WHERE product_id = :pid"),
+                {"pid": product_id},
+            )
             await session.execute(
                 text("DELETE FROM stock_reservations WHERE production_worksheet_line_id = :m"),
                 {"m": BENCH_LINE_MARKER},
@@ -192,6 +207,9 @@ async def seeded_volume():
             await session.execute(
                 text("DELETE FROM products WHERE name LIKE :p"), {"p": f"{TAG} %"}
             )
+        if user_id is not None:
+            await session.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": user_id})
+        if product_id is not None or user_id is not None:
             await session.commit()
         await session.close()
         await engine.dispose()
