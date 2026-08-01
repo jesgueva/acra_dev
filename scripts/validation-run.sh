@@ -150,6 +150,16 @@ else
   echo "  provider comparison SKIPPED (needs BOTH GEMINI_API_KEY and ANTHROPIC_API_KEY)"
 fi
 
+say "    6f  Aggregation benchmark at volume (A8-6)"
+# Also self-provenanced, so no hdr() wrapper. A reduced sweep: the committed evidence run goes to
+# 200 000 lots, which takes several minutes and is not what a validation pass is for. Everything
+# the benchmark creates is tagged and torn down, and its index state is restored on the way out.
+( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/aggregation_bench.py" "$OUT" \
+    --lot-steps 1000,10000 --samples 50 ) \
+  > "$OUT/aggregation-bench.log" 2>&1 \
+  && echo "  Aggregation benchmark captured" \
+  || { echo "  Aggregation benchmark FAILED (see aggregation-bench.log)"; tail -5 "$OUT/aggregation-bench.log"; }
+
 say "7/7  Done"
 kill "$BPID" 2>/dev/null; BPID=""
 rm -f "$OUT/.reseed.log" "$OUT/.backend.log"

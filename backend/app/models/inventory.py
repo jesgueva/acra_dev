@@ -1,6 +1,6 @@
 from enum import Enum
 
-from sqlalchemy import CheckConstraint, Column, ForeignKey, Integer, String, TIMESTAMP
+from sqlalchemy import CheckConstraint, Column, ForeignKey, Index, Integer, String, TIMESTAMP
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -62,6 +62,19 @@ class InventoryLot(Base):
             name="ck_inventory_lots_status",
         ),
         CheckConstraint("quantity_on_hand >= 0", name="ck_inventory_lots_qty"),
+        # RSK-04 — covers the `product_id = ? AND status = ?` on-hand aggregation, with
+        # `quantity_on_hand` carried in the index leaf so the SUM is served index-only and never
+        # touches the heap. Measured in ACR-45 (A8-6): 14.134 ms -> 0.029 ms of server-side
+        # execution time at 200 000 lots, Seq Scan -> Index Only Scan, with the indexed cost flat
+        # across the whole 1k/10k/50k/200k sweep.
+        # Created in migration 015; declared here so the ORM and the database agree, the same way
+        # `StockReservation` declares `ix_stock_reservations_item_state`.
+        Index(
+            "ix_inventory_lots_item_state",
+            "product_id",
+            "status",
+            postgresql_include=["quantity_on_hand"],
+        ),
     )
 
 
