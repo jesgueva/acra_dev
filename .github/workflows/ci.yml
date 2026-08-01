@@ -104,6 +104,8 @@ jobs:
       ACRA_MIGRATE_CONTAINER: acra-migrate-ci-e2e
       ACRA_BACKEND_CONTAINER: acra-backend-ci-e2e
       ACRA_FRONTEND_CONTAINER: acra-frontend-ci-e2e
+      # ACR-50: run the OCR e2e spec for real (no client-side stub) without provisioning secrets.
+      OCR_MOCK_MODE: "true"
 
     steps:
       - uses: actions/checkout@v4

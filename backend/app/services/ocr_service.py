@@ -8,6 +8,9 @@ Both model IDs are configuration, not constants, so a swap does not require a co
 A8-4 comparison bench can report the model that actually ran.
 
 Both providers receive the raw file bytes (JPEG, PNG, or PDF) encoded as base64.
+
+`settings.ocr_mock_mode` (ACR-50) short-circuits both providers with a canned response — see
+`_mock_response()` — so the receiving flow is runnable without API keys.
 """
 
 from __future__ import annotations
@@ -213,10 +216,42 @@ def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
 
 
 # ---------------------------------------------------------------------------
+# Offline/mock mode (ACR-50 / A10-2)
+# ---------------------------------------------------------------------------
+
+def _mock_response() -> OCRResponse:
+    """A canned extraction, used when `settings.ocr_mock_mode` is on.
+
+    Field values mirror the `GRIDDED` layout in `backend/scripts/ocr_bench/ground_truth.py`
+    (duplicated here, not imported — `ocr_bench/__init__.py` states the app must never import that
+    package, since none of it is meant to ship in the request path). The one committed fixture,
+    `backend/tests/fixtures/ocr/sample_bol_gridded.png`, is the matching image to upload against it.
+    Content is ignored entirely in mock mode; every upload gets this same response.
+    """
+    return OCRResponse(
+        supplier="Acme Steel Supply Co.",
+        carrier="Iberia Logistics S.L.",
+        bol_reference="BOL-2026-0623",
+        delivery_date="2026-06-23",
+        items=[
+            OCRItemResult(item_name="Galvanized Steel Sheet", description=None, quantity=1000.0, pallets=5, units_per_pallet=200),
+            OCRItemResult(item_name="Aluminum Coil 1050", description=None, quantity=450.0, pallets=3, units_per_pallet=150),
+            OCRItemResult(item_name="Copper Wire Spool", description=None, quantity=1000.0, pallets=2, units_per_pallet=500),
+        ],
+        confidence=1.0,
+        header_fill_rate=1.0,
+        provider="mock",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def process_image_bytes(file_bytes: bytes, content_type: str) -> OCRResponse:
+    if settings.ocr_mock_mode:
+        return _mock_response()
+
     try:
         result = _extract_with_gemini(file_bytes, content_type)
         if result.confidence > 0.0:

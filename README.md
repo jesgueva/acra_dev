@@ -221,7 +221,7 @@ What a reader can exercise **right now** vs. what is still partial at this basel
 | Capability | State | Notes |
 |---|---|---|
 | Auth (JWT) + RBAC + EN/ES i18n | ✅ Live (UI + API) | Anonymous reads rejected (401/403); privileges resolved per request. |
-| Receiving + AI OCR (Gemini → Claude) | ✅ Live (UI + API) | BOL upload auto-fills the form; duplicate-BOL guard; pallet × units leftover reconciliation. |
+| Receiving + AI OCR (Gemini → Claude) | ✅ Live (UI + API) | BOL upload auto-fills the form; duplicate-BOL guard; pallet × units leftover reconciliation; runnable with no API key via `OCR_MOCK_MODE` (see Environment below). |
 | Inventory (filter / adjust / split / move / CSV / alerts / trace) | ✅ Live (UI + API) | On-hand stored as integer ×100; per-lot transaction log. |
 | Master data (contacts, products), Dashboard | ✅ Live (UI + API) | |
 | Work Orders (incl. SERIALIZABLE FIFO allocation), Users, Audit-log read | ⚙️ Backend complete, **UI placeholder** | Endpoints + tests exist; pages render "Coming Soon"; nav links commented out. |
@@ -246,9 +246,19 @@ Configuration is via env files (both are git-ignored; commit only the `.example`
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Token lifetime. |
 | `GEMINI_API_KEY` | Google Gemini key for receiving-document extraction (primary). |
 | `ANTHROPIC_API_KEY` | Anthropic Claude key (extraction fallback). |
+| `OCR_MOCK_MODE` | `true`/`false` (default `false`). See "Running OCR without an API key" below. |
 | `LOG_FORMAT` | `text` (default, human-readable) or `json` (one structured object per request line). |
 
 The AI keys are only exercised by the receiving/OCR flow — the rest of the app runs without them.
+
+#### Running OCR without an API key
+
+Set `OCR_MOCK_MODE=true` (`backend/.env`, or `OCR_MOCK_MODE=true docker compose up -d` for the
+containerized stack) and the receiving/OCR endpoint returns a canned extraction result instead of
+calling Gemini/Claude — no key needed, no network call made. Upload
+[`backend/tests/fixtures/ocr/sample_bol_gridded.png`](backend/tests/fixtures/ocr/sample_bol_gridded.png)
+on the Receiving page to see it end-to-end; every upload gets the same response regardless of
+content. Leave it unset/`false` to use the real providers.
 
 ### `frontend/.env.local` — copy from [`frontend/.env.local.example`](frontend/.env.local.example)
 

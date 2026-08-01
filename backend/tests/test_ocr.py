@@ -11,6 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.main import app
@@ -349,3 +350,89 @@ async def test_ocr_endpoint_without_privilege_returns_403():
         assert resp.status_code == 403
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+# ── ACR-50 / A10-2: offline/mock mode ──────────────────────────────────────
+
+def test_ocr_mock_mode_defaults_to_off():
+    """Negative control: mock mode must be opt-in, never the default."""
+    assert settings.ocr_mock_mode is False
+
+
+def test_ocr_service_mock_mode_returns_canned_response_without_calling_providers():
+    with (
+        patch.object(settings, "ocr_mock_mode", True),
+        patch("app.services.ocr_service._get_gemini_client") as gemini_client,
+        patch("app.services.ocr_service._get_anthropic_client") as claude_client,
+    ):
+        result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
+
+    assert result.provider == "mock"
+    assert result.supplier == "Acme Steel Supply Co."
+    assert result.bol_reference == "BOL-2026-0623"
+    assert result.confidence == 1.0
+    assert len(result.items) == 3
+    assert result.items[0].item_name == "Galvanized Steel Sheet"
+    gemini_client.assert_not_called()
+    claude_client.assert_not_called()
+
+
+def test_ocr_mock_mode_ignores_upload_content():
+    """Mock mode is deterministic regardless of what was actually uploaded."""
+    with patch.object(settings, "ocr_mock_mode", True):
+        result_jpeg = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
+        result_pdf = ocr_service.process_image_bytes(b"%PDF-1.4", "application/pdf")
+
+    assert result_jpeg == result_pdf
+
+
+@pytest.mark.asyncio
+async def test_ocr_endpoint_mock_mode_returns_200_without_api_keys():
+    """The end-to-end case this ticket exists for: no keys configured, mock mode on, still 200."""
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session(privileges=("deliveries.create",))
+
+    with (
+        patch.object(settings, "ocr_mock_mode", True),
+        patch.object(settings, "gemini_api_key", ""),
+        patch.object(settings, "anthropic_api_key", ""),
+        patch("app.services.ocr_service._get_gemini_client") as gemini_client,
+        patch("app.services.ocr_service._get_anthropic_client") as claude_client,
+    ):
+        app.dependency_overrides[get_db] = _override(session)
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+                resp = await client.post(
+                    "/api/v1/deliveries/ocr",
+                    files={"file": ("bol.jpg", _small_jpeg_bytes(), "image/jpeg")},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["provider"] == "mock"
+            assert body["supplier"] == "Acme Steel Supply Co."
+            assert len(body["items"]) == 3
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+    gemini_client.assert_not_called()
+    claude_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ocr_endpoint_mock_mode_still_enforces_rbac():
+    """Mock mode is a service-layer branch below the router — RBAC is unaffected."""
+    token = create_access_token(user_id=1)
+    session = _make_rbac_session(privileges=("deliveries.view",))
+
+    with patch.object(settings, "ocr_mock_mode", True):
+        app.dependency_overrides[get_db] = _override(session)
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+                resp = await client.post(
+                    "/api/v1/deliveries/ocr",
+                    files={"file": ("bol.jpg", _small_jpeg_bytes(), "image/jpeg")},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            assert resp.status_code == 403
+        finally:
+            app.dependency_overrides.pop(get_db, None)
