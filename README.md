@@ -159,7 +159,8 @@ docker compose down -v                # stop and wipe the database volume
 ./scripts/compose-smoke.sh            # assert the containerized stack end to end
 ```
 
-\* Expect **`630 passed, 25 skipped`** (verified 2026-08-01 at `8a52c25`). This is lower than the
+\* Expect **`630 passed, 25 skipped`** (verified 2026-08-01 at `8490fd0`, reproduced from a clean
+clone). This is lower than the
 ~710 a checkout collects, and that difference is the packaging boundary rather than a problem: the
 backend image is built from `backend/` alone, so anything outside that directory is not in it —
 `.nvmrc`, `frontend/package.json`, `.github/workflows/ci.yml`, `frontend/Dockerfile`, the
