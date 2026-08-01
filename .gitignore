@@ -38,6 +38,11 @@ Thumbs.db
 # Validation harness output (scripts/validation-run.sh)
 validation-evidence/
 
+# Ticket plan files (plans/plan_ticket_N.md) are review scratch space, deleted once a ticket
+# ships — see CONTRIBUTING.md. Files already committed before this rule (plans/plan_ticket_*.md,
+# plans/plan_a8_a10_readiness.md) are unaffected: an ignore rule never untracks a tracked file.
+plans/
+
 # Playwright (e2e specs are tracked; run output is not)
 frontend/test-results/
 frontend/playwright-report/
