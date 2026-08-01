@@ -210,6 +210,161 @@ def test_run_paces_requests_when_delay_is_set(tmp_path, monkeypatch, no_sleep):
     assert no_sleep == [13.0] * (len(CORPUS) - 1)
 
 
+# ---------------------------------------------------------------------------
+# Bounding the retries (A8 / RU-08): an exhausted quota must cost minutes, not hours
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_clock(monkeypatch):
+    """A clock that advances only when the code sleeps.
+
+    `no_sleep` stubs `sleep` but leaves `perf_counter` real, so wall-clock time never moves and a
+    wall-clock budget can never trip — every assertion below would pass vacuously. Tying the two
+    together is what makes these tests capable of failing.
+    """
+    now = {"t": 0.0}
+    monkeypatch.setattr(run_bench.time, "perf_counter", lambda: now["t"])
+    monkeypatch.setattr(run_bench.time, "sleep", lambda s: now.__setitem__("t", now["t"] + s))
+    return now
+
+
+def test_doc_budget_refuses_a_retry_it_cannot_afford(tmp_path, fake_clock):
+    """The budget is checked against the delay we are ABOUT to sleep, not the time already spent.
+
+    Sleeping 22s only to discover we are over budget wastes exactly what the budget protects.
+    """
+    spec = BY_LAYOUT["gridded"]
+    path = tmp_path / "doc.png"
+    path.write_bytes(b"x")
+    calls = {"n": 0}
+
+    def extractor(payload, mime):
+        calls["n"] += 1
+        raise _Boom(_RATE_LIMIT_MESSAGE)  # retryDelay 21s -> 22s per wait
+
+    score = run_bench.score_one(
+        spec, path, "gemini", extractor, max_retries=4, doc_budget_s=30.0, verbose=False
+    )
+
+    # One retry fits (0 + 22 <= 30); the second does not (22 + 22 > 30), so it stops at 2 attempts
+    # rather than burning all four.
+    assert calls["n"] == 2
+    assert fake_clock["t"] == 22.0
+    assert "budget" in score.error
+
+
+def test_budget_exhaustion_is_recorded_as_an_error_not_a_zero_score(tmp_path, fake_clock):
+    """The whole point: a quota failure must not drag the accuracy average down.
+
+    Scoring 429s as bad extractions is what made the first live run report gemini at 0.483 F1.
+    """
+    spec = BY_LAYOUT["gridded"]
+    path = tmp_path / "doc.png"
+    path.write_bytes(b"x")
+
+    good = run_bench.score_one(
+        spec, path, "gemini", lambda p, m: _extraction(spec), verbose=False
+    )
+    starved = run_bench.score_one(
+        spec,
+        path,
+        "gemini",
+        lambda p, m: (_ for _ in ()).throw(_Boom(_RATE_LIMIT_MESSAGE)),
+        doc_budget_s=0.0,
+        verbose=False,
+    )
+
+    corpus = scoring.score_corpus([good, starved])
+
+    assert len(corpus.succeeded) == 1 and len(corpus.failed) == 1
+    # Accuracy is identical with and without the starved document — it is excluded, not averaged in.
+    assert corpus.header_accuracy == scoring.score_corpus([good]).header_accuracy
+
+
+def test_arm_is_abandoned_after_consecutive_failures(tmp_path, monkeypatch, fake_clock):
+    """Quota exhaustion is a GLOBAL condition — grinding through the corpus buys only wall time."""
+    calls = {"n": 0}
+
+    def always_429(payload, mime):
+        calls["n"] += 1
+        raise _Boom(_RATE_LIMIT_MESSAGE)
+
+    monkeypatch.setattr(run_bench, "_extractor", lambda provider: always_429)
+
+    payload = run_bench.run(
+        ["gemini"],
+        repeat=3,
+        out_dir=tmp_path,
+        verbose=False,
+        doc_budget_s=0.0,
+        quota_abort_after=3,
+    )
+
+    assert "gemini" in payload["incomplete_arms"]
+    assert calls["n"] == 3, "should stop at the breaker, not attempt all 7 x 3 documents"
+    assert len(payload["results"]["gemini"]["documents"]) == 3
+
+
+def test_a_healthy_arm_reports_no_incomplete_arms(tmp_path, monkeypatch, no_sleep):
+    """Negative control: the key is present-and-empty on a clean run, never absent.
+
+    A reader must not have to infer completeness from a missing key.
+    """
+    monkeypatch.setattr(
+        run_bench,
+        "_extractor",
+        lambda provider: (lambda payload, mime: _extraction(BY_LAYOUT["gridded"])),
+    )
+
+    payload = run_bench.run(["gemini"], repeat=1, out_dir=tmp_path, verbose=False)
+
+    assert payload["incomplete_arms"] == {}
+    assert payload["run"]["doc_budget_s"] == run_bench._DOC_BUDGET_S
+    assert payload["run"]["quota_abort_after"] == run_bench._QUOTA_ABORT_AFTER
+
+
+def test_an_intermittent_failure_does_not_trip_the_breaker(tmp_path, monkeypatch, fake_clock):
+    """A success between failures resets the counter — the breaker fires on a run of them."""
+    spec = BY_LAYOUT["gridded"]
+    calls = {"n": 0}
+
+    def flaky(payload, mime):
+        calls["n"] += 1
+        if calls["n"] % 2:  # fail, succeed, fail, succeed, ...
+            raise _Boom(_RATE_LIMIT_MESSAGE)
+        return _extraction(spec)
+
+    monkeypatch.setattr(run_bench, "_extractor", lambda provider: flaky)
+
+    payload = run_bench.run(
+        ["gemini"], repeat=1, out_dir=tmp_path, verbose=False, doc_budget_s=0.0, quota_abort_after=3
+    )
+
+    assert payload["incomplete_arms"] == {}
+    assert len(payload["results"]["gemini"]["documents"]) == len(CORPUS)
+
+
+def test_cli_exits_nonzero_when_an_arm_is_abandoned(tmp_path, monkeypatch, fake_clock):
+    """A publication capture must not report success on a comparison with a missing side."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        run_bench,
+        "_extractor",
+        lambda provider: (lambda payload, mime: (_ for _ in ()).throw(_Boom("429 rate limit"))),
+    )
+
+    code = run_bench.main(
+        ["--provider", "gemini", "--out", str(tmp_path), "--doc-budget", "0", "--quiet"]
+    )
+
+    assert code == 1
+    # Artifacts are still written: an abandoned arm is when evidence matters most.
+    payload = json.loads((tmp_path / "ocr-bench.json").read_text())
+    assert "gemini" in payload["incomplete_arms"]
+    assert "Incomplete arms" in (tmp_path / "ocr-bench.md").read_text()
+
+
 def test_markdown_report_separates_accuracy_from_availability():
     payload = {
         "run": {

@@ -101,6 +101,18 @@ _RETRYABLE = ("429", "resource_exhausted", "rate limit", "overloaded", "503", "5
 #: Seconds to wait before the first retry; doubles each attempt.
 _BACKOFF_BASE = 8.0
 
+#: Wall-clock ceiling for ONE document including every retry. Gemini's free tier answers a 429 with
+#: its own retryDelay (~25s), so four retries can burn ~100s on a single document — and the corpus is
+#: 7 documents x N rounds. Without a ceiling one exhausted key turns a 9-minute bench into a 45-minute
+#: one. Exceeding it records an ERROR, never a zero score: scoring a quota failure as a bad extraction
+#: is exactly the defect the retry logic was added to fix (gemini read 0.483 F1 on the first live run).
+_DOC_BUDGET_S = 60.0
+
+#: Consecutive retryable failures before the arm is abandoned. Quota exhaustion is a GLOBAL condition,
+#: not a per-request accident: once three documents in a row have 429'd, grinding through the rest of
+#: the corpus buys nothing but wall time. Fail the arm fast rather than the call fast.
+_QUOTA_ABORT_AFTER = 3
+
 _RETRY_DELAY_RE = re.compile(r"'retryDelay':\s*'(\d+)s'")
 
 
@@ -124,6 +136,7 @@ def score_one(
     extractor: Callable[[bytes, str], Any],
     *,
     max_retries: int = 4,
+    doc_budget_s: float = _DOC_BUDGET_S,
     verbose: bool = True,
 ) -> scoring.BolScore:
     """Send one document to one provider and grade what comes back.
@@ -131,8 +144,15 @@ def score_one(
     Retries transient failures with backoff. Gemini's free tier allows 5 requests per minute, and
     without this the bench measures quota exhaustion rather than extraction quality — the first
     live run scored gemini at 0.483 F1 for exactly that reason.
+
+    Retrying is bounded twice over: `max_retries` attempts AND `doc_budget_s` of wall clock. The
+    budget is what stops an exhausted key from stretching the bench by an order of magnitude, since
+    a provider that answers every 429 with a 25-second retryDelay makes the attempt count a poor
+    proxy for elapsed time. Giving up returns an ERROR score, which the corpus aggregate counts
+    separately from a graded document — never a zero.
     """
     payload = path.read_bytes()
+    doc_started = time.perf_counter()
 
     for attempt in range(max_retries + 1):
         started = time.perf_counter()
@@ -140,8 +160,29 @@ def score_one(
             extraction = extractor(payload, spec.mime_type)
         except Exception as exc:  # noqa: BLE001 — a provider failure is a datum, not a crash
             latency_ms = (time.perf_counter() - started) * 1000.0
-            if attempt < max_retries and _is_retryable(exc):
+            retryable = _is_retryable(exc)
+            if attempt < max_retries and retryable:
                 delay = _retry_after(exc, attempt)
+                spent = time.perf_counter() - doc_started
+                # Check the budget against the delay we are ABOUT to sleep, not the time already
+                # spent: sleeping 25s to then discover we are over budget wastes exactly the time
+                # the budget exists to protect.
+                if spent + delay > doc_budget_s:
+                    if verbose:
+                        print(
+                            f"    [{provider}] {spec.layout}: giving up after {spent:.0f}s "
+                            f"(budget {doc_budget_s:.0f}s) — recorded as an error, not a score"
+                        )
+                    return scoring.score_document(
+                        spec,
+                        None,
+                        provider=provider,
+                        latency_ms=latency_ms,
+                        error=(
+                            f"doc budget {doc_budget_s:.0f}s exceeded after {attempt + 1} "
+                            f"attempt(s); last: {type(exc).__name__}: {exc}"
+                        ),
+                    )
                 if verbose:
                     print(
                         f"    [{provider}] {spec.layout}: transient failure, "
@@ -169,20 +210,32 @@ def run(
     verbose: bool = True,
     delay: float = 0.0,
     max_retries: int = 4,
+    doc_budget_s: float = _DOC_BUDGET_S,
+    quota_abort_after: int = _QUOTA_ABORT_AFTER,
 ) -> dict[str, Any]:
     """Render, extract, score. Returns the full result payload.
 
     `delay` paces requests to stay inside a provider's rate limit — see `--delay`.
+
+    An arm is abandoned after `quota_abort_after` consecutive failed documents and reported as
+    INCOMPLETE. That is not the same as scoring badly, and the writeup must not read it as such: an
+    aborted arm has no accuracy claim at all, which is honest, where a partial average over whichever
+    documents happened to squeak past the quota would be a number with no meaning.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     rendered = corpus.render_all(out_dir / "corpus")
 
     results: dict[str, scoring.CorpusScore] = {}
+    incomplete: dict[str, str] = {}
     for provider in providers:
         extractor = _extractor(provider)
         scores: list[scoring.BolScore] = []
         first = True
+        consecutive_failures = 0
+        aborted: str | None = None
         for round_no in range(1, repeat + 1):
+            if aborted:
+                break
             for spec in CORPUS:
                 if delay and not first:
                     time.sleep(delay)
@@ -193,9 +246,14 @@ def run(
                     provider,
                     extractor,
                     max_retries=max_retries,
+                    doc_budget_s=doc_budget_s,
                     verbose=verbose,
                 )
                 scores.append(score)
+                if score.error:
+                    consecutive_failures += 1
+                else:
+                    consecutive_failures = 0
                 if verbose:
                     if score.error:
                         print(
@@ -208,10 +266,30 @@ def run(
                             f" header={score.header_accuracy:.2f} F1={score.f1:.2f}"
                             f" num={score.numeric_accuracy:.2f} {score.latency_ms:7.0f}ms"
                         )
+                if consecutive_failures >= quota_abort_after:
+                    aborted = (
+                        f"{consecutive_failures} consecutive failed documents "
+                        f"(scored {len([s for s in scores if not s.error])} of "
+                        f"{len(CORPUS) * repeat}) — provider quota or availability, not accuracy"
+                    )
+                    if verbose:
+                        print(f"! [{provider:6}] ARM ABANDONED: {aborted}")
+                    break
         results[provider] = scoring.score_corpus(scores)
+        if aborted:
+            incomplete[provider] = aborted
 
     return {
-        "run": {**run_metadata(providers, repeat), "delay_s": delay, "max_retries": max_retries},
+        "run": {
+            **run_metadata(providers, repeat),
+            "delay_s": delay,
+            "max_retries": max_retries,
+            "doc_budget_s": doc_budget_s,
+            "quota_abort_after": quota_abort_after,
+        },
+        # Present but empty on a healthy run, so a reader never has to infer completeness from the
+        # absence of a key.
+        "incomplete_arms": incomplete,
         "results": {p: s.to_dict() for p, s in results.items()},
     }
 
@@ -316,6 +394,17 @@ def format_markdown(payload: dict[str, Any]) -> str:
         for d in r["documents"]
         if d["error"]
     ]
+    # Placed above the error list because it changes how every table on this page must be read.
+    if payload.get("incomplete_arms"):
+        lines += ["", "## ⚠ Incomplete arms", ""]
+        lines += [
+            "These arms were abandoned mid-run. Their rows above are computed over whichever "
+            "documents completed and **are not accuracy results** — cite them as provider "
+            "availability failures, not as measured quality.",
+            "",
+        ]
+        lines += [f"- `{p}`: {reason}" for p, reason in payload["incomplete_arms"].items()]
+
     if errors:
         lines += ["", "## Errors", ""]
         # Provider error payloads run to hundreds of lines; the class and first line is the datum.
@@ -342,6 +431,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-retries", type=int, default=4, help="retries on transient provider failures"
     )
+    parser.add_argument(
+        "--doc-budget",
+        type=float,
+        default=_DOC_BUDGET_S,
+        help=(
+            f"wall-clock ceiling in seconds for one document including retries "
+            f"(default {_DOC_BUDGET_S:.0f}). Exceeding it records an error, not a zero score"
+        ),
+    )
+    parser.add_argument(
+        "--quota-abort-after",
+        type=int,
+        default=_QUOTA_ABORT_AFTER,
+        help=(
+            f"abandon an arm after this many consecutive failed documents "
+            f"(default {_QUOTA_ABORT_AFTER}); quota exhaustion is global, so retrying the rest "
+            f"of the corpus only costs wall time"
+        ),
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
@@ -365,6 +473,8 @@ def main(argv: list[str] | None = None) -> int:
         verbose=not args.quiet,
         delay=args.delay,
         max_retries=args.max_retries,
+        doc_budget_s=args.doc_budget,
+        quota_abort_after=args.quota_abort_after,
     )
 
     out_dir = Path(args.out)
@@ -374,6 +484,20 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(format_markdown(payload))
     print(f"Artifacts written to: {out_dir}")
+
+    # Artifacts are written first, then the run fails: an abandoned arm is exactly the case where the
+    # evidence of what happened matters most, and the caller still needs a non-zero status so a
+    # publication capture cannot ship a comparison with a missing side.
+    if payload["incomplete_arms"]:
+        print(file=sys.stderr)
+        for provider, reason in payload["incomplete_arms"].items():
+            print(f"INCOMPLETE — {provider}: {reason}", file=sys.stderr)
+        print(
+            "This is a provider availability result, not an accuracy result. "
+            "Do not quote the affected arm's scores.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
