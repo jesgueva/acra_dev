@@ -1,3 +1,4 @@
+import path from "path";
 import { test, expect, type Page } from "@playwright/test";
 import {
   USERS,
@@ -238,6 +239,40 @@ test.describe("T21 Flow 7 — OCR-assisted receiving", () => {
     // The fallback to alternate flow A1 has to still be possible: the form is intact and usable.
     await expect(page.getByTestId("bol-input")).toHaveValue(typed);
     await expect(page.getByTestId("delivery-form")).toBeVisible();
+  });
+
+  test("ACR-50 — mock mode extracts for real, with no API key and no client-side stub", async ({
+    page,
+  }) => {
+    // Requires the backend under test to be running with OCR_MOCK_MODE=true (see
+    // docker-compose.yml / .github/workflows/ci.yml) — everything else in this file stubs
+    // `/deliveries/ocr` at the network boundary, but this test deliberately does not, to prove the
+    // real endpoint is runnable with zero external API calls.
+    test.skip(
+      process.env.OCR_MOCK_MODE !== "true",
+      "backend must be running with OCR_MOCK_MODE=true — export it before this run",
+    );
+
+    await login(page, USERS.clerk);
+    await page.goto("/en/receiving");
+    await expect(page.getByTestId("delivery-form")).toBeVisible();
+
+    const fixture = path.join(
+      __dirname,
+      "../../backend/tests/fixtures/ocr/sample_bol_gridded.png",
+    );
+    await page.locator("#ocr-file-input").setInputFiles(fixture);
+
+    await expect(page.getByText("Document processed successfully.")).toBeVisible();
+
+    // The canned response `ocr_service._mock_response()` returns — supplier/carrier/product are
+    // not seeded, so they land as editable "new entry" fields rather than matched comboboxes.
+    await expect(page.getByTestId("bol-input")).toHaveValue("BOL-2026-0623");
+    await expect(page.getByTestId("delivery-date-input")).toHaveValue("2026-06-23");
+    await expect(page.getByTestId("supplier-combobox")).toContainText("Acme Steel Supply Co.");
+    await expect(page.getByTestId("carrier-combobox")).toContainText("Iberia Logistics S.L.");
+    await expect(page.locator("#new_product_0")).toHaveValue("Galvanized Steel Sheet");
+    await expect(page.getByTestId("quantity-0")).toHaveValue("1000");
   });
 
   test("the OCR endpoint refuses a user without deliveries.create", async ({ request }) => {
