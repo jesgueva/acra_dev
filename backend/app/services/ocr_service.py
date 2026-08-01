@@ -1,8 +1,11 @@
 """OCR Service — Vision LLM-based BOL field extraction.
 
 Two-tier pipeline:
-  1. Gemini 2.5 Flash  — primary (fast, cheap, JSON schema output)
-  2. Claude Sonnet 4.6 — fallback (used when Gemini fails or returns confidence == 0.0)
+  1. Gemini    — primary  (`settings.gemini_model`, JSON schema output)
+  2. Claude    — fallback (`settings.anthropic_model`, used when Gemini fails or confidence == 0.0)
+
+Both model IDs are configuration, not constants, so a swap does not require a code change and the
+A8-4 comparison bench can report the model that actually ran.
 
 Both providers receive the raw file bytes (JPEG, PNG, or PDF) encoded as base64.
 """
@@ -97,12 +100,20 @@ def _parse_items(raw: list[dict[str, Any]]) -> list[OCRItemResult]:
 
 
 def _build_response(data: dict[str, Any], provider: str) -> OCRResponse:
+    """Shape a provider's raw JSON into the wire response.
+
+    `confidence` is a **header fill rate**, not an accuracy: it counts how many of the four header
+    fields came back non-empty, so four wrong values still score 1.0. It keeps its meaning because
+    the 422 gate and the Gemini→Claude fallback both key off `> 0.0`; `header_fill_rate` carries the
+    same number under an honest name. Measured accuracy comes from the A8-4 bench
+    (`backend/scripts/ocr_bench/`), which scores against a labelled corpus.
+    """
     supplier = data.get("supplier")
     carrier = data.get("carrier")
     bol_reference = data.get("bol_reference")
     delivery_date = data.get("delivery_date")
     filled = sum(1 for v in [supplier, carrier, bol_reference, delivery_date] if v)
-    confidence = round(filled / 4.0, 2)
+    fill_rate = round(filled / 4.0, 2)
     raw_items = data.get("items") or []
     return OCRResponse(
         supplier=supplier,
@@ -110,7 +121,9 @@ def _build_response(data: dict[str, Any], provider: str) -> OCRResponse:
         bol_reference=bol_reference,
         delivery_date=delivery_date,
         items=_parse_items(raw_items),
-        confidence=confidence,
+        confidence=fill_rate,
+        header_fill_rate=fill_rate,
+        provider=provider,
     )
 
 
@@ -120,7 +133,7 @@ def _build_response(data: dict[str, Any], provider: str) -> OCRResponse:
 
 def _extract_with_gemini(file_bytes: bytes, content_type: str) -> OCRResponse:
     response = _get_gemini_client().models.generate_content(
-        model="gemini-2.5-flash",
+        model=settings.gemini_model,
         contents=[
             _OCR_EXTRACTION_INSTRUCTIONS,
             genai_types.Part.from_bytes(data=base64.b64encode(file_bytes).decode(), mime_type=content_type),
@@ -181,7 +194,7 @@ def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
         }
 
     response = _get_anthropic_client().messages.create(
-        model="claude-sonnet-4-6",
+        model=settings.anthropic_model,
         max_tokens=2048,
         tools=[_CLAUDE_TOOL],
         tool_choice={"type": "tool", "name": "extract_bol_fields"},
