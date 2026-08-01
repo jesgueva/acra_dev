@@ -111,6 +111,7 @@ hdr() { # hdr "<title>" "<command>" "<result>"
     "Result   : $3" \
     "-------------------------------------------------------------------------------"
 }
+redact_dsn_port() { printf '%s' "${DATABASE_URL##*@}"; }  # host:port/db — no credentials
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
 # ---------------------------------------------------------------------------
@@ -147,7 +148,7 @@ say "4/7  Smoke test (end-to-end)"
 grep -q "SMOKE TEST PASSED" "$OUT/smoke-test-output.log" && echo "  smoke PASSED" || { echo "  smoke FAILED"; exit 1; }
 
 say "5/7  Full backend suite + coverage"
-{ hdr "full backend test suite + coverage" "pytest tests/ --cov=app --cov-report=term-missing -q  (DATABASE_URL on :5433)" "see run below";
+{ hdr "full backend test suite + coverage" "pytest tests/ --cov=app --cov-report=term-missing -q  (DATABASE_URL on $(redact_dsn_port))" "see run below";
   ( cd "$ROOT/backend" && "$PY" -m pytest tests/ --cov=app --cov-report=term-missing -q 2>&1 | strip_ansi ); } > "$OUT/backend-suite-coverage.log"
 # The header promises the suite gates the exit code. It never did: this grep reported the result and
 # threw it away, so a red suite still exited 0 — the same swallowed-status shape as the OCR gate below.
@@ -178,7 +179,9 @@ if ! curl -sf --max-time 2 "localhost:$PORT/health" >/dev/null 2>&1; then
 fi
 
 say "    6a  Data-pipeline integrity trace"
-{ hdr "data-pipeline integrity trace" "scripts/validation/pipeline_trace.py (real HTTP vs live backend :8000)" "see run below";
+# The port is interpolated, not hardcoded: ACRA_VALIDATION_PORT can move the backend, and a
+# provenance header that misreports the command it describes is worse than no header at all.
+{ hdr "data-pipeline integrity trace" "scripts/validation/pipeline_trace.py (real HTTP vs live backend :$PORT)" "see run below";
   ( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/pipeline_trace.py" 2>&1 ); } > "$OUT/data-pipeline-validation.log"
 # Also promised by the header and also never enforced — a failed integrity check printed a warning
 # and the run still exited 0.
