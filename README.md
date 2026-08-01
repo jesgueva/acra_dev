@@ -346,4 +346,10 @@ and [`CONTRIBUTING.md`](CONTRIBUTING.md) for branch strategy and conventions.
 | [`CHANGELOG.md`](CHANGELOG.md) | Notable changes per release (Keep a Changelog) |
 | [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | Current known limitations and rough edges |
 | [`docs/RISK_LOG.md`](docs/RISK_LOG.md) | Tracked engineering risks and issues |
+| [`docs/DATA_PROVENANCE.md`](docs/DATA_PROVENANCE.md) | Where seed/demo/corpus data comes from and what cannot be redistributed |
 | [`CLAUDE.md`](CLAUDE.md) | Detailed engineering memory and code conventions |
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). The grant covers this repository's source code only; it does not
+cover `frontend/acra_logo.png` (see [`docs/DATA_PROVENANCE.md`](docs/DATA_PROVENANCE.md)).

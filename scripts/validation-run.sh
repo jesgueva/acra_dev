@@ -10,17 +10,23 @@
 #   smoke-test-output.log        end-to-end smoke test (7 stages)
 #   backend-suite-coverage.log   full pytest suite + coverage (CI 85% floor)
 #   data-pipeline-validation.log receiving -> inventory integrity trace (real HTTP)
-#   ocr-roundtrip.txt            real vision-LLM BOL extraction (skipped w/o API key)
-#   sample_bol.png               the synthetic BOL used for the OCR round-trip
+#   ocr-roundtrip.txt            real vision-LLM BOL extraction, gated against the
+#                                recorded baseline (skipped w/o API key)
+#   ocr-corpus/                  the labelled synthetic BOL corpus that was uploaded
 #   api-latency-*.json/.txt      per-endpoint p50/p95/p99 latency (A8-2 benchmark harness)
 #   concurrency-*.json/.txt      three-arm stock-drawdown ablation (A8-5 comparative study)
+#   ocr-bench/ocr-bench.json     gemini vs claude head-to-head, machine-readable (A8-4)
+#   ocr-bench/ocr-bench.md       the same comparison as a table for the writeup
 #
 # Usage (from repo root):
 #   ./scripts/validation-run.sh [OUTPUT_DIR]      # default: ./validation-evidence
 #
 # Requires: Docker + Compose, backend venv with deps installed, Node/npm for the
-# frontend build. Exit code is 0 only if the smoke test, full suite, and pipeline
-# trace all pass.
+# frontend build. Exit code is 0 only if the smoke test, full suite, pipeline
+# trace and — when API keys are present — the OCR accuracy gate all pass.
+#
+# OCR_BENCH_REPEAT=N controls the provider bench's rounds per document (default 1).
+# The bench makes real, billable provider calls; it is skipped without API keys.
 
 set -uo pipefail
 
@@ -37,6 +43,7 @@ if [[ -x "$ROOT/backend/.venv/bin/python" ]]; then PY="$ROOT/backend/.venv/bin/p
 if [[ -f "$ROOT/backend/.env" ]]; then set -a; source "$ROOT/backend/.env"; set +a; fi
 export DATABASE_URL="${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@localhost:5433/acra_db}"
 
+OCR_FAILED=0
 HOSTID="Darwin $(uname -r) $(uname -m)"
 SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 TAG="$(git describe --tags 2>/dev/null || echo untagged)"
@@ -94,11 +101,15 @@ say "    6a  Data-pipeline integrity trace"
   ( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/pipeline_trace.py" 2>&1 ); } > "$OUT/data-pipeline-validation.log"
 grep -q "ALL INTEGRITY CHECKS PASSED" "$OUT/data-pipeline-validation.log" && echo "  pipeline trace PASSED" || echo "  pipeline trace had failures (see log)"
 
-say "    6b  Real OCR round-trip"
+say "    6b  Real OCR round-trip (accuracy gate)"
 if [[ -n "${GEMINI_API_KEY:-}" || -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  { hdr "real OCR round-trip (vision-LLM BOL extraction)" "POST /api/v1/deliveries/ocr (live provider call)" "see run below";
-    echo; ( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/ocr_roundtrip.py" "$OUT/sample_bol.png" 2>&1 ); } > "$OUT/ocr-roundtrip.txt"
-  echo "  OCR round-trip captured"
+  { hdr "real OCR round-trip (vision-LLM BOL extraction, gated vs recorded baseline)" "scripts/validation/ocr_roundtrip.py (POST /api/v1/deliveries/ocr, live provider calls)" "see run below";
+    echo; ( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/ocr_roundtrip.py" "$OUT/ocr-corpus" 2>&1 ); } > "$OUT/ocr-roundtrip.txt"
+  if grep -q "OCR ACCURACY GATE PASSED" "$OUT/ocr-roundtrip.txt"; then
+    echo "  OCR accuracy gate PASSED"
+  else
+    echo "  OCR accuracy gate FAILED (see $OUT/ocr-roundtrip.txt)"; OCR_FAILED=1
+  fi
 else
   echo "ACRA MES — real OCR round-trip SKIPPED (no GEMINI_API_KEY / ANTHROPIC_API_KEY in backend/.env)." > "$OUT/ocr-roundtrip.txt"
   echo "  OCR round-trip SKIPPED (no API key)"
@@ -121,8 +132,36 @@ say "    6d  Comparative concurrency study (A8-5)"
   && echo "  Concurrency ablation captured" \
   || { echo "  Concurrency ablation FAILED (see concurrency-bench.log)"; tail -5 "$OUT/concurrency-bench.log"; }
 
+say "    6e  OCR provider comparison bench (A8-4)"
+# Self-provenanced via run_bench's own run-metadata block, so no hdr() wrapper here (same as 6c/6d).
+if [[ -n "${GEMINI_API_KEY:-}" && -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  # The scratch log is removed only on success: run_bench writes ocr-bench.json/.md just on the
+  # happy path, so deleting it unconditionally left a failed run with no evidence at all — in the
+  # one case where the evidence matters most. 6c and 6d already retain theirs on failure.
+  if ( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" -m scripts.ocr_bench.run_bench \
+        --provider both --repeat "${OCR_BENCH_REPEAT:-1}" --out "$OUT/ocr-bench" --quiet ) \
+      > "$OUT/ocr-bench.log" 2>&1; then
+    echo "  provider comparison captured ($OUT/ocr-bench/)"
+    rm -f "$OUT/ocr-bench.log"
+  else
+    echo "  provider comparison FAILED (see $OUT/ocr-bench.log)"; tail -5 "$OUT/ocr-bench.log"
+  fi
+else
+  echo "  provider comparison SKIPPED (needs BOTH GEMINI_API_KEY and ANTHROPIC_API_KEY)"
+fi
+
 say "7/7  Done"
 kill "$BPID" 2>/dev/null; BPID=""
 rm -f "$OUT/.reseed.log" "$OUT/.backend.log"
 echo "Artifacts written to: $OUT"
 ls -1 "$OUT"
+
+# The header promises "exit code is 0 only if ... the OCR accuracy gate" passes. `ls` above always
+# succeeds, so without this the script reported success even after printing "OCR accuracy gate
+# FAILED" — the exact shape of defect ACR-36 set out to remove, reintroduced in the harness that
+# runs the gate.
+if [[ "$OCR_FAILED" -ne 0 ]]; then
+  echo
+  echo "FAILED — the OCR accuracy gate regressed; see $OUT/ocr-roundtrip.txt"
+  exit 1
+fi

@@ -1,137 +1,136 @@
-"""ACRA MES — real OCR round-trip.
+"""ACRA MES — real OCR round-trip against the live endpoint.
 
-Generates a synthetic Bill of Lading image (known ground truth), uploads it to the
-live POST /api/v1/deliveries/ocr endpoint, and reports the structured extraction the
-vision-LLM pipeline (Gemini 2.5 Flash primary -> Claude Sonnet 4.6 fallback) returned.
-This exercises the REAL external integration end to end — not a mock.
+Renders the labelled synthetic BOL corpus, uploads every document to the running
+`POST /api/v1/deliveries/ocr`, scores each extraction against ground truth, and **exits non-zero
+if accuracy falls below the recorded baseline**. This exercises the REAL external integration end
+to end — not a mock.
+
+Two things changed here in ACR-36, both of which had made this script unable to fail:
+
+1. It ran one document and *printed* a comparison. No assertion, no `sys.exit(1)` — an OCR
+   regression could not break anything, including this script.
+2. It aligned line items positionally (`got_items[gi]`), so one dropped or reordered row misscored
+   every row after it.
+
+Both now come from `backend/scripts/ocr_bench/scoring.py`, shared with the provider bench and the
+pytest gate — one scorer, three callers.
+
+Usage (from backend/, with the API on :8000):
+
+    PYTHONPATH=backend python ../scripts/validation/ocr_roundtrip.py [OUTPUT_DIR]
 """
-import io
+
+from __future__ import annotations
+
 import json
+import os
 import sys
+from pathlib import Path
+
 import httpx
-from PIL import Image, ImageDraw, ImageFont
 
-BASE = "http://localhost:8000"
-OUT_IMG = sys.argv[1] if len(sys.argv) > 1 else "/tmp/sample_bol.png"
+from scripts.ocr_bench import corpus, scoring
+from scripts.ocr_bench.ground_truth import CORPUS
 
-# --- ground truth encoded into the synthetic document ------------------------
-GROUND_TRUTH = {
-    "supplier": "Acme Steel Supply Co.",
-    "carrier": "Iberia Logistics S.L.",
-    "bol_reference": "BOL-2026-0623",
-    "delivery_date": "2026-06-23",
-    "items": [
-        # (material, pallets, units_per_pallet, quantity)
-        ("Galvanized Steel Sheet", 5, 200, 1000),
-        ("Aluminum Coil 1050", 3, 150, 450),
-        ("Copper Wire Spool", 2, 500, 1000),
-    ],
-}
+#: Overridable so the gate can be pointed at a stack on a non-default port — a second worktree, or
+#: a developer already running something on 8000. `validation-run.sh` boots its own backend on the
+#: default, so the harness path is unchanged. Mirrors the e2e suite's E2E_API_URL convention.
+BASE = os.getenv("ACRA_API_URL", "http://localhost:8000")
+DEFAULT_OUT = "/tmp/acra-ocr-roundtrip"
 
+BASELINE_PATH = (
+    Path(__file__).resolve().parents[2] / "backend" / "tests" / "fixtures" / "ocr" / "baseline.json"
+)
 
-def _font(size, bold=False):
-    path = "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf"
-    try:
-        return ImageFont.truetype(path, size)
-    except Exception:
-        return ImageFont.load_default()
+def _login(client: httpx.Client) -> str:
+    response = client.post(
+        "/api/v1/auth/login", json={"username": "admin", "password": "admin123"}
+    )
+    response.raise_for_status()
+    return response.json()["access_token"]
 
 
-def build_bol(path):
-    W, H = 1000, 1180
-    img = Image.new("RGB", (W, H), "white")
-    d = ImageDraw.Draw(img)
-    d.rectangle([20, 20, W - 20, H - 20], outline="black", width=2)
-    d.text((40, 40), "BILL OF LADING", font=_font(40, bold=True), fill="black")
-    d.line([40, 95, W - 40, 95], fill="black", width=2)
+def main() -> int:
+    out_dir = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT)
+    rendered = corpus.render_all(out_dir)
 
-    y = 120
-    rows = [
-        ("Supplier:", GROUND_TRUTH["supplier"]),
-        ("Carrier:", GROUND_TRUTH["carrier"]),
-        ("BOL Reference:", GROUND_TRUTH["bol_reference"]),
-        ("Delivery Date:", GROUND_TRUTH["delivery_date"]),
-    ]
-    for label, val in rows:
-        d.text((40, y), label, font=_font(24, bold=True), fill="black")
-        d.text((320, y), val, font=_font(24), fill="black")
-        y += 48
-
-    y += 30
-    # gridded line-items table — clear columns + row separators
-    colx = [40, 470, 620, 790, 950]          # left edges + right border
-    headers = ["Material", "Pallets", "Units/Pallet", "Quantity"]
-    row_h = 56
-    n = len(GROUND_TRUTH["items"])
-    top = y
-    bottom = y + row_h * (n + 1)
-    # header row
-    for i, label in enumerate(headers):
-        d.text((colx[i] + 12, y + 16), label, font=_font(22, bold=True), fill="black")
-    y += row_h
-    for (name, pal, upp, qty) in GROUND_TRUTH["items"]:
-        d.text((colx[0] + 12, y + 14), name, font=_font(22), fill="black")
-        d.text((colx[1] + 12, y + 14), str(pal), font=_font(22), fill="black")
-        d.text((colx[2] + 12, y + 14), str(upp), font=_font(22), fill="black")
-        d.text((colx[3] + 12, y + 14), str(qty), font=_font(22), fill="black")
-        y += row_h
-    # grid lines
-    for gx in colx:
-        d.line([gx, top, gx, bottom], fill="black", width=1)
-    for r in range(n + 2):
-        gy = top + r * row_h
-        d.line([colx[0], gy, colx[-1], gy], fill="black", width=1)
-    img.save(path)
-    return path
-
-
-def main():
-    build_bol(OUT_IMG)
-    with open(OUT_IMG, "rb") as f:
-        img_bytes = f.read()
-
-    client = httpx.Client(base_url=BASE, timeout=90.0)
-    tok = client.post("/api/v1/auth/login",
-                      json={"username": "admin", "password": "admin123"}).json()["access_token"]
+    client = httpx.Client(base_url=BASE, timeout=120.0)
+    token = _login(client)
+    headers = {"Authorization": f"Bearer {token}"}
 
     print("REQUEST")
-    print(f"  POST {BASE}/api/v1/deliveries/ocr")
-    print(f"  multipart file: sample_bol.png  ({len(img_bytes):,} bytes, image/png)")
-    print(f"  auth: Bearer <admin JWT, redacted>")
+    print(f"  POST {BASE}/api/v1/deliveries/ocr   x{len(CORPUS)} documents")
+    print("  auth: Bearer <admin JWT, redacted>")
+    print(f"  corpus: {', '.join(spec.layout for spec in CORPUS)}")
+    print()
 
-    r = client.post("/api/v1/deliveries/ocr",
-                    headers={"Authorization": f"Bearer {tok}"},
-                    files={"file": ("sample_bol.png", img_bytes, "image/png")})
-    print(f"\nRESPONSE  (HTTP {r.status_code})")
-    resp = r.json()
-    print(json.dumps(resp, indent=2, ensure_ascii=False))
+    scores = []
+    for spec in CORPUS:
+        # Name comes from the rendered path itself — `corpus.render()` already owns the
+        # mime-to-extension mapping, and duplicating it here let the two drift silently.
+        payload = rendered[spec.layout].read_bytes()
+        filename = rendered[spec.layout].name
 
-    # --- field-level accuracy vs ground truth -------------------------------
-    print("\nFIELD-LEVEL ACCURACY (extracted vs. ground truth)")
+        response = client.post(
+            "/api/v1/deliveries/ocr",
+            headers=headers,
+            files={"file": (filename, payload, spec.mime_type)},
+        )
+        if response.status_code != 200:
+            scores.append(
+                scoring.score_document(
+                    spec, None, error=f"HTTP {response.status_code}: {response.text[:200]}"
+                )
+            )
+            continue
 
-    def norm(s):
-        return (s or "").strip().lower().replace(".", "").replace(",", "")
+        body = response.json()
+        scores.append(scoring.score_document(spec, body, provider=body.get("provider")))
 
-    header_fields = ["supplier", "carrier", "bol_reference", "delivery_date"]
-    correct = 0
-    for fld in header_fields:
-        exp, got = GROUND_TRUTH[fld], resp.get(fld)
-        ok = norm(got) == norm(exp) or (norm(exp) in norm(got)) or (norm(got) in norm(exp) and got)
-        correct += bool(ok)
-        print(f"  [{'OK ' if ok else 'DIFF'}] {fld:14} expected={exp!r}  got={got!r}")
+    print("FIELD-LEVEL ACCURACY (extracted vs. ground truth)")
+    for score in scores:
+        print(scoring.format_document_report(score))
+        print()
 
-    got_items = resp.get("items", [])
-    print(f"\n  line items: expected {len(GROUND_TRUTH['items'])}, extracted {len(got_items)}")
-    for gi, (name, pal, upp, qty) in enumerate(GROUND_TRUTH["items"]):
-        match = got_items[gi] if gi < len(got_items) else {}
-        print(f"    - expected: {name!r:30} pallets={pal} u/p={upp} qty={qty}")
-        print(f"      got     : name={match.get('item_name')!r} pallets={match.get('pallets')} "
-              f"u/p={match.get('units_per_pallet')} qty={match.get('quantity')}")
+    result = scoring.score_corpus(scores)
+    print("SUMMARY")
+    print(f"  header accuracy : {result.header_accuracy:.4f}")
+    print(
+        f"  line items      : P={result.precision:.4f} R={result.recall:.4f}"
+        f" F1={result.item_f1:.4f}"
+    )
+    print(f"  numeric accuracy: {result.numeric_accuracy:.4f}")
 
-    print(f"\nSUMMARY: confidence={resp.get('confidence')}  | "
-          f"header fields matched {correct}/{len(header_fields)}  | "
-          f"items {len(got_items)}/{len(GROUND_TRUTH['items'])}")
+    if not BASELINE_PATH.exists():
+        print(f"\nFAIL — baseline not found at {BASELINE_PATH}")
+        return 1
+
+    baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    # The endpoint runs the production fallback chain, so the answering provider varies per
+    # document. Gate against the weaker of the two recorded baselines — it is the only floor the
+    # chain as a whole can be held to.
+    floor = {
+        metric: min(p[metric] for p in baseline["providers"].values())
+        for metric in scoring.GATE_METRICS
+    }
+    failures = scoring.compare_to_baseline(result, floor)
+
+    print()
+    print(
+        "  gate floor      : "
+        + ", ".join(
+            f"{name}>={value - scoring.DEFAULT_TOLERANCE:.4f}" for name, value in floor.items()
+        )
+    )
+    if failures:
+        print("\nFAIL — accuracy regressed against the recorded baseline:")
+        for failure in failures:
+            print(f"  {failure}")
+        return 1
+
+    print("\nOCR ACCURACY GATE PASSED")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -162,6 +162,11 @@ Three findings:
    work, because an abort is nearly free. An evidence table quoting attempts/second would recommend
    the arm that does almost nothing.
 
+The correctness oracle checks the books in **both** directions — stock left over beyond what the
+successes claim (a lost update) and stock missing beyond it (over-consumption: an attempt that
+decremented and then failed, or drew twice). Only the first appeared in this sweep, but an oracle
+that tested one direction would have reported the other as a clean ledger.
+
 The unguarded row is not hypothetical: `inventory_service.adjust_quantity` and
 `shipment_service.create_shipment` still carry that shape today (ISS-06).
 

@@ -49,7 +49,10 @@ Keep commits small and self-contained so history reads as a sequence of reviewab
 - Open a PR from your `ticket-NN/*` branch into `master`.
 - CI (`.github/workflows/ci.yml`) must pass before merge:
   - **Backend:** install deps → apply migrations → `pytest` with an **85% coverage floor** on `app.*`.
-  - **Frontend:** install → Jest test subset → `eslint` → `next build`.
+  - **Frontend:** install → full Jest suite with a coverage gate (`frontend/jest.config.ts`) →
+    `eslint` → `next build`.
+  - **E2E:** the containerized stack (`docker compose`, A10-1) seeded with demo data → the full
+    Playwright suite (`e2e-playwright` job).
 - Prefer squash or a tidy merge so `master` history stays legible.
 
 ## Versioning & tags
@@ -77,9 +80,21 @@ What belongs in this repository vs. elsewhere:
 | Generated/build output | **git-ignored** (`.next/`, `__pycache__/`, `.venv/`, coverage) |
 | Large binaries, datasets, exported reports, screenshots, course material | **out of this repo** (separate documentation archive) |
 | Database data | the Docker volume; reproducible from migrations + `seed_fake_data.py` (`--scale N` for volume), never committed |
+| Ticket plan files (`plans/plan_ticket_N.md`) | **git-ignored, local-only** — review scratch space per the global "planning process" convention; delete once the ticket ships |
 
 Rule of thumb: this repo holds **everything needed to build and run the system, and nothing
 that can be regenerated or that must stay private.**
+
+Data provenance — where seed/demo/corpus data comes from and what cannot be redistributed (the
+client logo, specifically) — is documented separately in
+[`docs/DATA_PROVENANCE.md`](docs/DATA_PROVENANCE.md).
+
+**`plans/` policy** (ACR-48): a ticket's plan file is a review artifact for the human/AI planning
+loop, not a build input, so `plans/` is git-ignored — write it, get it reviewed, implement, then
+delete it. The dozen `plans/plan_ticket_*.md` files already committed on `master` predate this
+rule and are grandfathered in as a historical record (several are cited by path from
+`plans/plan_a8_a10_readiness.md`'s progress table); leave them tracked rather than rewriting that
+history. Don't add new plan files to git going forward.
 
 ## Local setup & smoke test
 
