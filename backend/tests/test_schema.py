@@ -2,25 +2,13 @@
 Schema tests — verifies core tables, seed data, constraints, and indices exist
 after running `alembic upgrade head`.
 
-Requires a running PostgreSQL database with acra_db created and migrations applied.
+Requires a running PostgreSQL database with acra_db created and migrations applied. The `conn`
+fixture comes from tests/conftest.py, which skips these tests when no Postgres is listening rather
+than failing them with a connection error (KI-01). This module used to redefine `conn` locally,
+which shadowed the shared fixture and so bypassed that guard.
 """
-import os
-
 import asyncpg
 import pytest
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5434/acra_db",
-)
-PG_DSN = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
-
-
-@pytest.fixture
-async def conn():
-    connection = await asyncpg.connect(PG_DSN)
-    yield connection
-    await connection.close()
 
 
 async def test_core_tables_exist(conn):
