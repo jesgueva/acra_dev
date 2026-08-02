@@ -42,6 +42,7 @@ from app.core.config import settings
 from app.schemas.auth import TokenUser
 from app.schemas.production_worksheet import WorksheetCloseLine, WorksheetCloseRequest
 from app.services.production_worksheet_service import close_worksheet
+from tests.conftest import skip_if_no_postgres
 
 PARALLEL_CLOSERS = 8
 REPEAT_ROUNDS = 5
@@ -65,6 +66,7 @@ _USER = TokenUser(
 
 @pytest.fixture
 async def sessionmaker_():
+    await skip_if_no_postgres(settings.database_url)
     engine = create_async_engine(
         settings.database_url,
         # Room for PARALLEL_CLOSERS simultaneous connections plus the setup/assert session.

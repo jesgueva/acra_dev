@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.models.user import RolePrivilegeAssignment
+from tests.conftest import skip_if_no_postgres
 from tests.test_privilege_parity import (
     AUTHENTICATED,
     enforced_privileges,
@@ -45,6 +46,7 @@ DATABASE_URL = os.getenv(
 
 
 async def _migration_granted_privileges() -> set[str]:
+    await skip_if_no_postgres(DATABASE_URL)
     engine = create_async_engine(DATABASE_URL)
     try:
         async with engine.connect() as conn:

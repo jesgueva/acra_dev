@@ -30,10 +30,11 @@ from app.models.reservation import ReservationStatus, StockReservation
 from app.models.user import User
 from app.schemas.reservation import ReservationCreate
 from app.services import reservation_service
+from tests.conftest import skip_if_no_postgres
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5434/acra_db",
+    "postgresql+asyncpg://postgres:postgres@localhost:5433/acra_db",
 )
 
 # RSK-04 — the availability aggregation must stay cheap at volume.
@@ -51,6 +52,7 @@ ON_HAND_IN_PRODUCTION = SEED_LOTS_IN_PRODUCTION * SEED_LOT_QTY
 @asynccontextmanager
 async def seeded_stock():
     """One product with lots in two states, torn down afterwards."""
+    await skip_if_no_postgres(DATABASE_URL)
     engine = create_async_engine(DATABASE_URL)
     session = AsyncSession(engine, expire_on_commit=False)
     product_id = None

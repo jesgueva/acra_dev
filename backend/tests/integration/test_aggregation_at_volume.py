@@ -39,10 +39,11 @@ from app.models.contact import Contact  # noqa: F401 — registers products.cont
 from app.models.inventory import LotStatus
 from app.schemas.inventory import LowStockAlertCreate
 from app.services import inventory_service, reservation_service
+from tests.conftest import skip_if_no_postgres
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5434/acra_db",
+    "postgresql+asyncpg://postgres:postgres@localhost:5433/acra_db",
 )
 
 TAG = "A86-IT"
@@ -110,6 +111,7 @@ LATENCY_SAMPLES = 40
 @asynccontextmanager
 async def seeded_volume():
     """A focus product plus filler products, sized so the focus item is a selective slice."""
+    await skip_if_no_postgres(DATABASE_URL)
     engine = create_async_engine(DATABASE_URL)
     session = AsyncSession(engine, expire_on_commit=False)
     product_id = None
@@ -410,6 +412,7 @@ async def test_bench_teardown_restores_the_migrations_index():
 
     This asserts the round trip on the real database rather than trusting the code to be careful.
     """
+    await skip_if_no_postgres(DATABASE_URL)
     engine = create_async_engine(DATABASE_URL)
     try:
         async with AsyncSession(engine) as session:

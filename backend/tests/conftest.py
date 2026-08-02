@@ -9,17 +9,39 @@ from app.core.security import hash_password
 from app.models.user import User
 
 # Live-DB tests (schema, seeded privileges) read the same connection the app does. Defaults to the
-# port backend/.env uses locally, since pytest does not load that file; export DATABASE_URL when
-# Postgres is elsewhere (KI-01).
+# documented Compose port, matching backend/.env.example and docker-compose.yml's ACRA_DB_PORT, so
+# a checkout that followed the README has a database here; pytest does not load .env, so export
+# DATABASE_URL when Postgres is elsewhere (KI-01).
 PG_DSN = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5434/acra_db",
+    "postgresql+asyncpg://postgres:postgres@localhost:5433/acra_db",
 ).replace("postgresql+asyncpg://", "postgresql://")
+
+
+async def skip_if_no_postgres(dsn: str = PG_DSN) -> None:
+    """Skip the calling test when nothing is listening on `dsn` (KI-01).
+
+    Live-DB tests are conditional on the environment, not on the suite. A checkout with no Postgres
+    running should report them *skipped* — the way the containerized path already skips at the
+    packaging boundary — rather than fail with a connection error that reads like a broken test.
+    Without this, `pytest tests/` on a machine that has not run `docker compose up` produces 23
+    failures and 6 errors whose cause is nowhere in the output.
+
+    Only refusal-to-connect skips. A reachable server that rejects the credentials or is missing the
+    database still fails, because that is a real misconfiguration and hiding it would make CI blind.
+    """
+    probe = dsn.replace("postgresql+asyncpg://", "postgresql://")
+    try:
+        connection = await asyncpg.connect(probe)
+    except OSError as exc:  # pragma: no cover - env dependent
+        pytest.skip(f"Postgres unreachable at {probe}: {exc}")
+    await connection.close()
 
 
 @pytest.fixture
 async def conn():
     """asyncpg connection to a database with migrations applied."""
+    await skip_if_no_postgres()
     connection = await asyncpg.connect(PG_DSN)
     yield connection
     await connection.close()

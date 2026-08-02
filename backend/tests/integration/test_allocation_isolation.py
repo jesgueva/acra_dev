@@ -25,10 +25,11 @@ from app.models.product import Product
 from app.models.user import User
 from app.models.work_order import MaterialAllocation, WorkOrder, WorkOrderMaterial
 from app.services import allocation_service
+from tests.conftest import skip_if_no_postgres
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/acra_db",
+    "postgresql+asyncpg://postgres:postgres@localhost:5433/acra_db",
 )
 
 MATERIAL_NAME = "ACR-21 Allocation Fixture"
@@ -39,6 +40,7 @@ REQUIRED = 4.0
 @asynccontextmanager
 async def seeded_work_order():
     """A `created` work order needing one material, with stock to satisfy it."""
+    await skip_if_no_postgres(DATABASE_URL)
     engine = create_async_engine(DATABASE_URL)
     session = AsyncSession(engine, expire_on_commit=False)
     product_id = wo_id = user_id = None

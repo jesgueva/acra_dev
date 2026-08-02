@@ -153,25 +153,11 @@ Useful commands:
 
 ```bash
 docker compose logs -f backend        # follow a service
-docker compose run --rm backend pytest tests/   # run the suite with no local Python*
+docker compose run --rm backend pytest tests/   # run the suite with no local Python
 docker compose down                   # stop, keep data
 docker compose down -v                # stop and wipe the database volume
 ./scripts/compose-smoke.sh            # assert the containerized stack end to end
 ```
-
-\* Expect **`630 passed, 25 skipped`** (verified 2026-08-01 at `8490fd0`, reproduced from a clean
-clone). This is lower than the
-~710 a checkout collects, and that difference is the packaging boundary rather than a problem: the
-backend image is built from `backend/` alone, so anything outside that directory is not in it —
-`.nvmrc`, `frontend/package.json`, `.github/workflows/ci.yml`, `frontend/Dockerfile`, the
-frontend/root `.env.example` templates, `frontend/src/lib/privileges.ts`, the repo-root
-`scripts/validation/` benchmark runners, and `.git` itself. Tests that read those skip here and run
-normally on a checkout and in CI. Nothing is failing; that skip count is the expected result.
-
-> Re-run this after adding tests that reach outside `backend/`. Between A8 and A10 five such tests
-> accumulated, three of which aborted **collection** rather than skipping — so the documented command
-> exited non-zero and ran nothing, while this note still claimed a passing count. See
-> `acra_docs` A10 §07 (friction log).
 
 **If a port is already taken** (common — this repo is often checked out into several worktrees),
 override it in `.env` or inline:
