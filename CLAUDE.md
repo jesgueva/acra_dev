@@ -29,6 +29,7 @@ acra_dev/
 │   ├── messages/     # next-intl (en.json, es.json)
 │   └── package.json
 ├── docker-compose.yml  # full stack: db → migrate → backend → frontend
+├── .railway/           # Railway IaC (railway.ts) — production, EU West; see docs/DEPLOY_RAILWAY.md
 └── CLAUDE.md
 ```
 
@@ -55,6 +56,18 @@ seed` loads demo data. Host ports are overridable (`ACRA_DB_PORT`, `ACRA_BACKEND
 be host-reachable (`http://localhost:8000`); `BACKEND_URL` is read at *runtime* by the server-side
 auth proxy and must be the compose service name (`http://backend:8000`). Swapping them leaves the
 stack reporting healthy while every login fails.
+
+## Railway (production)
+
+`.railway/railway.ts` is the whole production stack as Railway Infrastructure as Code, every resource
+pinned to `europe-west4-drams3a` (Amsterdam). It is authoritative: a variable or service missing from
+it is **deleted** on the next `railway config apply`, so add variables there, never only in the
+dashboard. Secrets are `preserve()` — declared, never valued — and set with
+`railway variable set KEY --stdin`. Same two-URL rule as compose: `NEXT_PUBLIC_API_URL` is the
+backend's public https domain (build time), `BACKEND_URL` its `RAILWAY_PRIVATE_DOMAIN` (runtime).
+`APP_ENV=production` makes the API refuse to boot without a real `SECRET_KEY`. The first admin on a
+deployed DB comes from `backend/scripts/bootstrap_admin.py`, never the demo seed. Verify offline
+with `npm ci --prefix .railway && npm --prefix .railway run verify`. Runbook: `docs/DEPLOY_RAILWAY.md`.
 
 ## Run Commands
 

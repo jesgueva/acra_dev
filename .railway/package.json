@@ -1,0 +1,19 @@
+{
+  "name": "acra-railway-iac",
+  "private": true,
+  "description": "Railway Infrastructure as Code for ACRA MES. See railway.ts and docs/DEPLOY_RAILWAY.md.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "check": "node --experimental-strip-types --disable-warning=ExperimentalWarning check.ts",
+    "verify": "npm run typecheck && npm run check"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "railway": "3.16.0",
+    "typescript": "5.9.3"
+  }
+}

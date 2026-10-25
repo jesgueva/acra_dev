@@ -3,7 +3,8 @@
 Operational reference for bringing the containerized stack (ACR-42 / A10-1) up, down, and back up
 again — the packaging shape, the exact order services come up in, and the commands for the day-2
 actions the README doesn't have room for. See [`README.md`](../README.md) for the quickstart and
-[`docs/architecture.md`](architecture.md) for how this maps onto the system design.
+[`docs/architecture.md`](architecture.md) for how this maps onto the system design. The production
+deployment (Railway, EU) has its own runbook: [`DEPLOY_RAILWAY.md`](DEPLOY_RAILWAY.md).
 
 ## Packaging diagram
 
