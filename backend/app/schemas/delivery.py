@@ -83,7 +83,7 @@ class OCRResponse(BaseModel):
 
     On `confidence`: it is the fraction of the four header fields that came back **non-empty** — a
     measure of *presence*, not of *correctness*. Four wrong header values still score 1.0. It is
-    kept as-is because the endpoint's 422 gate and the Gemini→Claude fallback both key off
+    kept as-is because the endpoint's 422 gate and the primary→fallback model chain both key off
     `> 0.0`, but it must never be read as accuracy. `header_fill_rate` is the same number under a
     name that says what it actually is.
 
@@ -100,6 +100,7 @@ class OCRResponse(BaseModel):
     #: Fraction of the four header fields that are non-empty. The same number as `confidence`,
     #: named honestly: presence, not correctness.
     header_fill_rate: float = 0.0
-    #: Which model actually answered — "gemini" or "claude". Without it a caller cannot tell
-    #: whether the primary succeeded or the fallback carried the request.
+    #: Which model actually answered — its Claude model ID (e.g. "claude-haiku-5-5"), or "mock".
+    #: Without it a caller cannot tell whether the primary succeeded or the fallback carried the
+    #: request.
     provider: Optional[str] = None

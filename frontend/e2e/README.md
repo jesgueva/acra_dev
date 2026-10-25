@@ -62,7 +62,7 @@ CORS_ORIGINS=http://localhost:3000,http://localhost:3200
 Every use case in SRS v2.1 §5 is covered. Two of them only partly, and deliberately:
 
 - **UC-001 steps 3–5 are stubbed, not live.** `POST /deliveries/ocr` hands the image to
-  Gemini/Anthropic. Flow 7 intercepts it at the network boundary and asserts the contract the UI
+  Anthropic's Claude. Flow 7 intercepts it at the network boundary and asserts the contract the UI
   depends on — populate, correct, confirm — because a live call needs API keys, costs money per
   run, and fails on model variance. Extraction *quality* is ACR-36's job, not this suite's.
 - **UC-005 step 3 has no UI to drive.** `PriorityReorder.tsx` and

@@ -15,7 +15,7 @@
 #   ocr-corpus/                  the labelled synthetic BOL corpus that was uploaded
 #   api-latency-*.json/.txt      per-endpoint p50/p95/p99 latency (A8-2 benchmark harness)
 #   concurrency-*.json/.txt      four-arm stock-drawdown ablation (A8-5 comparative study)
-#   ocr-bench/ocr-bench.json     gemini vs claude head-to-head, machine-readable (A8-4)
+#   ocr-bench/ocr-bench.json     primary vs fallback Claude model head-to-head (A8-4)
 #   ocr-bench/ocr-bench.md       the same comparison as a table for the writeup
 #
 # See docs/architecture.md#measurement-points-a8-7 for where each stage (6a-6f) below sits in the
@@ -39,10 +39,10 @@
 #
 #                     quick                    publication
 #   6d concurrency    2,8,32 x 3 rounds        2,4,8,16,32 x 5 rounds
-#   6e OCR bench      1 round/doc, no pacing   3 rounds/doc, 13s gemini pacing (free-tier 5 rpm)
+#   6e OCR bench      1 round/doc              3 rounds/doc
 #   6f aggregation    1k,10k x 50 samples      1k,10k,50k,200k x 100 samples
 #
-# Publication runs take well over an hour and make real, billable provider calls.
+# Publication runs take well over an hour and make real, billable API calls.
 #
 # ---------------------------------------------------------------------------
 # Exit code
@@ -57,7 +57,7 @@
 # refuses to start if the port is already bound: the health poll cannot tell its own backend from
 # somebody else's, so a busy port would silently publish measurements of a different process.
 #
-# OCR_BENCH_REPEAT / OCR_BENCH_DELAY override the profile's provider-bench rounds and pacing.
+# OCR_BENCH_REPEAT / OCR_BENCH_DELAY override the profile's model-bench rounds and pacing.
 
 set -uo pipefail
 
@@ -87,7 +87,7 @@ case "$PROFILE" in
   publication)
     CONC_LEVELS="2,4,8,16,32";                CONC_ROUNDS=5
     AGG_LOT_STEPS="1000,10000,50000,200000";  AGG_SAMPLES=100
-    OCR_REPEAT="${OCR_BENCH_REPEAT:-3}";      OCR_DELAY="${OCR_BENCH_DELAY:-13}"
+    OCR_REPEAT="${OCR_BENCH_REPEAT:-3}";      OCR_DELAY="${OCR_BENCH_DELAY:-0}"
     ;;
   *)
     echo "validation-run.sh: unknown ACRA_BENCH_PROFILE '$PROFILE' (expected: quick | publication)" >&2
@@ -190,8 +190,8 @@ grep -q "ALL INTEGRITY CHECKS PASSED" "$OUT/data-pipeline-validation.log" \
   || { echo "  pipeline trace FAILED (see $OUT/data-pipeline-validation.log)"; exit 1; }
 
 say "    6b  Real OCR round-trip (accuracy gate)"
-if [[ -n "${GEMINI_API_KEY:-}" || -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  { hdr "real OCR round-trip (vision-LLM BOL extraction, gated vs recorded baseline)" "scripts/validation/ocr_roundtrip.py (POST /api/v1/deliveries/ocr, live provider calls)" "see run below";
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  { hdr "real OCR round-trip (vision-LLM BOL extraction, gated vs recorded baseline)" "scripts/validation/ocr_roundtrip.py (POST /api/v1/deliveries/ocr, live Claude calls)" "see run below";
     echo; ( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" "$TOOLS/ocr_roundtrip.py" "$OUT/ocr-corpus" 2>&1 ); } > "$OUT/ocr-roundtrip.txt"
   if grep -q "OCR ACCURACY GATE PASSED" "$OUT/ocr-roundtrip.txt"; then
     echo "  OCR accuracy gate PASSED"
@@ -199,7 +199,7 @@ if [[ -n "${GEMINI_API_KEY:-}" || -n "${ANTHROPIC_API_KEY:-}" ]]; then
     echo "  OCR accuracy gate FAILED (see $OUT/ocr-roundtrip.txt)"; OCR_FAILED=1
   fi
 else
-  echo "ACRA MES — real OCR round-trip SKIPPED (no GEMINI_API_KEY / ANTHROPIC_API_KEY in backend/.env)." > "$OUT/ocr-roundtrip.txt"
+  echo "ACRA MES — real OCR round-trip SKIPPED (no ANTHROPIC_API_KEY in backend/.env)." > "$OUT/ocr-roundtrip.txt"
   echo "  OCR round-trip SKIPPED (no API key)"
 fi
 
@@ -220,22 +220,22 @@ say "    6d  Comparative concurrency study (A8-5)  [profile: $PROFILE — levels
   && echo "  Concurrency ablation captured" \
   || { echo "  Concurrency ablation FAILED (see concurrency-bench.log)"; tail -5 "$OUT/concurrency-bench.log"; BENCH_FAILED=1; }
 
-say "    6e  OCR provider comparison bench (A8-4)"
+say "    6e  OCR model comparison bench (A8-4)"
 # Self-provenanced via run_bench's own run-metadata block, so no hdr() wrapper here (same as 6c/6d).
-if [[ -n "${GEMINI_API_KEY:-}" && -n "${ANTHROPIC_API_KEY:-}" ]]; then
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
   # The scratch log is removed only on success: run_bench writes ocr-bench.json/.md just on the
   # happy path, so deleting it unconditionally left a failed run with no evidence at all — in the
   # one case where the evidence matters most. 6c and 6d already retain theirs on failure.
   if ( cd "$ROOT/backend" && PYTHONPATH="$ROOT/backend" "$PY" -m scripts.ocr_bench.run_bench \
-        --provider both --repeat "$OCR_REPEAT" --delay "$OCR_DELAY" --out "$OUT/ocr-bench" --quiet ) \
+        --repeat "$OCR_REPEAT" --delay "$OCR_DELAY" --out "$OUT/ocr-bench" --quiet ) \
       > "$OUT/ocr-bench.log" 2>&1; then
-    echo "  provider comparison captured ($OUT/ocr-bench/)"
+    echo "  model comparison captured ($OUT/ocr-bench/)"
     rm -f "$OUT/ocr-bench.log"
   else
-    echo "  provider comparison FAILED (see $OUT/ocr-bench.log)"; tail -5 "$OUT/ocr-bench.log"; BENCH_FAILED=1
+    echo "  model comparison FAILED (see $OUT/ocr-bench.log)"; tail -5 "$OUT/ocr-bench.log"; BENCH_FAILED=1
   fi
 else
-  echo "  provider comparison SKIPPED (needs BOTH GEMINI_API_KEY and ANTHROPIC_API_KEY)"
+  echo "  model comparison SKIPPED (needs ANTHROPIC_API_KEY)"
   # A publication run exists to produce this artifact; silently shipping without it is the failure
   # mode the profile is meant to prevent.
   [[ "$PROFILE" == "publication" ]] && BENCH_FAILED=1

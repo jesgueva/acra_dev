@@ -10,6 +10,17 @@ Phase 2 realignment toward the append-only `StockMovement` ledger
 (see [`docs/architecture.md`](docs/architecture.md)). Skeleton stubs are present for the
 ledger module; behavior is not yet implemented.
 
+### Changed
+- **Receiving-document OCR is Claude-only.** The Google Gemini extractor and the `google-genai`
+  dependency are removed. Extraction runs on **Claude Haiku 5.5** (`ANTHROPIC_MODEL`) with
+  **Claude Sonnet 5.5** (`ANTHROPIC_FALLBACK_MODEL`) as fallback when Haiku errors, refuses, or
+  returns no header fields; `ANTHROPIC_EFFORT` (default `medium`) sets how much the models think.
+  The JSON shape now comes from structured outputs rather than a forced tool call, which the
+  current Sonnet rejects. `OCRResponse.provider` now carries the answering model ID.
+- The A8-4 bench (`scripts.ocr_bench.run_bench`) compares Claude models (`--model`, repeatable)
+  instead of providers, and `baseline.json` holds a single model-agnostic accuracy `floor`.
+- Settings ignore unknown `.env` keys, so a `backend/.env` still carrying `GEMINI_API_KEY` loads.
+
 ## [0.2.0-sprint1-baseline] — 2026-06-16
 
 First tagged **Phase 2 engineering baseline** — a runnable, reproducible, documented reference

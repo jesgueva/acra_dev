@@ -12,7 +12,7 @@ Two things changed here in ACR-36, both of which had made this script unable to 
 2. It aligned line items positionally (`got_items[gi]`), so one dropped or reordered row misscored
    every row after it.
 
-Both now come from `backend/scripts/ocr_bench/scoring.py`, shared with the provider bench and the
+Both now come from `backend/scripts/ocr_bench/scoring.py`, shared with the model bench and the
 pytest gate — one scorer, three callers.
 
 Usage (from backend/, with the API on :8000):
@@ -106,13 +106,10 @@ def main() -> int:
         return 1
 
     baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
-    # The endpoint runs the production fallback chain, so the answering provider varies per
-    # document. Gate against the weaker of the two recorded baselines — it is the only floor the
-    # chain as a whole can be held to.
-    floor = {
-        metric: min(p[metric] for p in baseline["providers"].values())
-        for metric in scoring.GATE_METRICS
-    }
+    # The endpoint runs the production model chain, so the answering model varies per document.
+    # The recorded floor is model-agnostic — the bar every configured model is held to — so the
+    # chain as a whole is gated against the same numbers.
+    floor = {metric: baseline["floor"][metric] for metric in scoring.GATE_METRICS}
     failures = scoring.compare_to_baseline(result, floor)
 
     print()

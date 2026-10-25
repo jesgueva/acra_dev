@@ -25,7 +25,7 @@ Docker Compose for local infrastructure.
 | **Frontend** | Next.js 16 (App Router), React 19, TypeScript 5, Tailwind CSS v4, shadcn/ui, next-intl, TanStack Query, Axios |
 | **Backend** | FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic v2, python-jose (JWT), passlib/bcrypt |
 | **Database** | PostgreSQL 15 |
-| **AI extraction** | Hosted vision-LLM for receiving-document OCR (Google Gemini → Anthropic Claude fallback) |
+| **AI extraction** | Hosted vision-LLM for receiving-document OCR (Anthropic Claude Haiku 5.5 → Claude Sonnet 5.5 fallback) |
 | **Tests / CI** | pytest (85% coverage floor), Jest + Testing Library, GitHub Actions |
 
 ---
@@ -62,7 +62,7 @@ MB, `acra-frontend:local` ~223 MB, `postgres:15` ~467 MB — **~1 GB total**):
 - **OS:** anything Docker Desktop (macOS/Windows) or native Docker Engine (Linux) supports. No
   OS-specific application code.
 - **Network:** fully local/offline except the receiving/OCR flow, which needs outbound HTTPS to
-  reach `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` — everything else runs with no internet access.
+  reach the Anthropic API (`ANTHROPIC_API_KEY`) — everything else runs with no internet access.
 
 ---
 
@@ -250,8 +250,8 @@ package):
 ./scripts/validation-run.sh            # writes artifacts to ./validation-evidence/
 ```
 
-The OCR round-trip needs `GEMINI_API_KEY` (and optionally `ANTHROPIC_API_KEY`) in `backend/.env`;
-it is skipped with a clear notice if no key is present.
+The OCR round-trip needs `ANTHROPIC_API_KEY` in `backend/.env`; it is skipped with a clear notice
+if no key is present.
 
 ### Benchmarks and request logs
 
@@ -296,7 +296,7 @@ request. This is a property of the app's pre-existing error handling, not of the
 | Stack is up and `healthy`, but login/API calls fail with CORS errors in the browser console | `NEXT_PUBLIC_API_URL` is baked into the frontend bundle at **build** time; if you changed `ACRA_BACKEND_PORT` and only restarted (no `--build`), the browser is still calling the old port | Re-run with `--build` after changing `ACRA_BACKEND_PORT` — a restart alone doesn't recompile the bundle |
 | `migrate` never finishes / `backend` waits on it forever | `migrate` is a one-shot job (`alembic upgrade head`, then exits) with its healthcheck explicitly disabled in `docker-compose.yml` — it should just exit, not report a health status | Check its actual outcome with `docker compose logs migrate`; it should show the container exited `0`. A non-zero exit means a real migration failure |
 | `backend` never becomes healthy / stuck waiting on `migrate` | Usually a failed migration against a stale volume from a previous, incompatible schema | `docker compose logs migrate` for the real error; if it's a schema mismatch, `docker compose down -v` (wipes the Postgres volume) and retry |
-| Receiving/OCR upload doesn't auto-fill fields, or logs a clear "skipped" notice | Expected without `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` — the rest of the app runs fine without them | Set **`OCR_MOCK_MODE=true`** to run the flow end to end on a canned extraction with no key and no network call (see [Running OCR without an API key](#running-ocr-without-an-api-key)), or add a real key to exercise the providers |
+| Receiving/OCR upload doesn't auto-fill fields, or logs a clear "skipped" notice | Expected without `ANTHROPIC_API_KEY` — the rest of the app runs fine without it | Set **`OCR_MOCK_MODE=true`** to run the flow end to end on a canned extraction with no key and no network call (see [Running OCR without an API key](#running-ocr-without-an-api-key)), or add a real key to exercise the models |
 | Local (non-Docker) run: `alembic upgrade head` fails or `DATABASE_URL` errors | Postgres not running locally, wrong port (Compose Postgres is `5433`, a local install is usually `5432`), or `backend/.env` was never copied from the template | `cp backend/.env.example backend/.env` and confirm `DATABASE_URL` points at the Postgres you actually have running |
 | Frontend build fails after pulling latest `master` | Node version drift on your machine vs. the pinned version | `.nvmrc` / `frontend/.nvmrc` both pin **Node 24** (`backend/tests/test_packaging.py` asserts they stay in sync) — `nvm use` and retry |
 | `pytest --cov` passes in CI but fails your coverage floor locally | Wrong `--cov` target — the 85% floor is measured on `app.*`, not on whatever the bare command happens to cover | Use the dot-notation form from [Common commands](#common-commands): `pytest tests/ --cov=app --cov-report=term-missing` |
@@ -314,7 +314,7 @@ and by `scripts/validation-run.sh` for the measured evidence.
 | Capability | State | Notes |
 |---|---|---|
 | Auth (JWT) + RBAC + EN/ES i18n | ✅ Live (UI + API) | Anonymous reads rejected (401/403); privileges resolved per request. |
-| Receiving + AI OCR (Gemini → Claude) | ✅ Live (UI + API) | BOL upload auto-fills the form; duplicate-BOL guard; pallet × units leftover reconciliation; runnable with no API key via `OCR_MOCK_MODE` (see Environment below). |
+| Receiving + AI OCR (Claude Haiku 5.5 → Sonnet 5.5) | ✅ Live (UI + API) | BOL upload auto-fills the form; duplicate-BOL guard; pallet × units leftover reconciliation; runnable with no API key via `OCR_MOCK_MODE` (see Environment below). |
 | Inventory (filter / adjust / split / move / CSV / alerts / trace) | ✅ Live (UI + API) | On-hand stored as integer ×100; per-lot transaction log. |
 | Master data (contacts, products), Dashboard | ✅ Live (UI + API) | |
 | Work Orders (incl. SERIALIZABLE FIFO allocation), Users, Audit-log read | ⚙️ Backend complete, **UI placeholder** | Endpoints + tests exist; pages render "Coming Soon"; nav links commented out. |
@@ -337,21 +337,23 @@ Configuration is via env files (both are git-ignored; commit only the `.example`
 | `SECRET_KEY` | JWT signing key — generate a unique random value. |
 | `ALGORITHM` | JWT algorithm (`HS256`). |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Token lifetime. |
-| `GEMINI_API_KEY` | Google Gemini key for receiving-document extraction (primary). |
-| `ANTHROPIC_API_KEY` | Anthropic Claude key (extraction fallback). |
+| `ANTHROPIC_API_KEY` | Anthropic API key for receiving-document extraction. |
+| `ANTHROPIC_MODEL` | Primary extraction model (default `claude-haiku-5-5`). |
+| `ANTHROPIC_FALLBACK_MODEL` | Model tried when the primary errors, refuses, or extracts no header fields (default `claude-sonnet-5-5`; empty disables). |
+| `ANTHROPIC_EFFORT` | `low` / `medium` (default) / `high` / `xhigh` / `max` — how much the models think before answering. |
 | `OCR_MOCK_MODE` | `true`/`false` (default `false`). See "Running OCR without an API key" below. |
 | `LOG_FORMAT` | `text` (default, human-readable) or `json` (one structured object per request line). |
 
-The AI keys are only exercised by the receiving/OCR flow — the rest of the app runs without them.
+The AI key is only exercised by the receiving/OCR flow — the rest of the app runs without it.
 
 #### Running OCR without an API key
 
 Set `OCR_MOCK_MODE=true` (`backend/.env`, or `OCR_MOCK_MODE=true docker compose up -d` for the
 containerized stack) and the receiving/OCR endpoint returns a canned extraction result instead of
-calling Gemini/Claude — no key needed, no network call made. Upload
+calling Claude — no key needed, no network call made. Upload
 [`backend/tests/fixtures/ocr/sample_bol_gridded.png`](backend/tests/fixtures/ocr/sample_bol_gridded.png)
 on the Receiving page to see it end-to-end; every upload gets the same response regardless of
-content. Leave it unset/`false` to use the real providers.
+content. Leave it unset/`false` to use the real models.
 
 ### `frontend/.env.local` — copy from [`frontend/.env.local.example`](frontend/.env.local.example)
 

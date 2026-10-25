@@ -72,11 +72,15 @@ services:
       # Request-log format (ACR-43): "text" or "json". `docker compose logs` is the natural place
       # to want the structured form, so it is exposed here rather than left at the code default.
       LOG_FORMAT: ${LOG_FORMAT:-text}
-      # Optional; only the OCR path needs them.
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Optional; only the OCR path needs it.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # OCR model chain (primary → fallback) and effort; see backend/app/core/config.py. Exposed so
+      # a model swap is an env change, not an image rebuild. Empty fallback disables it.
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-5-5}
+      ANTHROPIC_FALLBACK_MODEL: ${ANTHROPIC_FALLBACK_MODEL-claude-sonnet-5-5}
+      ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-medium}
       # ACR-50: set to "true" to run the receiving/OCR flow on a canned extraction result instead
-      # of calling Gemini/Claude — no API key needed. Opt-in; unset/false preserves today's behavior.
+      # of calling Claude — no API key needed. Opt-in; unset/false preserves today's behavior.
       OCR_MOCK_MODE: ${OCR_MOCK_MODE:-false}
     ports:
       - "${ACRA_BACKEND_PORT:-8000}:8000"

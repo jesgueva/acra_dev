@@ -21,7 +21,7 @@ database and one deploy unit while still separating concerns by module.
                                                      │ image + extraction schema
                                                      ▼
                                             ┌──────────────────────┐
-                                            │ Hosted vision-LLM     │  (Gemini → Claude fallback)
+                                            │ Hosted vision-LLM     │  (Claude Haiku 5.5 → Sonnet 5.5 fallback)
                                             │ receiving-doc OCR     │
                                             └──────────────────────┘
 ```
@@ -237,7 +237,7 @@ tagged by the stage(s) measured there:
                                                     [6b,6e]
                                                      ▼
                                             ┌──────────────────────┐
-                                            │ Hosted vision-LLM     │  (Gemini ↔ Claude fallback)
+                                            │ Hosted vision-LLM     │  (Claude Haiku 5.5 → Sonnet 5.5 fallback)
                                             │ receiving-doc OCR     │
                                             └──────────────────────┘
 ```
@@ -252,7 +252,7 @@ Stock-drawdown boundary — C-04/C-05, all three concurrency-control shapes, mea
 | **6b** | `scripts/validation/ocr_roundtrip.py` | C-03, vision-LLM boundary | Real OCR round-trip vs. the recorded accuracy baseline (skipped without an API key) | A8-4 (ACR-36) |
 | **6c** | `scripts/validation/api_latency_bench.py` | Router layer, all routes, via `app/core/observability.py` + `app/core/benchmark.py` | p50/p95/p99 request latency, 5 endpoints × 100 requests | A8-2/A8-3 (ACR-43) |
 | **6d** | `scripts/validation/concurrency_bench.py` | C-04/C-05 boundary — the 4 stock-drawdown implementations named above | Correctness (lost updates, over-consumption) and goodput at 2→32 concurrent closers | A8-5 (ACR-44) |
-| **6e** | `python -m scripts.ocr_bench.run_bench` | C-03, vision-LLM boundary | Gemini vs. Claude head-to-head accuracy/latency over the 7-layout labelled corpus | A8-4 (ACR-36) |
+| **6e** | `python -m scripts.ocr_bench.run_bench` | C-03, vision-LLM boundary | Primary vs. fallback Claude model head-to-head accuracy/latency over the 7-layout labelled corpus | A8-4 (ACR-36) |
 | **6f** | `scripts/validation/aggregation_bench.py` | C-04, `inventory_lots` / migration `015` | Indexed vs. unindexed aggregate-read cost at volume (1k→200k lots) | A8-6 (ACR-45) |
 
 `app/core/benchmark.py` (shared percentiles, provenance) and `app/core/observability.py`

@@ -1,15 +1,15 @@
 {
-  "_comment": "Recorded accuracy floor for the A8-4 OCR gate. Regenerate with scripts.ocr_bench.run_bench and update DELIBERATELY \u2014 never to turn a red gate green. See tests/fixtures/ocr/README.md.",
+  "_comment": "Recorded accuracy floor for the A8-4 OCR gate: every configured Claude model must stay within tolerance of it. Regenerate with scripts.ocr_bench.run_bench and update DELIBERATELY — never to turn a red gate green. See tests/fixtures/ocr/README.md.",
   "run": {
     "captured_at": "2026-07-31T21:35:56+00:00",
     "git_sha": "45d4668",
     "host": "Darwin 25.5.0 arm64",
     "python": "3.13.13",
     "repeat": 3,
-    "models": {
-      "gemini": "gemini-2.5-flash",
-      "claude": "claude-sonnet-4-6"
-    },
+    "models": [
+      "gemini-2.5-flash",
+      "claude-sonnet-4-6"
+    ],
     "corpus": {
       "documents": 7,
       "layouts": [
@@ -30,43 +30,24 @@
       "quantity_tolerance": 0.01
     },
     "tolerance": 0.05,
-    "notes": "Both arms: 7 synthetic documents x 3 rounds. gemini paced at --delay 13 to stay inside the free tier's 5 requests/minute; claude needed no pacing. gemini-2.5-pro was measured and is NOT usable on this API key -- it returns 429 RESOURCE_EXHAUSTED in ~142ms on every call, so gemini-2.5-flash is the configured default. Synthetic documents are cleaner than real phone photos of paper BOLs, so these figures are an upper bound."
+    "notes": "Recorded 2026-07-31, when OCR ran gemini-2.5-flash primary with claude-sonnet-4-6 fallback; both arms ran 7 synthetic documents x 3 rounds. The floor is the claude-sonnet-4-6 arm -- the Claude model the receiving flow used before it went Claude-only -- and every configured model (claude-haiku-5-5 primary, claude-sonnet-5-5 fallback) is gated against it. The gemini arm (header 0.9625 / item-F1 0.9925 / numeric 0.9949) sits inside the same tolerance band and is kept in git history (8b84f9a). Synthetic documents are cleaner than real phone photos of paper BOLs, so these figures are an upper bound."
   },
-  "providers": {
-    "gemini": {
-      "header_accuracy": 0.9625,
-      "item_f1": 0.9925,
-      "numeric_accuracy": 0.9949,
-      "measured": {
-        "repeat": 3,
-        "calls": 21,
-        "scored": 20,
-        "errors": 1,
-        "item_precision": 1.0,
-        "item_recall": 0.9851,
-        "latency_ms": {
-          "p50": 6133.7,
-          "p95": 9313.1,
-          "p99": 9313.2
-        }
-      }
-    },
-    "claude": {
-      "header_accuracy": 0.9643,
-      "item_f1": 0.971,
-      "numeric_accuracy": 0.995,
-      "measured": {
-        "repeat": 3,
-        "calls": 21,
-        "scored": 21,
-        "errors": 0,
-        "item_precision": 0.971,
-        "item_recall": 0.971,
-        "latency_ms": {
-          "p50": 5154.7,
-          "p95": 7400.4,
-          "p99": 8542.4
-        }
+  "floor": {
+    "model": "claude-sonnet-4-6",
+    "header_accuracy": 0.9643,
+    "item_f1": 0.971,
+    "numeric_accuracy": 0.995,
+    "measured": {
+      "repeat": 3,
+      "calls": 21,
+      "scored": 21,
+      "errors": 0,
+      "item_precision": 0.971,
+      "item_recall": 0.971,
+      "latency_ms": {
+        "p50": 5154.7,
+        "p95": 7400.4,
+        "p99": 8542.4
       }
     }
   }
