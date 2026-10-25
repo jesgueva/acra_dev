@@ -22,8 +22,8 @@ Docker Compose for local infrastructure.
 
 | Layer | Stack |
 |---|---|
-| **Frontend** | Next.js 16 (App Router), React 19, TypeScript 5, Tailwind CSS v4, shadcn/ui, next-intl, TanStack Query, Axios |
-| **Backend** | FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic v2, python-jose (JWT), passlib/bcrypt |
+| **Frontend** | Next.js 16 (App Router), React 19, TypeScript 6, Tailwind CSS v4, shadcn/ui, next-intl, TanStack Query, Axios |
+| **Backend** | FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic v2, python-jose (JWT), bcrypt |
 | **Database** | PostgreSQL 15 |
 | **AI extraction** | Hosted vision-LLM for receiving-document OCR (Google Gemini → Anthropic Claude fallback) |
 | **Tests / CI** | pytest (85% coverage floor), Jest + Testing Library, GitHub Actions |

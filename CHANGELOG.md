@@ -10,6 +10,37 @@ Phase 2 realignment toward the append-only `StockMovement` ledger
 (see [`docs/architecture.md`](docs/architecture.md)). Skeleton stubs are present for the
 ledger module; behavior is not yet implemented.
 
+### Security
+- Upgraded backend and frontend dependencies to clear known advisories. The backend lock carried
+  75 (Starlette, python-multipart, Pillow, python-jose, anyio, urllib3, certifi, cryptography,
+  pytest); `npm audit` reported 30, 3 critical and 17 high (Next.js, axios, next-intl, PostCSS and
+  transitive packages). Two remain with no upstream fix: python-jose GHSA-3qf3-8w2g-rqmx and its
+  `ecdsa` dependency's CVE-2024-23342. Neither is reachable the way this app uses JWTs (HS256 with
+  a symmetric secret and a pinned algorithm list; nothing is signed with ECDSA).
+
+### Changed
+- **Backend:** FastAPI 0.115 → 0.162 (Starlette 0.41 → 1.10), SQLAlchemy 2.0 → 2.1, uvicorn
+  0.32 → 0.54, Pydantic 2.10 → 2.14, Alembic 1.14 → 1.20, anthropic 0.119 → 2.3, google-genai
+  1.2 → 2.33, pytest 8 → 9, pytest-asyncio 0.24 → 1.4, Pillow 11 → 13; `requirements.lock`
+  regenerated. `HTTP_422_UNPROCESSABLE_ENTITY` → `HTTP_422_UNPROCESSABLE_CONTENT` (Starlette 1.x
+  deprecation; same status code). **Behavior change from FastAPI:** a request with no bearer token
+  (or a non-Bearer scheme) now gets `401` with `WWW-Authenticate: Bearer` instead of `403`.
+  Authenticated requests lacking a privilege still get `403`. The frontend interceptor already
+  treats both the same way.
+- **Frontend:** Next.js 16.2 → 16.4, React 19.2 → 19.3, axios 1.15 → 1.20, next-intl 4.9 → 4.14,
+  TypeScript 5.9 → 6.0 (`tsconfig.json` now sets `rootDir`, which TS 6 requires), jest-dom 6 → 7,
+  Playwright 1.61 → 1.64. `shadcn` moved to `devDependencies` — it is only needed at build time.
+  ESLint stays on 9 (now marked unsupported upstream): the React, import and jsx-a11y plugins that
+  `eslint-config-next` pulls in do not declare ESLint 10 support yet.
+
+### Removed
+- `passlib` — never imported. `bcrypt`, which `app/core/security.py` calls directly, is now
+  declared instead of arriving transitively.
+- `autoprefixer` — unused; Tailwind v4's PostCSS plugin handles prefixing.
+
+### Fixed
+- Six type errors in frontend test files, which Next.js 16.4's build-time type check now reports.
+
 ## [0.2.0-sprint1-baseline] — 2026-06-16
 
 First tagged **Phase 2 engineering baseline** — a runnable, reproducible, documented reference
