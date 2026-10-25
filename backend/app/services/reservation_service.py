@@ -144,7 +144,7 @@ async def reserve(
 
     if data.quantity > available:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Insufficient available stock for product {data.product_id} "
                 f"in state '{data.state.value}': "
@@ -201,7 +201,7 @@ async def release(
 
     if reservation.status != ReservationStatus.ACTIVE.value:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Reservation {reservation_id} is already released",
         )
 

@@ -120,7 +120,7 @@ async def adjust_quantity(
     new_qty = lot.quantity_on_hand + delta
     if new_qty < 0:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Adjustment would result in negative quantity ({new_qty})",
         )
 
@@ -198,7 +198,7 @@ async def split_lot(
 
     if data.split_quantity > lot.quantity_on_hand:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Split quantity {data.split_quantity} exceeds lot quantity {lot.quantity_on_hand}",
         )
 

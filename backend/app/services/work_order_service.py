@@ -118,7 +118,7 @@ async def create_work_order(
 
     if hard_block:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="One or more materials have zero available quantity.",
         )
 

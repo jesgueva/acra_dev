@@ -102,7 +102,7 @@ async def create_shipment(
             )
         if lot.quantity_on_hand < item.quantity:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     f"Insufficient stock for lot {item.lot_id}: "
                     f"requested {item.quantity / 100:.2f}, "
