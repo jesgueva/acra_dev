@@ -77,7 +77,7 @@ import { PRIVILEGES, ROLES } from "@/src/lib/privileges";
 
 const mockUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 const mockUseQuery = useQuery as jest.MockedFunction<typeof useQuery>;
-const mockApiClient = apiClient as {
+const mockApiClient = apiClient as unknown as {
   get: jest.Mock;
   post: jest.Mock;
   patch: jest.Mock;
@@ -130,7 +130,7 @@ function setupWorkOrdersQuery(results: WorkOrder[] = []) {
     isLoading: false,
     error: null,
     refetch: jest.fn(),
-  } as ReturnType<typeof useQuery>);
+  } as unknown as ReturnType<typeof useQuery>);
 }
 
 beforeEach(() => {

@@ -165,7 +165,7 @@ beforeEach(() => {
     login: jest.fn(),
     logout: jest.fn(),
     hasPrivilege: (p: string) =>
-      [PRIVILEGES.SHIPPING_VIEW, PRIVILEGES.SHIPPING_CREATE].includes(p),
+      ([PRIVILEGES.SHIPPING_VIEW, PRIVILEGES.SHIPPING_CREATE] as string[]).includes(p),
   });
   mockUseMutation.mockReturnValue({ mutate, isPending: false });
   setupQueries();
