@@ -118,3 +118,52 @@ def test_cors_origin_list_ignores_blank_entries():
 
     settings = Settings(cors_origins="http://a.test,, ,http://b.test,")
     assert settings.cors_origin_list == ["http://a.test", "http://b.test"]
+
+
+# ---------------------------------------------------------------------------
+# 7. Production refuses an insecure SECRET_KEY (Railway deploy)
+# ---------------------------------------------------------------------------
+# The Railway IaC ships without secret values, so "deployed before SECRET_KEY was set" is a real
+# first-deploy state. Without the guard the API would boot and sign JWTs with the committed default.
+STRONG_SECRET = "x" * 48
+
+
+@pytest.mark.parametrize(
+    "secret_key",
+    ["dev-secret-key-change-in-production", "", "short-but-not-empty", "y" * 31],
+    ids=["committed-default", "empty", "short", "one-under-minimum"],
+)
+def test_production_refuses_an_insecure_secret_key(secret_key):
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError, match="SECRET_KEY"):
+        Settings(app_env="production", secret_key=secret_key)
+
+
+@pytest.mark.parametrize("app_env", ["Production", " PRODUCTION "])
+def test_production_is_recognised_whatever_its_case(app_env):
+    """A hand-typed `Production` in a dashboard must not silently switch the guard off."""
+    from pydantic import ValidationError
+
+    from app.core.config import DEV_SECRET_KEY, Settings
+
+    with pytest.raises(ValidationError, match="SECRET_KEY"):
+        Settings(app_env=app_env, secret_key=DEV_SECRET_KEY)
+
+
+def test_production_accepts_a_strong_secret_key():
+    from app.core.config import MIN_PRODUCTION_SECRET_KEY_LENGTH, Settings
+
+    assert Settings(app_env="production", secret_key=STRONG_SECRET).secret_key == STRONG_SECRET
+    exact = "z" * MIN_PRODUCTION_SECRET_KEY_LENGTH
+    assert Settings(app_env="production", secret_key=exact).secret_key == exact
+
+
+def test_development_keeps_the_dev_default():
+    """Local dev, CI and compose never set APP_ENV — the guard must not touch them."""
+    from app.core.config import DEV_SECRET_KEY, Settings
+
+    assert Settings.model_fields["app_env"].default == "development"
+    assert Settings(app_env="development", secret_key=DEV_SECRET_KEY).secret_key == DEV_SECRET_KEY

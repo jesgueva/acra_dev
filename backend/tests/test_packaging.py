@@ -33,6 +33,9 @@ ROOT_NVMRC = REPO_ROOT / ".nvmrc"
 FRONTEND_NVMRC = REPO_ROOT / "frontend" / ".nvmrc"
 PACKAGE_JSON = REPO_ROOT / "frontend" / "package.json"
 FRONTEND_DOCKERFILE = REPO_ROOT / "frontend" / "Dockerfile"
+COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
+RAILWAY_IAC = REPO_ROOT / ".railway" / "railway.ts"
+RAILWAY_PACKAGE_JSON = REPO_ROOT / ".railway" / "package.json"
 
 ENV_TEMPLATES = [
     BACKEND_DIR / ".env.example",
@@ -110,17 +113,20 @@ def _requires_python_floor() -> str:
 
 @requires_repo_root
 def test_node_version_is_consistent_across_the_repo():
-    """Root .nvmrc, frontend/.nvmrc and engines.node must name one Node major.
+    """Root .nvmrc, frontend/.nvmrc and both engines.node fields must name one Node major.
 
     Regression guard for the pre-ACR-42 state: root said 22, frontend said 24, engines said >=24.
+    `.railway/package.json` joined with the Railway IaC: the CLI evaluates railway.ts with whatever
+    `node` is on PATH, so it is held to the same major as everything else.
     """
     root = _major(ROOT_NVMRC.read_text())
     frontend = _major(FRONTEND_NVMRC.read_text())
     engines = _major(_package_json()["engines"]["node"])
+    railway = _major(json.loads(RAILWAY_PACKAGE_JSON.read_text())["engines"]["node"])
 
-    assert root == frontend == engines, (
+    assert root == frontend == engines == railway, (
         f"Node version drift: root .nvmrc={root}, frontend/.nvmrc={frontend}, "
-        f"package.json engines.node={engines}"
+        f"package.json engines.node={engines}, .railway/package.json engines.node={railway}"
     )
 
 
@@ -218,6 +224,28 @@ def test_frontend_dockerfile_node_matches_nvmrc():
 
     assert _major(tag) == declared, (
         f"frontend/Dockerfile builds on node:{tag} but .nvmrc declares Node {declared}"
+    )
+
+
+@requires_repo_root
+def test_railway_postgres_major_matches_compose_and_ci():
+    """Production must run the Postgres major that CI and the local stack test against.
+
+    `.railway/railway.ts` names its image explicitly because Railway's `postgres()` helper defaults
+    to a newer major (18) than anything in this repo runs. Without this test, bumping compose and CI
+    would leave production behind — or the reverse — and nothing else would notice.
+    """
+    railway = set(re.findall(r"postgres-ssl:(\d+)", RAILWAY_IAC.read_text()))
+    compose = set(re.findall(r"image:\s*postgres:(\d+)", COMPOSE_FILE.read_text()))
+    ci = set(re.findall(r"image:\s*postgres:(\d+)", CI_WORKFLOW.read_text()))
+
+    assert railway and compose and ci, (
+        f"could not find a Postgres image in every place: railway={railway}, compose={compose}, "
+        f"ci={ci}"
+    )
+    assert len(railway | compose | ci) == 1, (
+        f"Postgres major drift: .railway/railway.ts={sorted(railway)}, "
+        f"docker-compose.yml={sorted(compose)}, ci.yml={sorted(ci)}"
     )
 
 

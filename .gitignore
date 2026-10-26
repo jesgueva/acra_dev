@@ -19,6 +19,9 @@ frontend/out/
 frontend/coverage/
 *.tsbuildinfo
 
+# Railway IaC SDK (npm ci --prefix .railway)
+.railway/node_modules/
+
 # Environment
 # Catch-all rather than a list: `.env`, `.env.local` and `.env.*.local` left siblings like
 # `.env.backup` / `.env.a8-backup` untracked but NOT ignored, so they sat in `git status` as `??`

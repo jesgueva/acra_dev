@@ -10,6 +10,18 @@ Phase 2 realignment toward the append-only `StockMovement` ledger
 (see [`docs/architecture.md`](docs/architecture.md)). Skeleton stubs are present for the
 ledger module; behavior is not yet implemented.
 
+### Added
+- **Railway deployment, EU West (Amsterdam)** — `.railway/railway.ts` defines the production stack
+  (Postgres 15, backend with migrations as its pre-deploy step, frontend) as Railway
+  Infrastructure as Code, every resource pinned to `europe-west4-drams3a`. Secrets are declared
+  but never valued in the file. `.railway/check.ts` validates region pinning, secret handling,
+  backend URL wiring and ports offline; `.github/workflows/railway-iac.yml` runs it on every change
+  and, once opted in, plans/applies via Railway's action. Runbook: `docs/DEPLOY_RAILWAY.md`.
+- **`backend/scripts/bootstrap_admin.py`** — creates (or resets) a `company_admin` on a deployed
+  database without the demo data or demo passwords, granting the seed's role privileges.
+- **`APP_ENV=production`** — the API refuses to start with a missing, default or short
+  `SECRET_KEY`.
+
 ### Security
 - Upgraded backend and frontend dependencies to clear known advisories. The backend lock carried
   75 (Starlette, python-multipart, Pillow, python-jose, anyio, urllib3, certifi, cryptography,
