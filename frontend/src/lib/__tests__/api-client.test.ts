@@ -26,7 +26,7 @@ test("401 response triggers logout handler and navigates to /login?reason=sessio
   // Create an adapter that returns a 401
   const adapter401 = async () => {
     const err = new axios.AxiosError("Request failed with status code 401");
-    (err as Record<string, unknown>).response = { status: 401, data: {}, headers: {}, config: {} };
+    (err as unknown as Record<string, unknown>).response = { status: 401, data: {}, headers: {}, config: {} };
     throw err;
   };
 

@@ -55,6 +55,7 @@ export function UserForm({ target, roles, onClose, onSuccess }: UserFormProps) {
   useEffect(() => {
     if (target === null) return;
     if (target === "new") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prop→state sync that predates this rule; see KNOWN_ISSUES.md KI-10
       setUsername("");
       setFullName("");
       setPassword("");

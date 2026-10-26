@@ -205,7 +205,7 @@ them (ACR-42 / A10-4).
 | Python | 3.13 |
 | Node.js / npm | 24 / 11 |
 | PostgreSQL | 15 |
-| FastAPI / SQLAlchemy / Alembic | 0.115 / 2.0 / 1.14 |
+| FastAPI / SQLAlchemy / Alembic | 0.162 / 2.1 / 1.20 |
 | Next.js / React | 16 / 19 |
 | Docker / Compose | 29 / v5 |
 

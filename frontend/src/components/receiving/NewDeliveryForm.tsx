@@ -113,6 +113,7 @@ export default function NewDeliveryForm({
   // OCR pre-fill by name matching
   useEffect(() => {
     if (!initialValues) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- prop→state sync that predates this rule; see KNOWN_ISSUES.md KI-10
     if (initialValues.bol_reference) setBolReference(initialValues.bol_reference);
     if (initialValues.delivery_date) setDeliveryDate(initialValues.delivery_date);
 
@@ -171,6 +172,7 @@ export default function NewDeliveryForm({
       const internal = contacts.find(
         (c) => c.name.toLowerCase() === "internal" && c.type === "provider"
       );
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prop→state sync that predates this rule; see KNOWN_ISSUES.md KI-10
       if (internal) setContactId(internal.id);
       setSupplierLocked(true);
     } else {
