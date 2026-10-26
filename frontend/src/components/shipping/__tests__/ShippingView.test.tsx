@@ -75,7 +75,7 @@ function mockQueries({
   isLoading?: boolean;
   isError?: boolean;
 }) {
-  mockUseQuery.mockImplementation((options: { queryKey: unknown[] }) => {
+  mockUseQuery.mockImplementation((options: Parameters<typeof useQuery>[0]) => {
     if (options.queryKey[0] === "shipments") {
       return { data, isLoading, isError } as ReturnType<typeof useQuery>;
     }

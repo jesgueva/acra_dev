@@ -198,7 +198,7 @@ async function runAlertsQueryFn() {
   setupQueries();
   render(<Dashboard />);
 
-  const options = mockUseQuery.mock.calls[0][0] as { queryFn: () => Promise<unknown> };
+  const options = mockUseQuery.mock.calls[0][0] as unknown as { queryFn: () => Promise<unknown> };
   return options.queryFn();
 }
 
