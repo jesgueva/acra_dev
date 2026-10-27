@@ -22,8 +22,8 @@ Docker Compose for local infrastructure.
 
 | Layer | Stack |
 |---|---|
-| **Frontend** | Next.js 16 (App Router), React 19, TypeScript 5, Tailwind CSS v4, shadcn/ui, next-intl, TanStack Query, Axios |
-| **Backend** | FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic v2, python-jose (JWT), passlib/bcrypt |
+| **Frontend** | Next.js 16 (App Router), React 19, TypeScript 6, Tailwind CSS v4, shadcn/ui, next-intl, TanStack Query, Axios |
+| **Backend** | FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic v2, python-jose (JWT), bcrypt |
 | **Database** | PostgreSQL 15 |
 | **AI extraction** | Hosted vision-LLM for receiving-document OCR (Anthropic Claude Haiku 5.5 → Claude Sonnet 5.5 fallback) |
 | **Tests / CI** | pytest (85% coverage floor), Jest + Testing Library, GitHub Actions |
@@ -424,7 +424,7 @@ acra_dev/
 ├── backend/            # FastAPI app (router → service → repository), Alembic, pytest
 │   ├── app/            #   main.py, core/ (config, db, security, rbac, audit), models, routers, schemas, services
 │   ├── alembic/        #   migrations (versions/)
-│   ├── scripts/        #   seed_fake_data.py (--scale N for volume)
+│   ├── scripts/        #   seed_fake_data.py (--scale N for volume), bootstrap_admin.py (first admin, deployed DBs)
 │   └── tests/          #   pytest suite (+ integration/)
 ├── frontend/           # Next.js 16 App Router + shadcn/ui
 │   ├── app/            #   [locale]/ routes, api/auth/ server proxies, layout
@@ -433,6 +433,7 @@ acra_dev/
 ├── scripts/            # reset-db-and-seed.sh, smoke-test.sh, validation-run.sh, validation/
 ├── docs/               # architecture.md, RISK_LOG.md
 ├── docker-compose.yml  # full stack: db → migrate → backend → frontend (+ seed profile)
+├── .railway/           # Railway IaC: production stack in the EU (railway.ts + offline check.ts)
 ├── CHANGELOG.md · KNOWN_ISSUES.md · CONTRIBUTING.md
 └── CLAUDE.md           # engineering memory (conventions, patterns)
 ```
@@ -448,6 +449,7 @@ and [`CONTRIBUTING.md`](CONTRIBUTING.md) for branch strategy and conventions.
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | System decomposition, layering, repo→design map, version snapshot |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Packaging diagram, bring-up/health-check/teardown commands, running multiple stacks side by side |
+| [`docs/DEPLOY_RAILWAY.md`](docs/DEPLOY_RAILWAY.md) | Production deployment on Railway, EU West (Amsterdam): IaC, one-time bootstrap, secrets, first admin, day-2 ops |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branch strategy, naming, commits, tags, artifact storage, PR/CI flow |
 | [`CHANGELOG.md`](CHANGELOG.md) | Notable changes per release (Keep a Changelog) |
 | [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | Current known limitations and rough edges |

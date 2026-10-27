@@ -24,25 +24,25 @@ async def ocr_delivery(
     """Extract BOL fields from an uploaded image or PDF using OCR."""
     if file.content_type not in _OCR_ALLOWED_TYPES:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Unsupported file type. Use JPEG, PNG, or PDF.",
         )
     cl = request.headers.get("content-length")
     if cl and int(cl) > _OCR_MAX_SIZE:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="File exceeds maximum size of 10 MB.",
         )
     content = await file.read()
     if len(content) > _OCR_MAX_SIZE:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="File exceeds maximum size of 10 MB.",
         )
     result = ocr_service.process_image_bytes(content, file.content_type)
     if result.confidence == 0.0:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Unable to extract data. Please enter manually.",
         )
     return result

@@ -1,0 +1,129 @@
+name: Railway IaC
+
+# Validates .railway/railway.ts on every change (no credentials needed) and — once enabled — plans it
+# against the Railway project on pull requests and applies the reviewed plan on merge, via Railway's
+# official action (https://github.com/railwayapp/config).
+#
+# Plan/apply stay OFF until you opt in, so this workflow is green before a Railway project exists.
+# To enable (docs/DEPLOY_RAILWAY.md, "Apply from CI"):
+#   1. Settings → Secrets and variables → Actions → Secrets:   RAILWAY_TOKEN = a project token for
+#      the production environment
+#   2. Settings → Secrets and variables → Actions → Variables: RAILWAY_IAC_ENABLED = true
+
+on:
+  pull_request:
+    branches: ["master"]
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - ".railway/**"
+      # check.ts compares PORT against these Dockerfiles' EXPOSE and the Postgres image against
+      # compose/CI (via test_packaging.py), so a change on either side re-validates.
+      - "backend/Dockerfile"
+      - "frontend/Dockerfile"
+      - ".github/workflows/railway-iac.yml"
+  push:
+    branches: ["master"]
+    paths:
+      - ".railway/**"
+      - "backend/Dockerfile"
+      - "frontend/Dockerfile"
+      - ".github/workflows/railway-iac.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate railway.ts (typecheck + invariants)
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: .railway/package-lock.json
+
+      - name: Install the pinned Railway SDK
+        working-directory: .railway
+        run: npm ci
+
+      - name: Typecheck and check deployment invariants (EU region, no literal secrets, URL wiring)
+        working-directory: .railway
+        run: npm run verify
+
+  plan:
+    name: Plan against Railway
+    needs: validate
+    # Fork PRs never get repository secrets, so they are skipped rather than failed.
+    if: >-
+      vars.RAILWAY_IAC_ENABLED == 'true'
+      && github.event_name == 'pull_request'
+      && github.event.action != 'closed'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # the plan comment
+      actions: read
+      id-token: write # lets the comment post as the Railway bot instead of github-actions
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: .railway/package-lock.json
+
+      # The action only installs dependencies from a ROOT package.json, which this monorepo does not
+      # have; railway.ts resolves `railway/iac` from .railway/node_modules.
+      - name: Install the pinned Railway SDK
+        working-directory: .railway
+        run: npm ci
+
+      - uses: railwayapp/config@v1.2.0
+        with:
+          command: plan
+          railway-token: ${{ secrets.RAILWAY_TOKEN }}
+          cli-version: 5.71.0
+          package-manager: none
+
+  apply:
+    name: Apply the reviewed plan
+    if: >-
+      vars.RAILWAY_IAC_ENABLED == 'true'
+      && github.event_name == 'pull_request'
+      && github.event.action == 'closed'
+      && github.event.pull_request.merged
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    # Two merges in quick succession must apply in order, never concurrently or cancelled.
+    concurrency:
+      group: railway-iac-apply
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read # download the plan artifact pinned on the PR
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      # Applies exactly the change set the PR's plan comment showed; it does not re-plan. Destructive
+      # changes (deleting a service, the database, a variable) are refused here — merging a PR is not
+      # how the production database gets deleted. Apply those from a terminal after review:
+      # `railway config apply` (docs/DEPLOY_RAILWAY.md).
+      - uses: railwayapp/config@v1.2.0
+        with:
+          command: apply
+          railway-token: ${{ secrets.RAILWAY_TOKEN }}
+          cli-version: 5.71.0
+          confirm-destructive: "false"

@@ -49,6 +49,7 @@ export function CreatableCombobox({
   // Re-seed query when external state changes (e.g. OCR pre-fill)
   React.useEffect(() => {
     if (selectedItem) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prop→state sync that predates this rule; see KNOWN_ISSUES.md KI-10
       setQuery(selectedItem.label);
     } else if (pendingLabel) {
       setQuery(pendingLabel);

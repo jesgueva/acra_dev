@@ -93,7 +93,7 @@ async def create_worksheet(
     missing = sorted(product_ids - products_by_id.keys())
     if missing:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown product_id(s): {missing}",
         )
 
@@ -162,21 +162,21 @@ def _validate_close_lines(
     duplicates = sorted(lid for lid, n in Counter(submitted).items() if n > 1)
     if duplicates:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Duplicate line_id(s) in close request: {duplicates}",
         )
 
     unknown = sorted(set(submitted) - lines_by_id.keys())
     if unknown:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"line_id(s) not on this worksheet: {unknown}",
         )
 
     missing = sorted(lines_by_id.keys() - set(submitted))
     if missing:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Close request is missing line_id(s): {missing}",
         )
 
