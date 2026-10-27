@@ -11,7 +11,6 @@ bcrypt==5.0.0  # app/core/security.py calls bcrypt directly
 python-multipart==0.0.32
 python-dotenv==1.2.4
 Pillow==13.0.0
-google-genai==2.33.0
 anthropic==2.3.0
 httpx==0.28.1
 pytest==9.1.1

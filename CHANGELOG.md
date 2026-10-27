@@ -44,6 +44,18 @@ ledger module; behavior is not yet implemented.
   Playwright 1.61 → 1.64. `shadcn` moved to `devDependencies` — it is only needed at build time.
   ESLint stays on 9 (now marked unsupported upstream): the React, import and jsx-a11y plugins that
   `eslint-config-next` pulls in do not declare ESLint 10 support yet.
+- **Receiving-document OCR is Claude-only.** The Google Gemini extractor and the `google-genai`
+  dependency are removed. Extraction runs on **Claude Haiku 5.5** (`ANTHROPIC_MODEL`) with
+  **Claude Sonnet 5.5** (`ANTHROPIC_FALLBACK_MODEL`) as fallback when Haiku errors, refuses, or
+  returns no header fields; `ANTHROPIC_EFFORT` (default `medium`) sets how much the models think.
+  The JSON shape now comes from structured outputs rather than a forced tool call, which the
+  current Sonnet rejects. `OCRResponse.provider` now carries the answering model ID.
+- The A8-4 bench (`scripts.ocr_bench.run_bench`) compares Claude models (`--model`, repeatable)
+  instead of providers, and `baseline.json` holds a single model-agnostic accuracy `floor`.
+- Settings ignore unknown `.env` keys, so a `backend/.env` still carrying `GEMINI_API_KEY` loads.
+- `GEMINI_API_KEY` leaves `.railway/railway.ts`. On a Railway project that already has it set, the
+  next apply deletes the variable — a destructive change, which the CI apply refuses, so run
+  `railway config apply` from a terminal (`docs/DEPLOY_RAILWAY.md`).
 
 ### Removed
 - `passlib` — never imported. `bcrypt`, which `app/core/security.py` calls directly, is now

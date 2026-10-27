@@ -1,16 +1,18 @@
-"""OCR Service — Vision LLM-based BOL field extraction.
+"""OCR Service — Vision LLM-based BOL field extraction, Claude only.
 
-Two-tier pipeline:
-  1. Gemini    — primary  (`settings.gemini_model`, JSON schema output)
-  2. Claude    — fallback (`settings.anthropic_model`, used when Gemini fails or confidence == 0.0)
+Two-tier model chain on one provider:
+  1. `settings.anthropic_model`          — primary  (Claude Haiku 5.5 by default)
+  2. `settings.anthropic_fallback_model` — fallback (Claude Sonnet 5.5 by default), used when the
+     primary raises, refuses, or returns no header fields at all. Empty disables the fallback.
 
 Both model IDs are configuration, not constants, so a swap does not require a code change and the
 A8-4 comparison bench can report the model that actually ran.
 
-Both providers receive the raw file bytes (JPEG, PNG, or PDF) encoded as base64.
+The raw file bytes (JPEG, PNG, or PDF) go to Claude base64-encoded, and the reply is constrained to
+`_BOL_SCHEMA` with structured outputs, so it always parses.
 
-`settings.ocr_mock_mode` (ACR-50) short-circuits both providers with a canned response — see
-`_mock_response()` — so the receiving flow is runnable without API keys.
+`settings.ocr_mock_mode` (ACR-50) short-circuits the models with a canned response — see
+`_mock_response()` — so the receiving flow is runnable without an API key.
 """
 
 from __future__ import annotations
@@ -21,9 +23,6 @@ import logging
 from typing import Any
 
 import anthropic
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types as genai_types
 
 from app.core.config import settings
 from app.schemas.delivery import OCRItemResult, OCRResponse
@@ -31,18 +30,10 @@ from app.schemas.delivery import OCRItemResult, OCRResponse
 logger = logging.getLogger("acra.ocr")
 
 # ---------------------------------------------------------------------------
-# Lazy singletons — initialized on first use, reused across requests
+# Lazy singleton — initialized on first use, reused across requests
 # ---------------------------------------------------------------------------
 
-_gemini_client: genai.Client | None = None
 _anthropic_client: anthropic.Anthropic | None = None
-
-
-def _get_gemini_client() -> genai.Client:
-    global _gemini_client
-    if _gemini_client is None:
-        _gemini_client = genai.Client(api_key=settings.gemini_api_key)
-    return _gemini_client
 
 
 def _get_anthropic_client() -> anthropic.Anthropic:
@@ -103,12 +94,12 @@ def _parse_items(raw: list[dict[str, Any]]) -> list[OCRItemResult]:
 
 
 def _build_response(data: dict[str, Any], provider: str) -> OCRResponse:
-    """Shape a provider's raw JSON into the wire response.
+    """Shape a model's raw JSON into the wire response.
 
     `confidence` is a **header fill rate**, not an accuracy: it counts how many of the four header
     fields came back non-empty, so four wrong values still score 1.0. It keeps its meaning because
-    the 422 gate and the Gemini→Claude fallback both key off `> 0.0`; `header_fill_rate` carries the
-    same number under an honest name. Measured accuracy comes from the A8-4 bench
+    the 422 gate and the primary→fallback model chain both key off `> 0.0`; `header_fill_rate`
+    carries the same number under an honest name. Measured accuracy comes from the A8-4 bench
     (`backend/scripts/ocr_bench/`), which scores against a labelled corpus.
     """
     supplier = data.get("supplier")
@@ -131,58 +122,60 @@ def _build_response(data: dict[str, Any], provider: str) -> OCRResponse:
 
 
 # ---------------------------------------------------------------------------
-# Gemini 2.5 Flash (primary)
+# Claude extraction
 # ---------------------------------------------------------------------------
 
-def _extract_with_gemini(file_bytes: bytes, content_type: str) -> OCRResponse:
-    response = _get_gemini_client().models.generate_content(
-        model=settings.gemini_model,
-        contents=[
-            _OCR_EXTRACTION_INSTRUCTIONS,
-            genai_types.Part.from_bytes(data=base64.b64encode(file_bytes).decode(), mime_type=content_type),
-        ],
-        config=genai_types.GenerateContentConfig(
-            response_mime_type="application/json",
-        ),
-    )
-    parsed = json.loads(response.text)
-    return _build_response(parsed, "gemini")
+
+def _nullable(json_type: str) -> dict[str, Any]:
+    return {"anyOf": [{"type": json_type}, {"type": "null"}]}
 
 
-# ---------------------------------------------------------------------------
-# Claude Sonnet 4.6 (fallback)
-# ---------------------------------------------------------------------------
-
-_CLAUDE_TOOL = {
-    "name": "extract_bol_fields",
-    "description": _OCR_EXTRACTION_INSTRUCTIONS,
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "supplier": {"type": ["string", "null"]},
-            "carrier": {"type": ["string", "null"]},
-            "bol_reference": {"type": ["string", "null"]},
-            "delivery_date": {"type": ["string", "null"]},
+#: Structured-output schema. Every key is required and nullable rather than optional, so a field
+#: that is absent from the document comes back as an explicit null instead of a missing key.
+_BOL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "supplier": _nullable("string"),
+        "carrier": _nullable("string"),
+        "bol_reference": _nullable("string"),
+        "delivery_date": _nullable("string"),
+        "items": {
+            "type": "array",
             "items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "item_name": {"type": ["string", "null"]},
-                        "description": {"type": ["string", "null"]},
-                        "quantity": {"type": ["number", "null"]},
-                        "pallets": {"type": ["integer", "null"]},
-                        "units_per_pallet": {"type": ["integer", "null"]},
-                    },
+                "type": "object",
+                "properties": {
+                    "item_name": _nullable("string"),
+                    "description": _nullable("string"),
+                    "quantity": _nullable("number"),
+                    "pallets": _nullable("integer"),
+                    "units_per_pallet": _nullable("integer"),
                 },
+                "required": ["item_name", "description", "quantity", "pallets", "units_per_pallet"],
+                "additionalProperties": False,
             },
         },
-        "required": ["supplier", "carrier", "bol_reference", "delivery_date", "items"],
     },
+    "required": ["supplier", "carrier", "bol_reference", "delivery_date", "items"],
+    "additionalProperties": False,
 }
 
+#: Room for adaptive thinking as well as the JSON — thinking counts toward `max_tokens`, and a cap
+#: sized for the answer alone can be spent before any text is written.
+_MAX_TOKENS = 16000
 
-def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
+
+class ExtractionError(RuntimeError):
+    """Claude answered, but not with a usable extraction (refusal or truncated output)."""
+
+
+def _extract_with_claude(
+    file_bytes: bytes, content_type: str, model: str | None = None
+) -> OCRResponse:
+    """One extraction on one model — `settings.anthropic_model` unless `model` names another.
+
+    `provider` on the result is the model ID, so a caller can tell the primary from the fallback.
+    """
+    model = model or settings.anthropic_model
     b64 = base64.b64encode(file_bytes).decode()
     file_block: dict[str, Any]
     if content_type == "application/pdf":
@@ -197,10 +190,12 @@ def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
         }
 
     response = _get_anthropic_client().messages.create(
-        model=settings.anthropic_model,
-        max_tokens=2048,
-        tools=[_CLAUDE_TOOL],
-        tool_choice={"type": "tool", "name": "extract_bol_fields"},
+        model=model,
+        max_tokens=_MAX_TOKENS,
+        output_config={
+            "effort": settings.anthropic_effort,
+            "format": {"type": "json_schema", "schema": _BOL_SCHEMA},
+        },
         messages=[
             {
                 "role": "user",
@@ -211,8 +206,18 @@ def _extract_with_claude(file_bytes: bytes, content_type: str) -> OCRResponse:
             }
         ],
     )
-    tool_block = response.content[0]
-    return _build_response(tool_block.input, "claude")
+    if response.stop_reason == "refusal":
+        category = response.stop_details.category if response.stop_details else None
+        raise ExtractionError(f"{model} declined the request (category: {category})")
+    if response.stop_reason == "max_tokens":
+        raise ExtractionError(f"{model} hit max_tokens={_MAX_TOKENS} before finishing the JSON")
+    # Adaptive thinking means the reply can open with `thinking` blocks, so find the text by type.
+    text = next((block.text for block in response.content if block.type == "text"), None)
+    if text is None:
+        raise ExtractionError(
+            f"{model} returned no text block (stop_reason: {response.stop_reason})"
+        )
+    return _build_response(json.loads(text), model)
 
 
 # ---------------------------------------------------------------------------
@@ -252,22 +257,26 @@ def process_image_bytes(file_bytes: bytes, content_type: str) -> OCRResponse:
     if settings.ocr_mock_mode:
         return _mock_response()
 
-    try:
-        result = _extract_with_gemini(file_bytes, content_type)
-        if result.confidence > 0.0:
-            return result
-    except genai_errors.ServerError as exc:
-        logger.warning("[gemini] server error %s (%s) — falling back to Claude", exc.code, exc.status)
-    except genai_errors.ClientError as exc:
-        logger.warning("[gemini] client error %s (%s) — falling back to Claude", exc.code, exc.status)
-    except json.JSONDecodeError as exc:
-        logger.warning("[gemini] invalid JSON in response (pos %d) — falling back to Claude", exc.pos)
-    except Exception:
-        logger.warning("[gemini] unexpected error — falling back to Claude", exc_info=True)
+    models = [settings.anthropic_model]
+    fallback = settings.anthropic_fallback_model
+    if fallback and fallback != settings.anthropic_model:
+        models.append(fallback)
 
-    try:
-        result = _extract_with_claude(file_bytes, content_type)
-        return result
-    except Exception as exc:
-        logger.error("[claude] also failed: %s", exc, exc_info=True)
-        return OCRResponse(confidence=0.0)
+    for model in models:
+        try:
+            result = _extract_with_claude(file_bytes, content_type, model)
+        except anthropic.APIStatusError as exc:
+            logger.warning("[%s] API error %s: %s", model, exc.status_code, exc.message)
+        except anthropic.APIConnectionError as exc:
+            logger.warning("[%s] connection error: %s", model, exc)
+        except ExtractionError as exc:
+            logger.warning("[%s] %s", model, exc)
+        except Exception:
+            logger.warning("[%s] unexpected error", model, exc_info=True)
+        else:
+            if result.confidence > 0.0:
+                return result
+            logger.warning("[%s] no header fields extracted", model)
+
+    logger.error("OCR failed on every configured model: %s", ", ".join(models))
+    return OCRResponse(confidence=0.0)

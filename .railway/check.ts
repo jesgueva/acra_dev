@@ -19,7 +19,7 @@ import program from "./railway.ts";
 
 const REQUIRED_REGION = "europe-west4-drams3a"; // EU West, Amsterdam
 const REQUIRED_BUCKET_REGION = "ams";
-// Matched on the END of the name: ACCESS_TOKEN_EXPIRE_MINUTES is config, GEMINI_API_KEY is not.
+// Matched on the END of the name: ACCESS_TOKEN_EXPIRE_MINUTES is config, ANTHROPIC_API_KEY is not.
 const SECRET_NAME = /(^|_)(SECRET|SECRET_KEY|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY)$/;
 const REFERENCE = /\$\{\{[^}]+\}\}/g;
 

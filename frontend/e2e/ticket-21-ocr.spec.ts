@@ -18,7 +18,7 @@ import { allLots, inStorageTotal } from "./helpers/inventory";
  * with: scan the bill of lading, let the extraction fill the form, correct it, then confirm.
  *
  * **The OCR endpoint is stubbed at the network boundary**, not called for real. `POST
- * /deliveries/ocr` hands the image to Gemini/Anthropic, so an unstubbed test would need live API
+ * /deliveries/ocr` hands the image to Anthropic's Claude, so an unstubbed test would need live API
  * keys, cost money per run, take seconds against NFR-002's 10s budget, and fail whenever the model
  * phrased itself differently. What is under test here is the contract the UI depends on — given a
  * well-formed `OCRResponse`, does the form populate, can the clerk correct it, and is the

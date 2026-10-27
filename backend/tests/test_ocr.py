@@ -1,12 +1,14 @@
 """
 Tests for T08 — OCR Service & API (Vision LLM pipeline).
 Expected: 6+ passed, 0 failed.
-All tests run without live API keys — Gemini and Claude calls are mocked.
+All tests run without live API keys — Claude calls are mocked.
 """
 import json
 from io import BytesIO
 from unittest.mock import MagicMock, patch, AsyncMock
 
+import anthropic
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
@@ -21,6 +23,19 @@ from app.services import ocr_service
 from tests.conftest import _make_rbac_session, _override
 
 BASE_URL = "http://test"
+
+PRIMARY = "claude-haiku-5-5"
+FALLBACK = "claude-sonnet-5-5"
+
+
+@pytest.fixture(autouse=True)
+def _pin_models():
+    """Pin the chain so these tests do not depend on whatever a developer's .env configures."""
+    with (
+        patch.object(settings, "anthropic_model", PRIMARY),
+        patch.object(settings, "anthropic_fallback_model", FALLBACK),
+    ):
+        yield
 
 
 def _small_jpeg_bytes() -> bytes:
@@ -42,8 +57,45 @@ _GOOD_RESPONSE = OCRResponse(
     ],
     confidence=1.0,
     header_fill_rate=1.0,
-    provider="gemini",
+    provider=PRIMARY,
 )
+
+_EXTRACTION = {
+    "supplier": "Acme Metals",
+    "carrier": "Fast Freight",
+    "bol_reference": "BOL-001",
+    "delivery_date": "01/15/2026",
+    "items": [],
+}
+
+
+def _claude_message(payload=None, stop_reason="end_turn", stop_details=None):
+    """A Messages API reply as the SDK returns it: adaptive thinking first, then the JSON text."""
+    blocks = [MagicMock(type="thinking", thinking="")]
+    if payload is not None:
+        blocks.append(MagicMock(type="text", text=json.dumps(payload)))
+    return MagicMock(content=blocks, stop_reason=stop_reason, stop_details=stop_details)
+
+
+def _client_by_model(**replies):
+    """A client whose reply depends on the requested model; an Exception value is raised."""
+
+    def create(**kwargs):
+        reply = replies[kwargs["model"]]
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    client = MagicMock()
+    client.messages.create.side_effect = create
+    return client
+
+
+def _api_status_error(status: int) -> anthropic.APIStatusError:
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    return anthropic.APIStatusError(
+        f"Error code: {status}", response=httpx.Response(status, request=request), body=None
+    )
 
 
 @pytest.mark.asyncio
@@ -138,15 +190,26 @@ async def test_ocr_endpoint_both_providers_fail_returns_422():
             app.dependency_overrides.pop(get_db, None)
 
 
-def test_ocr_service_falls_back_to_claude_when_gemini_fails():
-    with (
-        patch("app.services.ocr_service._extract_with_gemini", side_effect=Exception("Gemini API error")),
-        patch("app.services.ocr_service._extract_with_claude", return_value=_GOOD_RESPONSE),
-    ):
+def test_ocr_service_falls_back_to_the_fallback_model_when_the_primary_fails():
+    def extract(file_bytes, content_type, model):
+        if model == PRIMARY:
+            raise Exception("primary API error")
+        return _GOOD_RESPONSE
+
+    with patch("app.services.ocr_service._extract_with_claude", side_effect=extract) as extract_mock:
         result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
 
     assert result.supplier == "Acme Metals"
     assert result.confidence == 1.0
+    assert [c.args[2] for c in extract_mock.call_args_list] == [PRIMARY, FALLBACK]
+
+
+def test_ocr_service_does_not_call_the_fallback_when_the_primary_succeeds():
+    with patch("app.services.ocr_service._extract_with_claude", return_value=_GOOD_RESPONSE) as extract_mock:
+        result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
+
+    assert result.provider == PRIMARY
+    assert extract_mock.call_count == 1
 
 
 def test_ocr_service_build_response_and_parse_items():
@@ -160,7 +223,7 @@ def test_ocr_service_build_response_and_parse_items():
             {"item_name": "Bolt", "quantity": None, "pallets": None, "units_per_pallet": None},
         ],
     }
-    result = ocr_service._build_response(data, "gemini")
+    result = ocr_service._build_response(data, PRIMARY)
     assert result.supplier == "Acme Metals"
     assert result.confidence == 1.0
     assert len(result.items) == 2
@@ -173,16 +236,16 @@ def test_ocr_service_build_response_and_parse_items():
     assert result.items[1].quantity is None
 
 
-def test_build_response_reports_the_answering_provider():
+def test_build_response_reports_the_answering_model():
     """ACR-36: `provider` was accepted by _build_response and thrown away."""
     data = {"supplier": "Acme Metals", "items": []}
-    assert ocr_service._build_response(data, "gemini").provider == "gemini"
-    assert ocr_service._build_response(data, "claude").provider == "claude"
+    assert ocr_service._build_response(data, PRIMARY).provider == PRIMARY
+    assert ocr_service._build_response(data, FALLBACK).provider == FALLBACK
 
 
 def test_header_fill_rate_mirrors_confidence():
     data = {"supplier": "Acme Metals", "carrier": "Fast Freight", "items": []}
-    result = ocr_service._build_response(data, "gemini")
+    result = ocr_service._build_response(data, PRIMARY)
     assert result.header_fill_rate == result.confidence == 0.5
 
 
@@ -200,45 +263,14 @@ def test_confidence_measures_presence_not_correctness():
         "delivery_date": "not a date",
         "items": [],
     }
-    result = ocr_service._build_response(nonsense, "gemini")
+    result = ocr_service._build_response(nonsense, PRIMARY)
     assert result.confidence == 1.0
     assert result.header_fill_rate == 1.0
 
 
-def test_ocr_service_extract_with_gemini():
-    json_payload = json.dumps({
-        "supplier": "Acme Metals",
-        "carrier": "Fast Freight",
-        "bol_reference": "BOL-001",
-        "delivery_date": "01/15/2026",
-        "items": [],
-    })
-    mock_response = MagicMock()
-    mock_response.text = json_payload
-    mock_client = MagicMock()
-    mock_client.models.generate_content.return_value = mock_response
-
-    with patch("app.services.ocr_service._get_gemini_client", return_value=mock_client):
-        result = ocr_service._extract_with_gemini(_small_jpeg_bytes(), "image/jpeg")
-
-    assert result.bol_reference == "BOL-001"
-    assert result.confidence == 1.0
-    assert result.provider == "gemini"
-    mock_client.models.generate_content.assert_called_once()
-
-
 def test_ocr_service_extract_with_claude_jpeg_and_pdf():
-    tool_input = {
-        "supplier": "Acme Metals",
-        "carrier": "Fast Freight",
-        "bol_reference": "BOL-001",
-        "delivery_date": "01/15/2026",
-        "items": [],
-    }
-    mock_response = MagicMock()
-    mock_response.content = [MagicMock(input=tool_input)]
     mock_client = MagicMock()
-    mock_client.messages.create.return_value = mock_response
+    mock_client.messages.create.return_value = _claude_message(_EXTRACTION)
 
     with patch("app.services.ocr_service._get_anthropic_client", return_value=mock_client):
         result_jpeg = ocr_service._extract_with_claude(_small_jpeg_bytes(), "image/jpeg")
@@ -246,67 +278,171 @@ def test_ocr_service_extract_with_claude_jpeg_and_pdf():
 
     assert result_jpeg.bol_reference == "BOL-001"
     assert result_pdf.bol_reference == "BOL-001"
-    assert result_jpeg.provider == "claude"
-    assert result_pdf.provider == "claude"
+    assert result_jpeg.provider == PRIMARY
+    assert result_pdf.provider == PRIMARY
     assert mock_client.messages.create.call_count == 2
 
+    jpeg_call, pdf_call = mock_client.messages.create.call_args_list
+    assert jpeg_call.kwargs["messages"][0]["content"][0]["type"] == "image"
+    assert jpeg_call.kwargs["messages"][0]["content"][0]["source"]["media_type"] == "image/jpeg"
+    assert pdf_call.kwargs["messages"][0]["content"][0]["type"] == "document"
+    assert pdf_call.kwargs["messages"][0]["content"][0]["source"]["media_type"] == "application/pdf"
 
-def test_ocr_service_gemini_zero_confidence_falls_back_to_claude():
+
+def test_extract_with_claude_requests_structured_output_without_forced_tool_use():
+    """Sonnet 5.5 rejects a forced `tool_choice` with a 400, so the JSON shape comes from
+    structured outputs instead — and the same request must work on every model in the chain."""
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = _claude_message(_EXTRACTION)
+
+    with patch("app.services.ocr_service._get_anthropic_client", return_value=mock_client):
+        ocr_service._extract_with_claude(_small_jpeg_bytes(), "image/png", FALLBACK)
+
+    kwargs = mock_client.messages.create.call_args.kwargs
+    assert kwargs["model"] == FALLBACK
+    assert kwargs["output_config"]["format"] == {
+        "type": "json_schema",
+        "schema": ocr_service._BOL_SCHEMA,
+    }
+    assert kwargs["output_config"]["effort"] == settings.anthropic_effort
+    assert "tools" not in kwargs and "tool_choice" not in kwargs
+    # Sampling parameters are rejected by the current models; thinking is left adaptive.
+    assert not {"temperature", "top_p", "top_k", "thinking"} & kwargs.keys()
+    # Thinking counts toward max_tokens — a cap sized for the JSON alone would truncate it.
+    assert kwargs["max_tokens"] >= 8000
+
+
+def test_bol_schema_meets_structured_output_rules():
+    """Structured outputs require `additionalProperties: false` and every key listed in `required`
+    on every object; a schema that drifts from that is rejected with a 400 on every upload."""
+
+    def objects(schema):
+        if isinstance(schema, dict):
+            if schema.get("type") == "object":
+                yield schema
+            for value in schema.values():
+                yield from objects(value)
+        elif isinstance(schema, list):
+            for value in schema:
+                yield from objects(value)
+
+    found = list(objects(ocr_service._BOL_SCHEMA))
+    assert len(found) == 2  # the BOL and its line item
+    for obj in found:
+        assert obj["additionalProperties"] is False
+        assert set(obj["required"]) == set(obj["properties"])
+
+
+def test_extract_with_claude_reads_the_text_block_after_thinking():
+    """Adaptive thinking puts `thinking` blocks first — reading content[0] would read the wrong one."""
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = _claude_message(_EXTRACTION)
+    assert mock_client.messages.create.return_value.content[0].type == "thinking"
+
+    with patch("app.services.ocr_service._get_anthropic_client", return_value=mock_client):
+        result = ocr_service._extract_with_claude(_small_jpeg_bytes(), "image/jpeg")
+
+    assert result.supplier == "Acme Metals"
+
+
+def test_extract_with_claude_raises_on_refusal():
+    refusal = _claude_message(stop_reason="refusal", stop_details=MagicMock(category="general_harms"))
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = refusal
+
     with (
-        patch("app.services.ocr_service._extract_with_gemini", return_value=OCRResponse(confidence=0.0)),
-        patch("app.services.ocr_service._extract_with_claude", return_value=_GOOD_RESPONSE),
+        patch("app.services.ocr_service._get_anthropic_client", return_value=mock_client),
+        pytest.raises(ocr_service.ExtractionError, match="declined.*general_harms"),
     ):
+        ocr_service._extract_with_claude(_small_jpeg_bytes(), "image/jpeg")
+
+
+def test_extract_with_claude_raises_on_truncated_output():
+    """`max_tokens` mid-JSON is not an extraction — never try to parse half an object."""
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = _claude_message(stop_reason="max_tokens")
+
+    with (
+        patch("app.services.ocr_service._get_anthropic_client", return_value=mock_client),
+        pytest.raises(ocr_service.ExtractionError, match="max_tokens"),
+    ):
+        ocr_service._extract_with_claude(_small_jpeg_bytes(), "image/jpeg")
+
+
+def test_extract_with_claude_raises_when_no_text_comes_back():
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = _claude_message(payload=None)
+
+    with (
+        patch("app.services.ocr_service._get_anthropic_client", return_value=mock_client),
+        pytest.raises(ocr_service.ExtractionError, match="no text block"),
+    ):
+        ocr_service._extract_with_claude(_small_jpeg_bytes(), "image/jpeg")
+
+
+def test_ocr_service_primary_zero_confidence_falls_back():
+    def extract(file_bytes, content_type, model):
+        return OCRResponse(confidence=0.0) if model == PRIMARY else _GOOD_RESPONSE
+
+    with patch("app.services.ocr_service._extract_with_claude", side_effect=extract):
         result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
 
     assert result.confidence == 1.0
     assert result.supplier == "Acme Metals"
 
 
-def test_fallback_reports_claude_through_the_real_build_path():
-    """A genuine Gemini failure must surface `provider == "claude"`.
+@pytest.mark.parametrize(
+    "primary_reply",
+    [
+        RuntimeError("haiku is down"),
+        _api_status_error(529),
+        anthropic.APIConnectionError(
+            request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        ),
+        _claude_message(stop_reason="refusal", stop_details=MagicMock(category="general_harms")),
+    ],
+    ids=["unexpected", "overloaded", "connection", "refusal"],
+)
+def test_fallback_reports_the_fallback_model_through_the_real_build_path(primary_reply):
+    """A genuine primary failure must surface `provider == <fallback model>`.
 
-    Patched at the *client* boundary rather than at `_extract_with_*`, so the provider label comes
-    from the real `_build_response` call instead of from a mock's return value.
+    Patched at the *client* boundary rather than at `_extract_with_claude`, so the label comes from
+    the real `_build_response` call instead of from a mock's return value.
     """
-    tool_input = {
-        "supplier": "Acme Metals",
-        "carrier": "Fast Freight",
-        "bol_reference": "BOL-001",
-        "delivery_date": "01/15/2026",
-        "items": [],
-    }
-    claude_response = MagicMock()
-    claude_response.content = [MagicMock(input=tool_input)]
-    claude_client = MagicMock()
-    claude_client.messages.create.return_value = claude_response
+    client = _client_by_model(**{PRIMARY: primary_reply, FALLBACK: _claude_message(_EXTRACTION)})
 
-    gemini_client = MagicMock()
-    gemini_client.models.generate_content.side_effect = RuntimeError("gemini is down")
-
-    with (
-        patch("app.services.ocr_service._get_gemini_client", return_value=gemini_client),
-        patch("app.services.ocr_service._get_anthropic_client", return_value=claude_client),
-    ):
+    with patch("app.services.ocr_service._get_anthropic_client", return_value=client):
         result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
 
-    assert result.provider == "claude"
+    assert result.provider == FALLBACK
     assert result.bol_reference == "BOL-001"
 
 
 def test_total_failure_reports_no_provider():
-    gemini_client = MagicMock()
-    gemini_client.models.generate_content.side_effect = RuntimeError("gemini is down")
-    claude_client = MagicMock()
-    claude_client.messages.create.side_effect = RuntimeError("claude is down too")
+    client = _client_by_model(
+        **{PRIMARY: RuntimeError("haiku is down"), FALLBACK: _api_status_error(500)}
+    )
 
-    with (
-        patch("app.services.ocr_service._get_gemini_client", return_value=gemini_client),
-        patch("app.services.ocr_service._get_anthropic_client", return_value=claude_client),
-    ):
+    with patch("app.services.ocr_service._get_anthropic_client", return_value=client):
         result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
 
     assert result.confidence == 0.0
     assert result.provider is None
+
+
+@pytest.mark.parametrize("fallback", ["", PRIMARY], ids=["disabled", "same-as-primary"])
+def test_no_second_call_when_there_is_no_distinct_fallback(fallback):
+    """An empty fallback disables the chain; naming the primary twice must not double-bill it."""
+    client = _client_by_model(**{PRIMARY: RuntimeError("haiku is down")})
+
+    with (
+        patch.object(settings, "anthropic_fallback_model", fallback),
+        patch("app.services.ocr_service._get_anthropic_client", return_value=client),
+    ):
+        result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
+
+    assert result.confidence == 0.0
+    assert client.messages.create.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -325,7 +461,7 @@ async def test_ocr_endpoint_surfaces_provider_and_fill_rate_on_the_wire():
                 )
             assert resp.status_code == 200
             body = resp.json()
-            assert body["provider"] == "gemini"
+            assert body["provider"] == PRIMARY
             assert body["header_fill_rate"] == 1.0
             assert body["items"][0]["item_name"] == "Steel Rod"
             assert body["items"][0]["pallets"] == 2
@@ -354,15 +490,34 @@ async def test_ocr_endpoint_without_privilege_returns_403():
 
 # ── ACR-50 / A10-2: offline/mock mode ──────────────────────────────────────
 
+def test_settings_load_from_an_env_file_that_still_names_gemini(tmp_path):
+    """Gemini was removed, but existing `backend/.env` files still carry GEMINI_API_KEY — and
+    pydantic-settings rejects unknown keys by default, which would fail backend startup."""
+    from app.core.config import Settings
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("GEMINI_API_KEY=old-key\nGEMINI_MODEL=gemini-2.5-flash\n")
+    loaded = Settings(_env_file=env_file)
+    assert not hasattr(loaded, "gemini_api_key")
+
+
+def test_ocr_model_defaults():
+    from app.core.config import Settings
+
+    defaults = Settings(_env_file=None)
+    assert defaults.anthropic_model == "claude-haiku-5-5"
+    assert defaults.anthropic_fallback_model == "claude-sonnet-5-5"
+    assert defaults.anthropic_effort == "medium"
+
+
 def test_ocr_mock_mode_defaults_to_off():
     """Negative control: mock mode must be opt-in, never the default."""
     assert settings.ocr_mock_mode is False
 
 
-def test_ocr_service_mock_mode_returns_canned_response_without_calling_providers():
+def test_ocr_service_mock_mode_returns_canned_response_without_calling_claude():
     with (
         patch.object(settings, "ocr_mock_mode", True),
-        patch("app.services.ocr_service._get_gemini_client") as gemini_client,
         patch("app.services.ocr_service._get_anthropic_client") as claude_client,
     ):
         result = ocr_service.process_image_bytes(_small_jpeg_bytes(), "image/jpeg")
@@ -373,7 +528,6 @@ def test_ocr_service_mock_mode_returns_canned_response_without_calling_providers
     assert result.confidence == 1.0
     assert len(result.items) == 3
     assert result.items[0].item_name == "Galvanized Steel Sheet"
-    gemini_client.assert_not_called()
     claude_client.assert_not_called()
 
 
@@ -394,9 +548,7 @@ async def test_ocr_endpoint_mock_mode_returns_200_without_api_keys():
 
     with (
         patch.object(settings, "ocr_mock_mode", True),
-        patch.object(settings, "gemini_api_key", ""),
         patch.object(settings, "anthropic_api_key", ""),
-        patch("app.services.ocr_service._get_gemini_client") as gemini_client,
         patch("app.services.ocr_service._get_anthropic_client") as claude_client,
     ):
         app.dependency_overrides[get_db] = _override(session)
@@ -414,7 +566,6 @@ async def test_ocr_endpoint_mock_mode_returns_200_without_api_keys():
             assert len(body["items"]) == 3
         finally:
             app.dependency_overrides.pop(get_db, None)
-    gemini_client.assert_not_called()
     claude_client.assert_not_called()
 
 

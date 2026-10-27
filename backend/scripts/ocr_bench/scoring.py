@@ -252,9 +252,9 @@ class CorpusScore:
     **Accuracy is computed over documents that actually returned an extraction.** A provider that
     rate-limits or times out has an *availability* problem, not an accuracy one, and folding the
     two together produces a badly misleading comparison: the first live run of this bench scored
-    gemini at 0.483 F1 purely because 14 of 21 calls came back 429, which reads as "the model is
-    bad at reading BOLs" when it means "the free tier allows 5 requests a minute". Failures are
-    reported separately via `error_count` / `error_rate`.
+    one arm at 0.483 F1 purely because 14 of 21 calls came back 429, which reads as "the model is
+    bad at reading BOLs" when it means "the key's rate limit ran out". Failures are reported
+    separately via `error_count` / `error_rate`.
     """
 
     documents: list[BolScore] = field(default_factory=list)

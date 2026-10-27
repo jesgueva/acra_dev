@@ -1,17 +1,21 @@
-"""Opt-in provider comparison bench — the configured Gemini model vs the configured Claude model.
+"""Opt-in model comparison bench — Claude models head to head on the labelled corpus.
 
-Renders the labelled corpus, sends every document to each provider, scores the extractions against
+Renders the labelled corpus, sends every document to each model, scores the extractions against
 ground truth, and writes machine-readable evidence with enough run metadata to repeat the run.
 
-This calls `_extract_with_gemini` / `_extract_with_claude` **directly** rather than going through
-`process_image_bytes`, because the production entry point silently falls back from Gemini to Claude
-— which is right for a user request and useless for a comparison, since a Gemini failure would be
-scored as a Gemini result.
+This calls `_extract_with_claude` **directly**, once per model, rather than going through
+`process_image_bytes`, because the production entry point silently falls back from the primary
+model to the fallback — which is right for a user request and useless for a comparison, since a
+primary failure would be scored as a primary result.
 
-Costs real money and needs real API keys, so it never runs in CI. Usage from `backend/`:
+Costs real money and needs a real API key, so it never runs in CI. Usage from `backend/`:
 
-    python -m scripts.ocr_bench.run_bench --provider both --repeat 3
-    python -m scripts.ocr_bench.run_bench --provider gemini --out /tmp/bench
+    python -m scripts.ocr_bench.run_bench --repeat 3
+    python -m scripts.ocr_bench.run_bench --model claude-haiku-5-5 --out /tmp/bench
+    ANTHROPIC_EFFORT=low python -m scripts.ocr_bench.run_bench --model claude-haiku-5-5
+
+With no `--model`, the arms are the configured primary and fallback models. Effort comes from
+`ANTHROPIC_EFFORT`, exactly as in production, and is recorded in the run metadata.
 
 Writes `ocr-bench.json` (machine-readable) and `ocr-bench.md` (the head-to-head table) into the
 output directory, plus the rendered corpus alongside them.
@@ -20,10 +24,10 @@ output directory, plus the rendered corpus alongside them.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import platform
-import re
 import subprocess
 import sys
 import time
@@ -34,29 +38,34 @@ from typing import Any, Callable
 from . import corpus, scoring
 from .ground_truth import CORPUS, BolSpec
 
-PROVIDERS = ("gemini", "claude")
-
-ENV_KEYS = {"gemini": "GEMINI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
+ENV_KEY = "ANTHROPIC_API_KEY"
 
 
-def models() -> dict[str, str]:
-    """Model IDs read from settings, so the bench cannot report a model that is not what ran.
+def configured_models() -> list[str]:
+    """The primary and fallback model IDs from settings — the default arms.
 
+    Read from settings so the bench cannot report a model that is not what production runs.
     Imported lazily for the same reason `_extractor` is: importing `app` loads backend settings.
     """
     from app.core.config import settings
 
-    return {"gemini": settings.gemini_model, "claude": settings.anthropic_model}
+    arms = [settings.anthropic_model]
+    if settings.anthropic_fallback_model and settings.anthropic_fallback_model not in arms:
+        arms.append(settings.anthropic_fallback_model)
+    return arms
 
 
-def _extractor(provider: str) -> Callable[[bytes, str], Any]:
+def _effort() -> str:
+    from app.core.config import settings
+
+    return settings.anthropic_effort
+
+
+def _extractor(model: str) -> Callable[[bytes, str], Any]:
     """Import the service lazily — importing `app` requires the backend settings to load."""
     from app.services import ocr_service
 
-    return {
-        "gemini": ocr_service._extract_with_gemini,
-        "claude": ocr_service._extract_with_claude,
-    }[provider]
+    return functools.partial(ocr_service._extract_with_claude, model=model)
 
 
 def _git_sha() -> str:
@@ -71,15 +80,15 @@ def _git_sha() -> str:
         return "unknown"
 
 
-def run_metadata(providers: list[str], repeat: int) -> dict[str, Any]:
+def run_metadata(models: list[str], repeat: int) -> dict[str, Any]:
     """Everything needed to repeat this run — the Evidence Packaging requirement."""
     return {
         "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "git_sha": _git_sha(),
         "host": f"{platform.system()} {platform.release()} {platform.machine()}",
         "python": platform.python_version(),
-        "models": {p: models()[p] for p in providers},
-        "providers": providers,
+        "models": models,
+        "effort": _effort(),
         "repeat": repeat,
         "corpus": {
             "documents": len(CORPUS),
@@ -95,17 +104,20 @@ def run_metadata(providers: list[str], repeat: int) -> dict[str, Any]:
     }
 
 
-#: Substrings identifying a *transient* provider failure — worth retrying rather than scoring.
-_RETRYABLE = ("429", "resource_exhausted", "rate limit", "overloaded", "503", "529", "timeout")
+#: Substrings identifying a *transient* failure — worth retrying rather than scoring.
+_RETRYABLE = (
+    "429", "rate limit", "rate_limit", "overloaded", "503", "529", "timeout", "connection",
+)
 
-#: Seconds to wait before the first retry; doubles each attempt.
+#: Seconds to wait before the first retry; doubles each attempt. The Anthropic SDK has already
+#: retried the request itself (honouring `retry-after`) before an error reaches this loop.
 _BACKOFF_BASE = 8.0
 
-#: Wall-clock ceiling for ONE document including every retry. Gemini's free tier answers a 429 with
-#: its own retryDelay (~25s), so four retries can burn ~100s on a single document — and the corpus is
-#: 7 documents x N rounds. Without a ceiling one exhausted key turns a 9-minute bench into a 45-minute
-#: one. Exceeding it records an ERROR, never a zero score: scoring a quota failure as a bad extraction
-#: is exactly the defect the retry logic was added to fix (gemini read 0.483 F1 on the first live run).
+#: Wall-clock ceiling for ONE document including every retry. Backoff doubles from 8s, so four
+#: retries can burn ~2 minutes on a single document — and the corpus is 7 documents x N rounds.
+#: Without a ceiling one exhausted key turns a 9-minute bench into a 45-minute one. Exceeding it
+#: records an ERROR, never a zero score: scoring a quota failure as a bad extraction is exactly the
+#: defect the retry logic was added to fix (the first live run read 0.483 F1 for that reason).
 _DOC_BUDGET_S = 60.0
 
 #: Consecutive retryable failures before the arm is abandoned. Quota exhaustion is a GLOBAL condition,
@@ -113,43 +125,36 @@ _DOC_BUDGET_S = 60.0
 #: the corpus buys nothing but wall time. Fail the arm fast rather than the call fast.
 _QUOTA_ABORT_AFTER = 3
 
-_RETRY_DELAY_RE = re.compile(r"'retryDelay':\s*'(\d+)s'")
-
 
 def _is_retryable(exc: Exception) -> bool:
     text = f"{type(exc).__name__}: {exc}".lower()
     return any(marker in text for marker in _RETRYABLE)
 
 
-def _retry_after(exc: Exception, attempt: int) -> float:
-    """Honour the provider's own retryDelay when it sends one, else exponential backoff."""
-    match = _RETRY_DELAY_RE.search(str(exc))
-    if match:
-        return float(match.group(1)) + 1.0
+def _retry_after(attempt: int) -> float:
+    """Exponential backoff: 8s, 16s, 32s, ..."""
     return _BACKOFF_BASE * (2**attempt)
 
 
 def score_one(
     spec: BolSpec,
     path: Path,
-    provider: str,
+    model: str,
     extractor: Callable[[bytes, str], Any],
     *,
     max_retries: int = 4,
     doc_budget_s: float = _DOC_BUDGET_S,
     verbose: bool = True,
 ) -> scoring.BolScore:
-    """Send one document to one provider and grade what comes back.
+    """Send one document to one model and grade what comes back.
 
-    Retries transient failures with backoff. Gemini's free tier allows 5 requests per minute, and
-    without this the bench measures quota exhaustion rather than extraction quality — the first
-    live run scored gemini at 0.483 F1 for exactly that reason.
+    Retries transient failures with backoff. Without this the bench measures quota exhaustion
+    rather than extraction quality — the first live run read 0.483 F1 for exactly that reason.
 
     Retrying is bounded twice over: `max_retries` attempts AND `doc_budget_s` of wall clock. The
     budget is what stops an exhausted key from stretching the bench by an order of magnitude, since
-    a provider that answers every 429 with a 25-second retryDelay makes the attempt count a poor
-    proxy for elapsed time. Giving up returns an ERROR score, which the corpus aggregate counts
-    separately from a graded document — never a zero.
+    with doubling backoff the attempt count is a poor proxy for elapsed time. Giving up returns an
+    ERROR score, which the corpus aggregate counts separately from a graded document — never a zero.
     """
     payload = path.read_bytes()
     doc_started = time.perf_counter()
@@ -158,11 +163,11 @@ def score_one(
         started = time.perf_counter()
         try:
             extraction = extractor(payload, spec.mime_type)
-        except Exception as exc:  # noqa: BLE001 — a provider failure is a datum, not a crash
+        except Exception as exc:  # noqa: BLE001 — a model failure is a datum, not a crash
             latency_ms = (time.perf_counter() - started) * 1000.0
             retryable = _is_retryable(exc)
             if attempt < max_retries and retryable:
-                delay = _retry_after(exc, attempt)
+                delay = _retry_after(attempt)
                 spent = time.perf_counter() - doc_started
                 # Check the budget against the delay we are ABOUT to sleep, not the time already
                 # spent: sleeping 25s to then discover we are over budget wastes exactly the time
@@ -170,13 +175,13 @@ def score_one(
                 if spent + delay > doc_budget_s:
                     if verbose:
                         print(
-                            f"    [{provider}] {spec.layout}: giving up after {spent:.0f}s "
+                            f"    [{model}] {spec.layout}: giving up after {spent:.0f}s "
                             f"(budget {doc_budget_s:.0f}s) — recorded as an error, not a score"
                         )
                     return scoring.score_document(
                         spec,
                         None,
-                        provider=provider,
+                        provider=model,
                         latency_ms=latency_ms,
                         error=(
                             f"doc budget {doc_budget_s:.0f}s exceeded after {attempt + 1} "
@@ -185,7 +190,7 @@ def score_one(
                     )
                 if verbose:
                     print(
-                        f"    [{provider}] {spec.layout}: transient failure, "
+                        f"    [{model}] {spec.layout}: transient failure, "
                         f"retry {attempt + 1}/{max_retries} in {delay:.0f}s"
                     )
                 time.sleep(delay)
@@ -193,18 +198,18 @@ def score_one(
             return scoring.score_document(
                 spec,
                 None,
-                provider=provider,
+                provider=model,
                 latency_ms=latency_ms,
                 error=f"{type(exc).__name__}: {exc}",
             )
         latency_ms = (time.perf_counter() - started) * 1000.0
-        return scoring.score_document(spec, extraction, provider=provider, latency_ms=latency_ms)
+        return scoring.score_document(spec, extraction, provider=model, latency_ms=latency_ms)
 
     raise AssertionError("unreachable")  # pragma: no cover
 
 
 def run(
-    providers: list[str],
+    models: list[str],
     repeat: int,
     out_dir: Path,
     verbose: bool = True,
@@ -215,7 +220,7 @@ def run(
 ) -> dict[str, Any]:
     """Render, extract, score. Returns the full result payload.
 
-    `delay` paces requests to stay inside a provider's rate limit — see `--delay`.
+    `delay` paces requests to stay inside a rate limit — see `--delay`.
 
     An arm is abandoned after `quota_abort_after` consecutive failed documents and reported as
     INCOMPLETE. That is not the same as scoring badly, and the writeup must not read it as such: an
@@ -227,8 +232,8 @@ def run(
 
     results: dict[str, scoring.CorpusScore] = {}
     incomplete: dict[str, str] = {}
-    for provider in providers:
-        extractor = _extractor(provider)
+    for model in models:
+        extractor = _extractor(model)
         scores: list[scoring.BolScore] = []
         first = True
         consecutive_failures = 0
@@ -243,7 +248,7 @@ def run(
                 score = score_one(
                     spec,
                     rendered[spec.layout],
-                    provider,
+                    model,
                     extractor,
                     max_retries=max_retries,
                     doc_budget_s=doc_budget_s,
@@ -257,12 +262,12 @@ def run(
                 if verbose:
                     if score.error:
                         print(
-                            f"! [{provider:6}] round {round_no}/{repeat} {spec.layout:19}"
+                            f"! [{model}] round {round_no}/{repeat} {spec.layout:19}"
                             f" FAILED: {score.error[:80]}"
                         )
                     else:
                         print(
-                            f"  [{provider:6}] round {round_no}/{repeat} {spec.layout:19}"
+                            f"  [{model}] round {round_no}/{repeat} {spec.layout:19}"
                             f" header={score.header_accuracy:.2f} F1={score.f1:.2f}"
                             f" num={score.numeric_accuracy:.2f} {score.latency_ms:7.0f}ms"
                         )
@@ -270,18 +275,18 @@ def run(
                     aborted = (
                         f"{consecutive_failures} consecutive failed documents "
                         f"(scored {len([s for s in scores if not s.error])} of "
-                        f"{len(CORPUS) * repeat}) — provider quota or availability, not accuracy"
+                        f"{len(CORPUS) * repeat}) — API quota or availability, not accuracy"
                     )
                     if verbose:
-                        print(f"! [{provider:6}] ARM ABANDONED: {aborted}")
+                        print(f"! [{model}] ARM ABANDONED: {aborted}")
                     break
-        results[provider] = scoring.score_corpus(scores)
+        results[model] = scoring.score_corpus(scores)
         if aborted:
-            incomplete[provider] = aborted
+            incomplete[model] = aborted
 
     return {
         "run": {
-            **run_metadata(providers, repeat),
+            **run_metadata(models, repeat),
             "delay_s": delay,
             "max_retries": max_retries,
             "doc_budget_s": doc_budget_s,
@@ -290,7 +295,7 @@ def run(
         # Present but empty on a healthy run, so a reader never has to infer completeness from the
         # absence of a key.
         "incomplete_arms": incomplete,
-        "results": {p: s.to_dict() for p, s in results.items()},
+        "results": {m: s.to_dict() for m, s in results.items()},
     }
 
 
@@ -303,11 +308,12 @@ def format_markdown(payload: dict[str, Any]) -> str:
     """The head-to-head table for the A8 writeup."""
     meta = payload["run"]
     lines = [
-        "# OCR provider comparison — ACRA MES (A8-4)",
+        "# OCR model comparison — ACRA MES (A8-4)",
         "",
         f"- **Captured:** {meta['captured_at']}",
         f"- **Repo:** acra_dev @ `{meta['git_sha']}`",
         f"- **Host:** {meta['host']} · Python {meta['python']}",
+        f"- **Effort:** `{meta.get('effort', 'n/a')}`",
         f"- **Corpus:** {meta['corpus']['documents']} synthetic documents, "
         f"{meta['corpus']['line_items']} line items "
         f"({', '.join(meta['corpus']['layouts'])})",
@@ -320,21 +326,20 @@ def format_markdown(payload: dict[str, Any]) -> str:
         "an **upper bound** on field performance, not a production accuracy claim.",
         "",
         "Accuracy is computed over calls that returned an extraction. Calls that failed (rate",
-        "limits, timeouts) are counted separately under *availability* — a provider that is",
+        "limits, timeouts) are counted separately under *availability* — a model that is",
         "throttled has an availability problem, not an accuracy one, and averaging the two together",
         "produces a badly misleading comparison.",
         "",
         "## Accuracy",
         "",
-        "| Provider | Model | Header acc. | Item P | Item R | Item F1 | Numeric acc. |",
-        "|---|---|---|---|---|---|---|",
+        "| Model | Header acc. | Item P | Item R | Item F1 | Numeric acc. |",
+        "|---|---|---|---|---|---|",
     ]
 
-    for provider, result in payload["results"].items():
+    for model, result in payload["results"].items():
         lines.append(
             _row(
-                f"`{provider}`",
-                f"`{meta['models'][provider]}`",
+                f"`{model}`",
                 f"{result['header_accuracy']:.3f}",
                 f"{result['item_precision']:.3f}",
                 f"{result['item_recall']:.3f}",
@@ -347,17 +352,17 @@ def format_markdown(payload: dict[str, Any]) -> str:
         "",
         "## Availability and latency",
         "",
-        "| Provider | Calls | Scored | Errors | Error rate | p50 | p95 | p99 |",
+        "| Model | Calls | Scored | Errors | Error rate | p50 | p95 | p99 |",
         "|---|---|---|---|---|---|---|---|",
     ]
     def cell(value: float | None) -> str:
         return "n/a" if value is None else f"{value:.0f} ms"
 
-    for provider, result in payload["results"].items():
+    for model, result in payload["results"].items():
         latency = result["latency_ms"]
         lines.append(
             _row(
-                f"`{provider}`",
+                f"`{model}`",
                 result["calls"],
                 result["scored"],
                 result["errors"],
@@ -399,7 +404,7 @@ def format_markdown(payload: dict[str, Any]) -> str:
         lines += ["", "## ⚠ Incomplete arms", ""]
         lines += [
             "These arms were abandoned mid-run. Their rows above are computed over whichever "
-            "documents completed and **are not accuracy results** — cite them as provider "
+            "documents completed and **are not accuracy results** — cite them as API "
             "availability failures, not as measured quality.",
             "",
         ]
@@ -407,7 +412,7 @@ def format_markdown(payload: dict[str, Any]) -> str:
 
     if errors:
         lines += ["", "## Errors", ""]
-        # Provider error payloads run to hundreds of lines; the class and first line is the datum.
+        # API error payloads run to hundreds of characters; the class and first line is the datum.
         lines += [
             f"- `{p}` / `{layout}`: {err.splitlines()[0][:160]}" for p, layout, err in errors
         ]
@@ -416,20 +421,24 @@ def format_markdown(payload: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--provider", choices=(*PROVIDERS, "both"), default="both")
+    parser.add_argument(
+        "--model",
+        action="append",
+        dest="models",
+        metavar="MODEL_ID",
+        help="Claude model to bench; repeat for a head-to-head (default: the configured primary "
+        "and fallback models)",
+    )
     parser.add_argument("--repeat", type=int, default=1, help="rounds per document (default 1)")
     parser.add_argument("--out", default="validation-evidence/ocr-bench", type=Path)
     parser.add_argument(
         "--delay",
         type=float,
         default=0.0,
-        help=(
-            "seconds to pace between calls. Gemini's free tier allows only 5 requests per "
-            "minute, so --delay 13 keeps a single-provider run inside it"
-        ),
+        help="seconds to pace between calls, to stay inside a low rate limit (default 0)",
     )
     parser.add_argument(
-        "--max-retries", type=int, default=4, help="retries on transient provider failures"
+        "--max-retries", type=int, default=4, help="retries on transient API failures"
     )
     parser.add_argument(
         "--doc-budget",
@@ -453,21 +462,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
-    providers = list(PROVIDERS) if args.provider == "both" else [args.provider]
-
-    missing = [ENV_KEYS[p] for p in providers if not os.getenv(ENV_KEYS[p])]
-    if missing:
-        print(
-            f"error: {', '.join(missing)} not set — this bench calls the real providers.",
-            file=sys.stderr,
-        )
+    if not os.getenv(ENV_KEY):
+        print(f"error: {ENV_KEY} not set — this bench calls the real models.", file=sys.stderr)
         return 2
     if args.repeat < 1:
         print("error: --repeat must be at least 1", file=sys.stderr)
         return 2
 
+    models = list(dict.fromkeys(args.models)) if args.models else configured_models()
+
     payload = run(
-        providers,
+        models,
         args.repeat,
         Path(args.out),
         verbose=not args.quiet,
@@ -490,10 +495,10 @@ def main(argv: list[str] | None = None) -> int:
     # publication capture cannot ship a comparison with a missing side.
     if payload["incomplete_arms"]:
         print(file=sys.stderr)
-        for provider, reason in payload["incomplete_arms"].items():
-            print(f"INCOMPLETE — {provider}: {reason}", file=sys.stderr)
+        for model, reason in payload["incomplete_arms"].items():
+            print(f"INCOMPLETE — {model}: {reason}", file=sys.stderr)
         print(
-            "This is a provider availability result, not an accuracy result. "
+            "This is an API availability result, not an accuracy result. "
             "Do not quote the affected arm's scores.",
             file=sys.stderr,
         )

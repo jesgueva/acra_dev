@@ -19,8 +19,8 @@ import { allLots, inStorageTotal } from "./helpers/inventory";
  * protect is the UI contract around the new shape:
  *
  *  1. The added fields do not disturb form population.
- *  2. The Claude fallback populates identically to the Gemini primary — a clerk must not be able
- *     to tell which model answered.
+ *  2. The fallback model populates identically to the primary — a clerk must not be able to tell
+ *     which model answered.
  *  3. `confidence` is still never rendered. It counts non-empty header fields, so four *wrong*
  *     values score 1.0; showing it as a quality signal would actively mislead the clerk into
  *     trusting a bad extraction. This test is what stops someone "helpfully" surfacing it later.
@@ -97,7 +97,7 @@ test.describe("ACR-36 — enriched OCR response in the receiving flow", () => {
   }) => {
     const token = await apiToken(request, USERS.admin);
     const { provider, carrier, product } = await seedNames(request, token);
-    const bol = unique("A84-GEM-");
+    const bol = unique("A84-PRI-");
 
     await login(page, USERS.clerk);
     await stubOCR(page, {
@@ -108,7 +108,7 @@ test.describe("ACR-36 — enriched OCR response in the receiving flow", () => {
       items: [{ item_name: product.name, quantity: 7, pallets: 2, units_per_pallet: 4 }],
       confidence: 1.0,
       header_fill_rate: 1.0,
-      provider: "gemini",
+      provider: "claude-haiku-5-5",
     });
 
     await page.goto("/en/receiving");
@@ -125,7 +125,7 @@ test.describe("ACR-36 — enriched OCR response in the receiving flow", () => {
     await expect(page.getByTestId("product-select-0")).toContainText(product.name);
   });
 
-  test("the Claude fallback populates the form identically to the Gemini primary", async ({
+  test("the fallback model populates the form identically to the primary", async ({
     page,
     request,
   }) => {
@@ -144,7 +144,7 @@ test.describe("ACR-36 — enriched OCR response in the receiving flow", () => {
       header_fill_rate: 1.0,
       // The primary failed and the fallback carried the request. The clerk should not be able to
       // tell, and nothing in the form should branch on it.
-      provider: "claude",
+      provider: "claude-sonnet-5-5",
     });
 
     await page.goto("/en/receiving");
@@ -175,7 +175,7 @@ test.describe("ACR-36 — enriched OCR response in the receiving flow", () => {
       items: [{ item_name: product.name, quantity: 7 }],
       confidence: 1.0,
       header_fill_rate: 1.0,
-      provider: "gemini",
+      provider: "claude-haiku-5-5",
     });
 
     await page.goto("/en/receiving");
@@ -207,7 +207,7 @@ test.describe("ACR-36 — enriched OCR response in the receiving flow", () => {
       items: [{ item_name: product.name, quantity: EXTRACTED }],
       confidence: 1.0,
       header_fill_rate: 1.0,
-      provider: "claude",
+      provider: "claude-sonnet-5-5",
     });
 
     await page.goto("/en/receiving");

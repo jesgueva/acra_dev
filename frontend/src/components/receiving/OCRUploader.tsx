@@ -27,7 +27,7 @@ export interface OCRResult {
    */
   confidence: number;
   header_fill_rate?: number;
-  /** Which model answered: "gemini" (primary) or "claude" (fallback). */
+  /** Which model answered — its Claude model ID (primary or fallback), or "mock". */
   provider?: string;
 }
 

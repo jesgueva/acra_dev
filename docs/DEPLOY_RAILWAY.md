@@ -24,7 +24,7 @@ CLI). This page is the part that can't be: the one-time bootstrap, the secrets, 
 | Thing | Where it lives |
 |---|---|
 | Project, the three services, Postgres, region, build/deploy settings, healthchecks, migrations, every non-secret variable | `.railway/railway.ts` |
-| `SECRET_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` | Set once with the CLI ([Secrets](#4-set-the-secrets)). Declared in `railway.ts` as `preserve()` — names only, never values. |
+| `SECRET_KEY`, `ANTHROPIC_API_KEY` | Set once with the CLI ([Secrets](#4-set-the-secrets)). Declared in `railway.ts` as `preserve()` — names only, never values. |
 | The generated `*.up.railway.app` domains | `railway domain` ([step 5](#5-generate-the-public-domains)). Railway keeps generated domains out of IaC by design. Custom domains *are* in code. |
 | The first administrator | `backend/scripts/bootstrap_admin.py` ([step 7](#7-create-the-first-administrator)) |
 | Database backups | Dashboard ([step 9](#9-turn-on-database-backups)) |
@@ -105,12 +105,11 @@ because step 6 redeploys once, at the end.
 python3 -c "import secrets; print(secrets.token_urlsafe(48), end='')" \
   | railway variable set SECRET_KEY --stdin --service backend --skip-deploys
 
-# Optional — only the receiving-document OCR needs them. Paste the key, then Ctrl-D.
-railway variable set GEMINI_API_KEY --stdin --service backend --skip-deploys
+# Optional — only the receiving-document OCR needs it. Paste the key, then Ctrl-D.
 railway variable set ANTHROPIC_API_KEY --stdin --service backend --skip-deploys
 ```
 
-Without the two API keys every module works except AI extraction on the Receiving page. Read
+Without `ANTHROPIC_API_KEY` every module works except AI extraction on the Receiving page. Read
 [EU data residency](#eu-data-residency) before setting them.
 
 ### 5. Generate the public domains
@@ -208,9 +207,9 @@ service, the database or a variable has to be applied from a terminal, deliberat
 Pinning covers where the services run and where the database volume lives, and `check.ts` keeps it
 that way. It does not by itself make every data flow EU-only:
 
-- **OCR.** With `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` set, receiving documents uploaded on the
-  Receiving page are sent to Google's and Anthropic's APIs. Check those providers' data-processing
-  terms and regional options against your obligations, or leave the keys unset.
+- **OCR.** With `ANTHROPIC_API_KEY` set, receiving documents uploaded on the Receiving page are
+  sent to Anthropic's API. Check its data-processing terms and regional options against your
+  obligations, or leave the key unset.
 - **The platform itself.** Railway's builds, logs and edge network are Railway's own services;
   review [Railway's DPA](https://railway.com/legal/dpa) for what it commits to.
 

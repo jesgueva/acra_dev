@@ -111,7 +111,6 @@ export default defineRailway(() => {
       // Secrets: declared so an apply never deletes them, but the values are set out-of-band and
       // never appear in this file — see docs/DEPLOY_RAILWAY.md "Secrets".
       SECRET_KEY: preserve(),
-      GEMINI_API_KEY: preserve(),
       ANTHROPIC_API_KEY: preserve(),
     },
   });

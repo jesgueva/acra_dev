@@ -123,7 +123,7 @@ describe("OCRUploader", () => {
         items: [],
         confidence: 1.0,
         header_fill_rate: 1.0,
-        provider: "gemini",
+        provider: "claude-haiku-5-5",
       },
     });
 
